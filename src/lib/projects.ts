@@ -1,5 +1,6 @@
 import type { Project } from '../store';
 import { useStore } from '../store';
+import { migrateGarment } from '../data/catalog';
 
 // Local project storage (browser). Cloud sync with accounts comes in a later phase.
 
@@ -23,7 +24,7 @@ function writeAll(all: Record<string, Project>) {
 }
 
 export function listProjects(): Project[] {
-  return Object.values(readAll()).sort((a, b) => b.updatedAt - a.updatedAt);
+  return Object.values(readAll()).map((p) => ({ ...p, garment: migrateGarment(p.garment) })).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function saveProject(p: Project) {

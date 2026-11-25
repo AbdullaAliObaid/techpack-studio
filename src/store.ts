@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { makePreset, GARMENT_LABEL, type GarmentType, type Piece } from './data/presets';
+import { makePreset, GARMENT_LABEL, type Piece } from './data/presets';
+import { migrateGarment, type StyleId } from './data/catalog';
 import { DEFAULT_BODY, type Body } from './three/body';
 import { draft, regradePoints, type Fit } from './data/draft';
 import { bezAt, toBeziers, type PPoint, type Pt } from './lib/geometry';
@@ -8,7 +9,8 @@ import { uid, type Units } from './lib/units';
 export interface Project {
   id: string;
   name: string;
-  garment: GarmentType;
+  /** catalog style id (src/data/catalog.ts) */
+  garment: StyleId;
   pieces: Piece[];
   body: Body;
   /** when on, the pattern is regraded whenever body measurements change */
@@ -59,12 +61,14 @@ interface State {
   resetBody: () => void;
   setLink: (on: boolean) => void;
   setFit: (fit: Fit) => void;
-  newProject: (g: GarmentType) => void;
+  newProject: (id: StyleId) => void;
   loadProject: (p: Project) => void;
   rename: (name: string) => void;
 }
 
-export function freshProject(g: GarmentType, name?: string, body: Body = DEFAULT_BODY): Project {
+/** A new project for any catalog style, drafted on the given body in the style's default fabric. */
+export function freshProject(id: StyleId, name?: string, body: Body = DEFAULT_BODY): Project {
+  const g = migrateGarment(id);
   return { id: uid(), name: name ?? `Untitled ${GARMENT_LABEL[g].toLowerCase()}`, garment: g, pieces: makePreset(g, body), body: { ...body }, linkPattern: true, fit: 'regular', updatedAt: Date.now() };
 }
 
@@ -73,7 +77,8 @@ function regrade(p: Project, from: Body, to: Body, fitFrom: Fit = p.fit ?? 'regu
   const a = draft(p.garment, from, fitFrom), b = draft(p.garment, to, fitTo);
   return p.pieces.map((pc) => {
     const da = a.find((d) => d.role === pc.role), db = b.find((d) => d.role === pc.role);
-    return da && db ? { ...pc, points: regradePoints(pc.points, da.points, db.points) } : pc;
+    if (!da || !db) return pc;
+    return { ...pc, points: regradePoints(pc.points, da.points, db.points), ...(db.elastic !== undefined ? { elastic: db.elastic } : {}) };
   });
 }
 
@@ -239,8 +244,9 @@ export const useStore = create<State>((set, get) => {
         return { project: { ...s.project, fit, pieces, updatedAt: Date.now() } };
       }),
 
-    newProject: (g) => set((s) => ({ project: freshProject(g, undefined, s.project.body), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
-    loadProject: (p) => set((s) => ({ project: { ...p, linkPattern: p.linkPattern ?? true }, past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
+    newProject: (id) => set((s) => ({ project: freshProject(id, undefined, s.project.body), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
+    // older saves stored 'jacket' | 'shirt' | 'pants'; map them onto catalog styles
+    loadProject: (p) => set((s) => ({ project: { ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }, past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
     rename: (name) => set((s) => ({ project: { ...s.project, name, updatedAt: Date.now() } })),
   };
 });

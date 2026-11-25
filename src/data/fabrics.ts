@@ -59,6 +59,11 @@ export const FABRICS: Fabric[] = [
     colors: [{ name: 'White', hex: '#f2f2f0' }, { name: 'Heather grey', hex: '#a3a5a8' }, { name: 'Black', hex: '#232325' }, { name: 'Forest', hex: '#2f4a3a' }],
   },
   {
+    id: 'rib', bend: 0.15, name: 'Rib Knit', weave: 'jersey', stretch: 0.6, weight: 'Medium', gsm: 230, roughness: 0.9,
+    blurb: 'Ribbed cotton knit that springs back. Neckbands, collars, cuffs and hem bands.',
+    colors: [{ name: 'White', hex: '#f2f2f0' }, { name: 'Heather grey', hex: '#a3a5a8' }, { name: 'Black', hex: '#232325' }, { name: 'Forest', hex: '#2f4a3a' }],
+  },
+  {
     id: 'leather', bend: 0.9, name: 'Leather', weave: 'leather', stretch: 0.1, weight: 'Heavy', gsm: 900, roughness: 0.55,
     blurb: 'Lambskin or cowhide. Moulds to the body slowly. Biker jackets.',
     colors: [{ name: 'Black', hex: '#1c1b1b' }, { name: 'Brown', hex: '#5a3a26' }, { name: 'Tan', hex: '#a06b3f' }, { name: 'Oxblood', hex: '#4e1c1f' }],

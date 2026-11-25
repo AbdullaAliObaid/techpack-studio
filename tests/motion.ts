@@ -1,5 +1,6 @@
 // Run: npx tsx tests/motion.ts   (cloth follows the moving body without blowing up)
-import { makePreset, type GarmentType } from '../src/data/presets';
+import { makePreset } from '../src/data/presets';
+import type { StyleId } from '../src/data/catalog';
 import { DEFAULT_BODY, bodyFrame } from '../src/three/body';
 import { assemble } from '../src/sim/setup';
 import { calibratedField } from '../src/three/bodyField';
@@ -10,7 +11,12 @@ const f = bodyFrame(DEFAULT_BODY);
 const field = calibratedField(DEFAULT_BODY);
 const mesh = meshField(field);
 let fails = 0;
-for (const [g, mode] of [['jacket', 'jacks'], ['shirt', 'cross'], ['pants', 'sit'], ['pants', 'walk'], ['jacket', 'hug']] as [GarmentType, Mode][]) {
+const cases: [StyleId, Mode][] = [
+  ['jacket', 'jacks'], ['button-up', 'cross'], ['jeans', 'sit'], ['jeans', 'walk'], ['jacket', 'hug'],
+  ['basic-tee', 'jacks'], ['polo', 'cross'], ['boxy-tee', 'hug'], ['sweatpants', 'walk'], ['baggy-jeans', 'sit'], ['shorts', 'walk'],
+  ['bucket-hat', 'jacks'], ['cap', 'walk'],
+];
+for (const [g, mode] of cases) {
   const col = new PosedCollider(mesh.grid, [f.ankleH + 6, f.crotchH + 1], f);
   const G = assemble(g, makePreset(g, DEFAULT_BODY), DEFAULT_BODY, 1.8, col)!;
   const sim = G.sim;
@@ -40,6 +46,7 @@ for (const [g, mode] of [['jacket', 'jacks'], ['shirt', 'cross'], ['pants', 'sit
   const over = r.filter((v) => v > 1).length / r.length;
   const ok = bad === 0 && inside / sim.n < 0.03;
   if (!ok) fails++;
-  console.log(`${ok ? 'ok  ' : 'FAIL'} ${g} ${mode.padEnd(6)} ${ms.toFixed(1)}ms/frame  y ${before[0].toFixed(0)}..${before[1].toFixed(0)} -> ${after[0].toFixed(0)}..${after[1].toFixed(0)}  deep-inside ${(100 * inside / sim.n).toFixed(1)}%  peak (p99.5) ${(worst * 100).toFixed(0)}% of safe, ${(over * 100).toFixed(1)}% of cloth over its safe stretch`);
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${g.padEnd(12)} ${mode.padEnd(6)} ${ms.toFixed(1)}ms/frame  y ${before[0].toFixed(0)}..${before[1].toFixed(0)} -> ${after[0].toFixed(0)}..${after[1].toFixed(0)}  deep-inside ${(100 * inside / sim.n).toFixed(1)}%  peak (p99.5) ${(worst * 100).toFixed(0)}% of safe, ${(over * 100).toFixed(1)}% of cloth over its safe stretch`);
 }
 console.log(fails ? `${fails} FAILED` : 'all motion checks passed');
+process.exit(fails ? 1 : 0);
