@@ -59,7 +59,7 @@ export function panelHex(p: PanelInst) {
 
 export interface Loc { tri: [number, number, number]; w: [number, number, number] }
 
-class Locator {
+export class Locator {
   private cells = new Map<number, number[]>();
   constructor(private P: PanelInst, private cell = 2) {
     const { uv, tris } = P.mesh;
@@ -113,6 +113,32 @@ class Locator {
 
 /* ---------- builder ---------- */
 
+/** +1 or -1 per panel: which way the triangle normals face to point away from the panel centre (outward). */
+export function outwardSigns(panels: PanelInst[], pos: Float32Array): number[] {
+  return panels.map((P) => {
+    const { tris, uv } = P.mesh;
+    const n = uv.length, o = P.offset;
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < n; i++) { cx += pos[(o + i) * 3]; cy += pos[(o + i) * 3 + 1]; cz += pos[(o + i) * 3 + 2]; }
+    cx /= n; cy /= n; cz /= n;
+    const brim = P.piece.role === ('brim' as string);
+    let vote = 0;
+    for (let t = 0; t < tris.length; t += 3) {
+      const a = (o + tris[t]) * 3, b = (o + tris[t + 1]) * 3, c = (o + tris[t + 2]) * 3;
+      const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+      const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const L = Math.hypot(nx, ny, nz) || 1;
+      if (brim) { vote += ny / L; continue; }
+      const mx = (pos[a] + pos[b] + pos[c]) / 3 - cx, my = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3 - cy, mz = (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3 - cz;
+      const ml = Math.hypot(mx, my, mz) || 1;
+      vote += (nx * mx + ny * my + nz * mz) / (L * ml);
+    }
+    return vote >= 0 ? 1 : -1;
+  });
+}
+
+
 interface Run { idx: number[]; closed: boolean; sewn: boolean; own: boolean }
 
 export function buildDetails(G: Garment3D, d: Details): DetailsMsg {
@@ -139,27 +165,7 @@ export function buildDetails(G: Garment3D, d: Details): DetailsMsg {
   const locs = panels.map((P) => new Locator(P));
 
   // which side of each panel faces outward: vote with the triangle normals against the direction from the panel centre
-  const signs = panels.map((P) => {
-    const { tris, uv } = P.mesh;
-    const n = uv.length, o = P.offset;
-    let cx = 0, cy = 0, cz = 0;
-    for (let i = 0; i < n; i++) { cx += pos[(o + i) * 3]; cy += pos[(o + i) * 3 + 1]; cz += pos[(o + i) * 3 + 2]; }
-    cx /= n; cy /= n; cz /= n;
-    const brim = P.piece.role === ('brim' as string);
-    let vote = 0;
-    for (let t = 0; t < tris.length; t += 3) {
-      const a = (o + tris[t]) * 3, b = (o + tris[t + 1]) * 3, c = (o + tris[t + 2]) * 3;
-      const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
-      const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
-      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-      const L = Math.hypot(nx, ny, nz) || 1;
-      if (brim) { vote += ny / L; continue; }
-      const mx = (pos[a] + pos[b] + pos[c]) / 3 - cx, my = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3 - cy, mz = (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3 - cz;
-      const ml = Math.hypot(mx, my, mz) || 1;
-      vote += (nx * mx + ny * my + nz * mz) / (L * ml);
-    }
-    return vote >= 0 ? 1 : -1;
-  });
+  const signs = outwardSigns(panels, pos);
 
   /** pattern-space direction (0,1) expressed as alpha, beta on a triangle's edges, so main can orient things "down the garment" */
   const upOf = (k: number, loc: Loc): [number, number] => {

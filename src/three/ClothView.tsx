@@ -8,6 +8,8 @@ import { fabricMaterial, stretchMat } from './materials';
 import { useStore } from '../store';
 import Details, { type DetailUpdater } from './Details';
 import type { DetailsMsg } from '../sim/details';
+import Prints from './Prints';
+import { vertexPattern, type VertexPattern } from './printsAdapter';
 import { boneMatrices, jointPoints, poseAt, NBONES, type Mode } from '../sim/pose';
 
 // Live cloth view. The simulation runs in a Web Worker (src/sim/worker.ts); this component sends it the
@@ -18,6 +20,7 @@ const SPACING = 1.8;
 interface Topo {
   geo: THREE.BufferGeometry;
   fabrics: Piece['fabric'][];
+  pat: VertexPattern;
 }
 
 function skinMaterial(skin: string) {
@@ -61,6 +64,11 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
   const [topo, setTopo] = useState<Topo | null>(null);
   const [details, setDetails] = useState<DetailsMsg | null>(null);
   const detailUpdater = useRef<DetailUpdater | null>(null);
+  const [attachDetails, setAttachDetails] = useState<DetailsMsg | null>(null);
+  const attachUpdater = useRef<DetailUpdater | null>(null);
+  const piecesRef = useRef(pieces);
+  piecesRef.current = pieces;
+  const attachments = useStore((s) => s.project.edits?.attachments);
   const pending = useRef<{ pos?: Float32Array; strain?: Float32Array }>({});
   const lastStrain = useRef<Float32Array | null>(null);
   const set = useStore((s) => s.set);
@@ -96,13 +104,16 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         geo.computeVertexNormals();
         lastStrain.current = null;
         setDetails(null);
+        setAttachDetails(null);
         setTopo((old) => {
           old?.geo.dispose();
-          return { geo, fabrics: m.fabrics };
+          return { geo, fabrics: m.fabrics, pat: vertexPattern(m, piecesRef.current) };
         });
         set({ draping: true, simStatus: 'Simulating fabric…' });
       } else if (m.type === 'details') {
         setDetails(m);
+      } else if (m.type === 'attachDetails') {
+        setAttachDetails({ ...m, type: 'details' });
       } else if (m.type === 'frame') {
         pending.current.pos = m.pos;
         pose.current = { mode: m.mode, t: m.t };
@@ -135,6 +146,12 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
     return () => clearTimeout(t);
   }, [type, pieces, body, redrape, worker]);
 
+  // stitching around pockets, patches and straps follows the attachments (debounced while dragging)
+  useEffect(() => {
+    const t = setTimeout(() => worker.postMessage({ type: 'attachments', attachments: attachments ?? [] }), 120);
+    return () => clearTimeout(t);
+  }, [attachments, worker]);
+
   useEffect(() => {
     worker.postMessage({ type: 'mode', mode });
   }, [mode, worker]);
@@ -164,6 +181,7 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         topo.geo.computeVertexNormals();
         topo.geo.computeBoundingSphere();
         detailUpdater.current?.(attr.array as Float32Array);
+        attachUpdater.current?.(attr.array as Float32Array);
       }
       p.pos = undefined;
     }
@@ -188,6 +206,8 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
       {showGarment && topo && (
         <mesh geometry={topo.geo} material={stretch ? topo.fabrics.map(() => stretchMat) : mats} castShadow receiveShadow frustumCulled={false} />
       )}
+      {showGarment && topo && <Prints geo={topo.geo} pat={topo.pat} visible={!stretch} />}
+      {showGarment && topo && attachDetails && <Details data={attachDetails} geo={topo.geo} visible={!stretch} updater={attachUpdater} />}
       {showGarment && topo && details && <Details data={details} geo={topo.geo} visible={!stretch} updater={detailUpdater} />}
     </group>
   );

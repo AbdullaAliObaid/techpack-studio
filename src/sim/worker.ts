@@ -6,6 +6,8 @@ import { calibratedField } from '../three/bodyField';
 import { meshField, PosedCollider } from '../three/mesher';
 import { bodyFrame, type BodyFrame } from '../three/body';
 import { buildDetails, detailTransfers } from './details';
+import { buildAttachmentDetails } from './detailsAttach';
+import type { Attachment } from '../data/edits';
 import { migrateGarment, styleById } from '../data/catalog';
 import { boneMatrices, invert, poseAt, type Mode } from './pose';
 
@@ -30,7 +32,18 @@ let G: Garment3D | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let gen = 0;
 
-type BuildMsg = { type: 'build'; garment: GarmentType; pieces: Piece[]; body: Body; warm: boolean; spacing: number } | { type: 'mode'; mode: Mode };
+type BuildMsg = { type: 'build'; garment: GarmentType; pieces: Piece[]; body: Body; warm: boolean; spacing: number } | { type: 'mode'; mode: Mode } | { type: 'attachments'; attachments: Attachment[] };
+
+let attachments: Attachment[] = [];
+function postAttachDetails() {
+  if (!G) return;
+  try {
+    const det = buildAttachmentDetails(G, attachments);
+    (self as unknown as Worker).postMessage(det, detailTransfers(det as never));
+  } catch (err) {
+    console.warn('attachment details failed', err);
+  }
+}
 
 function loop(myGen: number) {
   if (!G || myGen !== gen) return;
@@ -86,6 +99,11 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
     }
     return;
   }
+  if (m.type === 'attachments') {
+    attachments = m.attachments;
+    postAttachDetails();
+    return;
+  }
   if (m.type !== 'build') return;
   if (timer) clearTimeout(timer);
   const key = JSON.stringify(m.body);
@@ -139,5 +157,6 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
   } catch (err) {
     console.warn('details failed', err);
   }
+  postAttachDetails();
   loop(gen);
 };
