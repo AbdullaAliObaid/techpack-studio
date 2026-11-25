@@ -86,6 +86,9 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     return m;
   };
   const seams: [PanelInst, string | undefined, string | undefined, PanelInst, string | undefined, string | undefined][] = [];
+  type Side = [PanelInst, string | undefined, string | undefined][];
+  const multi: [Side, Side][] = []; // one edge sewn along several pieces in a row (waistband, collar, cuff)
+  const sleeveInst: Record<number, { inst: PanelInst; place: Placer }> = {};
 
   if (type !== 'pants') {
     const fH = tag(front, 'hps')?.y ?? 0, bH = tag(back, 'hps')?.y ?? 0;
@@ -132,6 +135,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
         };
         add(sleeve, side < 0, place, mesh);
         const S = insts[insts.length - 1];
+        sleeveInst[side] = { inst: S, place };
         seams.push([S, key(sleeve, 'sleeve.3'), key(sleeve, 'sleeve.4'), S, key(sleeve, 'sleeve.3m'), key(sleeve, 'sleeve.4m')]);
         const fr = side > 0 ? ['front.3', 'front.5'] : ['front.3m', 'front.5m'];
         const br = side > 0 ? ['back.3m', 'back.5m'] : ['back.3', 'back.5'];
@@ -183,6 +187,68 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     seams.push([BR, key(back, 'back.8'), key(back, 'back.0'), BL, key(back, 'back.8'), key(back, 'back.0')]); // back rise
   }
 
+  // ---- trims: waistband, collar, cuffs ----
+  const band = pieces.find((p) => p.role === 'waistband');
+  if (type === 'pants' && band) {
+    const W = Math.max(...band.points.map((p) => p.x)) * 2;
+    const bandH = Math.max(...band.points.map((p) => p.y));
+    const [FR, FL, BR, BL] = insts;
+    const place: Placer = (u, v) => {
+      const th = Math.PI / 2 - ((u + W / 2) / W) * TAU; // starts at centre front, runs round the right side
+      return torsoPoint(f, f.waistH - v * (1 - 0.02) + (bandH - bandH), th, W);
+    };
+    add(band, false, place);
+    const WB = insts[insts.length - 1];
+    multi.push([
+      [[WB, key(band, 'waistband.2m'), key(band, 'waistband.2')]],
+      [[FR, key(front, 'front.0'), key(front, 'front.1')], [BR, key(back, 'back.1'), key(back, 'back.0')], [BL, key(back, 'back.0'), key(back, 'back.1')], [FL, key(front, 'front.1'), key(front, 'front.0')]],
+    ]);
+    seams.push([WB, key(band, 'waistband.1'), key(band, 'waistband.2'), WB, key(band, 'waistband.1m'), key(band, 'waistband.2m')]);
+  }
+  const collar = pieces.find((p) => p.role === 'collar');
+  if (type !== 'pants' && collar) {
+    const [F, B] = insts;
+    const L = Math.max(...collar.points.map((p) => p.x)) * 2;
+    const fND = front.points.find((q) => q.key === 'front.0')?.y ?? 8;
+    const nr = f.neckRing(f.neckH + 1);
+    const place: Placer = (u, v) => {
+      const th = Math.PI / 2 - ((L / 2 - u) / L) * TAU;
+      const depth = fND * Math.max(0, Math.sin(th)) + 2 * Math.max(0, -Math.sin(th));
+      const r = Math.max(L / TAU, Math.max(nr.a, nr.b) + 1.2) + 0.15 * v;
+      return [r * Math.cos(th), f.neckH - depth + v * 0.9, (nr.cz ?? 0) + r * Math.sin(th)];
+    };
+    add(collar, false, place);
+    const C = insts[insts.length - 1];
+    multi.push([
+      [[C, key(collar, 'collar.1'), key(collar, 'collar.1m')]],
+      [[F, key(front, 'front.0'), key(front, 'front.2')], [B, key(back, 'back.2m'), key(back, 'back.0')], [B, key(back, 'back.0'), key(back, 'back.2')], [F, key(front, 'front.2m'), key(front, 'front.0')]],
+    ]);
+  }
+  const cuff = pieces.find((p) => p.role === 'cuff');
+  if (type === 'shirt' && cuff && sleeve) {
+    const cw = Math.max(...cuff.points.map((p) => p.x)) * 2;
+    const sTop = Math.min(...sleeve.points.map((p) => p.y));
+    const sEnd = (tag(sleeve, 'cuff')?.y ?? 60) - sTop;
+    for (const side of [1, -1]) {
+      const S = sleeveInst[side];
+      if (!S) continue;
+      const ca = Math.cos(side * f.armAngle), sa = Math.sin(side * f.armAngle);
+      const place: Placer = (u, v) => {
+        const s = f.acromionS + sEnd + v;
+        const R = cw / TAU;
+        const ar = f.armRing(s, side);
+        const r = Math.max(R, Math.max(ar.a, ar.b) + 0.8);
+        const phi = Math.max(-Math.PI, Math.min(Math.PI, u / R));
+        const lx = side * r * Math.cos(phi), lz = r * Math.sin(phi), ly = -s;
+        return [f.shoulderJoint.x * side + lx * ca - ly * sa, f.shoulderJoint.y + lx * sa + ly * ca, lz];
+      };
+      add(cuff, side < 0, place);
+      const K = insts[insts.length - 1];
+      multi.push([[[K, key(cuff, 'cuff.1'), key(cuff, 'cuff.1m')]], [[S.inst, key(sleeve, 'sleeve.4'), key(sleeve, 'sleeve.4m')]]]);
+      seams.push([K, key(cuff, 'cuff.1'), key(cuff, 'cuff.2'), K, key(cuff, 'cuff.1m'), key(cuff, 'cuff.2m')]);
+    }
+  }
+
   // ---- constraints ----
   const stretch: [number, number, number, number][] = [];
   const maxStrain: number[] = [];
@@ -215,11 +281,30 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
 
   const sew: [number, number][] = [];
   const seen = new Set<string>();
-  for (const [A, a0, a1, B, b0, b1] of seams) {
-    if (!a0 || !a1 || !b0 || !b1) continue;
-    const pa = seamPath(A.mesh, a0, a1), pb = seamPath(B.mesh, b0, b1);
-    if (pa.length < 2 || pb.length < 2) continue;
-    const ta = pathParams(A.mesh.uv, pa), tb = pathParams(B.mesh.uv, pb);
+  // a side is one or more piece edges in a row; both sides are matched by arc length, so ease or
+  // gathering (sleeve cap, cuff pleat) is spread evenly along the seam
+  const sideVerts = (side: Side) => {
+    const verts: number[] = [];
+    const uvs: Pt[] = [];
+    for (const [P, a, b] of side) {
+      if (!a || !b) return null;
+      const path = seamPath(P.mesh, a, b);
+      if (path.length < 2) return null;
+      for (const v of path) { verts.push(P.offset + v); uvs.push(P.mesh.uv[v]); }
+    }
+    // arc length over the whole side (piece-to-piece jumps add nothing)
+    const t = [0];
+    for (let i = 1; i < verts.length; i++) {
+      const d = Math.hypot(uvs[i].x - uvs[i - 1].x, uvs[i].y - uvs[i - 1].y);
+      t.push(t[i - 1] + (d > 3 * spacing ? 0 : d));
+    }
+    const L = t[t.length - 1] || 1;
+    return { verts, t: t.map((x) => x / L) };
+  };
+  const all: [Side, Side][] = [...seams.map(([A, a0, a1, B, b0, b1]) => [[[A, a0, a1]], [[B, b0, b1]]] as [Side, Side]), ...multi];
+  for (const [sa, sb] of all) {
+    const A = sideVerts(sa), B = sideVerts(sb);
+    if (!A || !B) continue;
     const link = (i: number, j: number) => {
       const k = `${i},${j}`;
       if (i === j || seen.has(k)) return;
@@ -227,11 +312,11 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
       sew.push([i, j]);
     };
     const nearest = (ts: number[], t: number) => ts.reduce((bi, v, i) => (Math.abs(v - t) < Math.abs(ts[bi] - t) ? i : bi), 0);
-    pa.forEach((v, i) => link(A.offset + v, B.offset + pb[nearest(tb, ta[i])]));
-    pb.forEach((v, i) => link(A.offset + pa[nearest(ta, tb[i])], B.offset + v));
+    A.verts.forEach((v, i) => link(v, B.verts[nearest(B.t, A.t[i])]));
+    B.verts.forEach((v, i) => link(A.verts[nearest(A.t, B.t[i])], v));
   }
 
-  const sim = new ClothSim(count, stretch, bend, sew, { sewCompliance: 0, friction: 0.6, damping: 0.985 });
+  const sim = new ClothSim(count, stretch, bend, sew, { sewCompliance: 0, friction: 0.35, damping: 0.985 });
   maxStrain.forEach((v, i) => (sim.maxStrain[i] = v));
   sim.substeps = SUB;
   for (const pi of insts) {

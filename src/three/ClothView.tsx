@@ -6,11 +6,12 @@ import { bodyFrame, type Body } from './body';
 import { riskColor } from './rings';
 import { fabricMaterial, stretchMat } from './materials';
 import { useStore } from '../store';
+import { boneMatrices, jointPoints, poseAt, NBONES, type Mode } from '../sim/pose';
 
 // Live cloth view. The simulation runs in a Web Worker (src/sim/worker.ts); this component sends it the
 // pattern, fabric and body, and streams back positions and strain every frame.
 
-const SPACING = 2.0;
+const SPACING = 1.8;
 
 interface Topo {
   geo: THREE.BufferGeometry;
@@ -30,8 +31,29 @@ function skinMaterial(skin: string) {
   });
 }
 
-export default function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin }: { type: GarmentType; pieces: Piece[]; body: Body; stretch: boolean; showBody: boolean; showGarment: boolean; skin: string }) {
+const jointMat = new THREE.MeshBasicMaterial({ color: '#2563eb', depthTest: false, transparent: true, opacity: 0.9 });
+const jointGeo = new THREE.SphereGeometry(1.4, 16, 12);
+
+function setBone(bone: THREE.Bone, M: Float64Array, b: number) {
+  const o = b * 12;
+  bone.matrix.set(M[o], M[o + 1], M[o + 2], M[o + 3], M[o + 4], M[o + 5], M[o + 6], M[o + 7], M[o + 8], M[o + 9], M[o + 10], M[o + 11], 0, 0, 0, 1);
+}
+
+export default function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, mode, showJoints }: { type: GarmentType; pieces: Piece[]; body: Body; stretch: boolean; showBody: boolean; showGarment: boolean; skin: string; mode: Mode; showJoints: boolean }) {
   const [bodyGeo, setBodyGeo] = useState<THREE.BufferGeometry | null>(null);
+  const pose = useRef<{ mode: Mode; t: number }>({ mode: 'stand', t: 0 });
+  const bones = useMemo(() => Array.from({ length: NBONES }, () => { const b = new THREE.Bone(); b.matrixAutoUpdate = false; return b; }), []);
+  const skinned = useMemo(() => {
+    if (!bodyGeo) return null;
+    const m = new THREE.SkinnedMesh(bodyGeo, undefined);
+    bones.forEach((b) => m.add(b));
+    m.bind(new THREE.Skeleton(bones, bones.map(() => new THREE.Matrix4())), new THREE.Matrix4());
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.frustumCulled = false;
+    return m;
+  }, [bodyGeo, bones]);
+  const jointRefs = useRef<THREE.Mesh[]>([]);
   const skinMat = useMemo(() => skinMaterial(skin), [skin]);
   const worker = useMemo(() => new Worker(new URL('../sim/worker.ts', import.meta.url), { type: 'module' }), []);
   const [topo, setTopo] = useState<Topo | null>(null);
@@ -52,6 +74,8 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.BufferAttribute(m.positions, 3));
         g.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3));
+        g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(m.skinIndex, 4));
+        g.setAttribute('skinWeight', new THREE.BufferAttribute(m.skinWeight, 4));
         g.setIndex(new THREE.BufferAttribute(m.indices, 1));
         g.computeBoundingSphere();
         setBodyGeo((old) => {
@@ -74,12 +98,13 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         set({ draping: true, simStatus: 'Simulating fabric…' });
       } else if (m.type === 'frame') {
         pending.current.pos = m.pos;
+        pose.current = { mode: m.mode, t: m.t };
         if (m.strain) pending.current.strain = m.strain;
         if (m.peak) {
           const fr = fRef.current;
           const marks: [string, number][] = [['shoulders', fr.shoulderH], ['chest', fr.chestH], ['waist', fr.waistH], ['hips', fr.hipH], ['seat', fr.crotchH + 4], ['thigh', (fr.crotchH + fr.kneeH) / 2], ['knee', fr.kneeH], ['calf', fr.kneeH / 2]];
           const where = marks.reduce((b, k) => (Math.abs(k[1] - m.peak.y) < Math.abs(b[1] - m.peak.y) ? k : b))[0];
-          set({ drapePeak: { ratio: m.peak.ratio, strain: m.peak.strain, where } });
+          set({ drapePeak: { ratio: m.peak.ratio, strain: m.peak.strain, where, over: m.peak.over } });
         }
         if (m.sleeping) set({ draping: false });
       }
@@ -103,17 +128,25 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
     return () => clearTimeout(t);
   }, [type, pieces, body, redrape, worker]);
 
+  useEffect(() => {
+    worker.postMessage({ type: 'mode', mode });
+  }, [mode, worker]);
+
   const paint = (geo: THREE.BufferGeometry, ratios: Float32Array) => {
     const col = geo.getAttribute('color') as THREE.BufferAttribute;
     if (col.count !== ratios.length) return;
     for (let i = 0; i < ratios.length; i++) {
-      const c = riskColor(ratios[i] <= 0.2 ? 0 : ratios[i]);
+      const c = riskColor(ratios[i] <= 0.15 ? 0 : ratios[i]);
       col.setXYZ(i, c.r, c.g, c.b);
     }
     col.needsUpdate = true;
   };
 
   useFrame(() => {
+    // pose the body and joints with the same pose the cloth was simulated against
+    const M = boneMatrices(fRef.current, poseAt(pose.current.mode, pose.current.t, fRef.current));
+    bones.forEach((b, i) => setBone(b, M, i));
+    if (showJoints) jointPoints(fRef.current, M).forEach((p, i) => jointRefs.current[i]?.position.set(p[0], p[1], p[2]));
     if (!topo) return;
     const p = pending.current;
     if (p.pos) {
@@ -140,7 +173,10 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
   const mats = useMemo(() => (topo ? topo.fabrics.map((fb) => fabricMaterial(fb)) : []), [topo]);
   return (
     <group>
-      {showBody && bodyGeo && <mesh geometry={bodyGeo} material={skinMat} castShadow receiveShadow />}
+      {showBody && skinned && <primitive object={skinned} material={skinMat} />}
+      {showJoints && Array.from({ length: 13 }, (_, i) => (
+        <mesh key={i} ref={(el) => { if (el) jointRefs.current[i] = el; }} geometry={jointGeo} material={jointMat} renderOrder={10} />
+      ))}
       {showGarment && topo && (
         <mesh geometry={topo.geo} material={stretch ? topo.fabrics.map(() => stretchMat) : mats} castShadow receiveShadow frustumCulled={false} />
       )}

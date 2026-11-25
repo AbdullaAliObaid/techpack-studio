@@ -111,12 +111,12 @@ export function fitTable(type: GarmentType, pieces: Piece[], b: Body): FitRow[] 
     return [
       { label: 'Waist', body: b.waist, garment: gs['Waist circumference'] },
       { label: 'Hip', body: b.hips, garment: gs['Hip circumference'] },
-      { label: 'Thigh', body: d.thigh, garment: gs['Thigh circumference'], estimated: true },
+      { label: 'Thigh', body: d.thigh, garment: gs['Thigh circumference'], estimated: b.thigh === undefined },
       { label: 'Knee', body: d.knee, garment: gs['Knee circumference'], estimated: true },
-      { label: 'Leg opening', body: d.ankle, garment: gs['Leg opening'], estimated: true },
-      { length: true, label: 'Front rise', body: f.waistH - f.crotchH, garment: gs['Front rise'], estimated: true },
+      { label: 'Leg opening', body: d.ankle, garment: gs['Leg opening'], estimated: b.ankle === undefined },
+      { length: true, label: 'Front rise', body: f.waistH - f.crotchH, garment: gs['Front rise'] + bandH(pieces), estimated: true },
       { length: true, label: 'Inseam', body: b.inseam, garment: inseam },
-      { length: true, label: 'Outseam', body: f.waistH, garment: gs['Outseam'], estimated: true },
+      { length: true, label: 'Outseam', body: f.waistH, garment: gs['Outseam'] + bandH(pieces), estimated: true },
     ];
   }
   return [
@@ -126,9 +126,14 @@ export function fitTable(type: GarmentType, pieces: Piece[], b: Body): FitRow[] 
     { length: true, label: 'Shoulder', body: b.shoulder, garment: gs['Shoulder width'] },
     { label: 'Neck', body: b.neck, garment: collarLen },
     { length: true, label: 'Sleeve / arm', body: b.arm, garment: gs['Sleeve length'] + (type === 'shirt' ? 6 : 0) },
-    { label: 'Bicep', body: d.bicep, garment: gs['Bicep circumference'], estimated: true },
-    { label: 'Cuff / wrist', body: d.wrist, garment: type === 'shirt' ? collarCuff(pieces) : gs['Cuff opening'], estimated: true },
+    { label: 'Bicep', body: d.bicep, garment: gs['Bicep circumference'], estimated: b.bicep === undefined },
+    { label: 'Cuff / wrist', body: d.wrist, garment: type === 'shirt' ? collarCuff(pieces) : gs['Cuff opening'], estimated: b.wrist === undefined },
   ];
+}
+
+function bandH(pieces: Piece[]) {
+  const wb = pieces.find((p) => p.role === 'waistband');
+  return wb ? bbox(wb.points).h : 0;
 }
 
 function collarCuff(pieces: Piece[]) {

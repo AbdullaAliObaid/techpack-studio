@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { makePreset, GARMENT_LABEL, type GarmentType, type Piece } from './data/presets';
 import { DEFAULT_BODY, type Body } from './three/body';
-import { draft, regradePoints } from './data/draft';
+import { draft, regradePoints, type Fit } from './data/draft';
 import { bezAt, toBeziers, type PPoint, type Pt } from './lib/geometry';
 import { uid, type Units } from './lib/units';
 
@@ -13,6 +13,7 @@ export interface Project {
   body: Body;
   /** when on, the pattern is regraded whenever body measurements change */
   linkPattern: boolean;
+  fit?: Fit;
   updatedAt: number;
 }
 
@@ -35,8 +36,9 @@ interface State {
   showTape: boolean;
   draping: boolean;
   simStatus: string;
-  drapePeak: { ratio: number; strain: number; where: string };
+  drapePeak: { ratio: number; strain: number; where: string; over?: number };
   redrapeToken: number;
+  mode: import('./sim/pose').Mode;
   fabricScope: 'all' | 'piece';
   past: Piece[][];
   future: Piece[][];
@@ -53,21 +55,22 @@ interface State {
   deletePoint: (pieceId: string, pointId: string) => void;
   toggleSmooth: (pieceId: string, pointId: string) => void;
   setFabric: (fabricId: string, color: number) => void;
-  setBody: (key: keyof Body, v: number) => void;
+  setBody: (key: keyof Body, v: number | undefined) => void;
   resetBody: () => void;
   setLink: (on: boolean) => void;
+  setFit: (fit: Fit) => void;
   newProject: (g: GarmentType) => void;
   loadProject: (p: Project) => void;
   rename: (name: string) => void;
 }
 
 export function freshProject(g: GarmentType, name?: string, body: Body = DEFAULT_BODY): Project {
-  return { id: uid(), name: name ?? `Untitled ${GARMENT_LABEL[g].toLowerCase()}`, garment: g, pieces: makePreset(g, body), body: { ...body }, linkPattern: true, updatedAt: Date.now() };
+  return { id: uid(), name: name ?? `Untitled ${GARMENT_LABEL[g].toLowerCase()}`, garment: g, pieces: makePreset(g, body), body: { ...body }, linkPattern: true, fit: 'regular', updatedAt: Date.now() };
 }
 
 /** Regrade every piece from one body to another, keeping the user's edits as offsets. */
-function regrade(p: Project, from: Body, to: Body): Piece[] {
-  const a = draft(p.garment, from), b = draft(p.garment, to);
+function regrade(p: Project, from: Body, to: Body, fitFrom: Fit = p.fit ?? 'regular', fitTo: Fit = p.fit ?? 'regular'): Piece[] {
+  const a = draft(p.garment, from, fitFrom), b = draft(p.garment, to, fitTo);
   return p.pieces.map((pc) => {
     const da = a.find((d) => d.role === pc.role), db = b.find((d) => d.role === pc.role);
     return da && db ? { ...pc, points: regradePoints(pc.points, da.points, db.points) } : pc;
@@ -98,6 +101,7 @@ export const useStore = create<State>((set, get) => {
     simStatus: '',
     drapePeak: { ratio: 0, strain: 0, where: '' },
     redrapeToken: 0,
+    mode: 'stand',
     fabricScope: 'all',
     past: [],
     future: [],
@@ -216,7 +220,8 @@ export const useStore = create<State>((set, get) => {
 
     setBody: (key, v) =>
       set((s) => {
-        const body = { ...s.project.body, [key]: v };
+        const body = { ...s.project.body, [key]: v } as Body;
+        if (v === undefined) delete (body as unknown as Record<string, unknown>)[key];
         const pieces = s.project.linkPattern ? regrade(s.project, s.project.body, body) : s.project.pieces;
         return { project: { ...s.project, body, pieces, updatedAt: Date.now() } };
       }),
@@ -227,6 +232,12 @@ export const useStore = create<State>((set, get) => {
         return { project: { ...s.project, body, pieces, updatedAt: Date.now() } };
       }),
     setLink: (on) => set((s) => ({ project: { ...s.project, linkPattern: on, updatedAt: Date.now() } })),
+    setFit: (fit) =>
+      set((s) => {
+        get().commit();
+        const pieces = regrade(s.project, s.project.body, s.project.body, s.project.fit ?? 'regular', fit);
+        return { project: { ...s.project, fit, pieces, updatedAt: Date.now() } };
+      }),
 
     newProject: (g) => set((s) => ({ project: freshProject(g, undefined, s.project.body), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
     loadProject: (p) => set((s) => ({ project: { ...p, linkPattern: p.linkPattern ?? true }, past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),

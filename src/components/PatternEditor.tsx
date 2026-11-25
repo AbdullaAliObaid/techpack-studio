@@ -18,6 +18,7 @@ type Drag =
   | { mode: 'pinch'; startDist: number; startMid: Pt; startView: View };
 
 const ACCENT = '#2563eb';
+export const SEAM_ALLOWANCE = 1; // cm
 
 export default function PatternEditor() {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -284,7 +285,7 @@ function PieceView(props: {
       poly,
       bb,
       c: centroid(poly),
-      stitch: polyD(offsetInward(poly, 1)),
+      cut: polyD(offsetInward(poly, -SEAM_ALLOWANCE)),
       specs: pieceSpecs(p),
     };
   }, [p.points, p.specs]);
@@ -297,8 +298,9 @@ function PieceView(props: {
       {/* body */}
       <path d={geo.d} fill={`url(#fab-${p.id})`} data-kind="piece" data-piece={p.id} style={{ cursor: 'move' }} />
       <path d={geo.d} fill="rgba(255,255,255,0.12)" pointerEvents="none" />
-      {showStitch && <path d={geo.stitch} fill="none" stroke="#1e293b" strokeOpacity={0.55} strokeWidth={px(1)} strokeDasharray={`${px(5)} ${px(3)}`} pointerEvents="none" />}
-      <path d={geo.d} fill="none" stroke={selected ? ACCENT : '#1e293b'} strokeWidth={px(selected ? 2 : 1.4)} pointerEvents="none" />
+      {showStitch && <path d={geo.cut} fill="none" stroke="#64748b" strokeOpacity={0.8} strokeWidth={px(1)} pointerEvents="none" />}
+      {/* the editable outline is the sewing line (finished size); the outer line is the cut line with seam allowance */}
+      <path d={geo.d} fill="none" stroke={selected ? ACCENT : '#1e293b'} strokeWidth={px(selected ? 2 : 1.4)} strokeDasharray={showStitch ? `${px(6)} ${px(3)}` : undefined} pointerEvents="none" />
       {/* wide invisible stroke for picking edges */}
       <path d={geo.d} fill="none" stroke="transparent" strokeWidth={px(16)} data-kind="edge" data-piece={p.id} />
 

@@ -1,6 +1,6 @@
 import { bbox, type PPoint, type Pt } from '../lib/geometry';
 import { uid } from '../lib/units';
-import { draft } from './draft';
+import { draft, type Fit } from './draft';
 import { DEFAULT_BODY, type Body } from '../three/body';
 
 export type GarmentType = 'jacket' | 'shirt' | 'pants';
@@ -91,8 +91,8 @@ function layout(pieces: Piece[], maxRow = 150) {
 }
 
 /** A preset is a draft from the body plus garment metadata. */
-export function makePreset(type: GarmentType, body: Body = DEFAULT_BODY): Piece[] {
-  const drafted = draft(type, body);
+export function makePreset(type: GarmentType, body: Body = DEFAULT_BODY, fit: Fit = 'regular'): Piece[] {
+  const drafted = draft(type, body, fit);
   const pieces = META[type].map((m) => {
     const d = drafted.find((q) => q.role === m.role)!;
     return { id: uid(), name: m.name, role: m.role, cut: m.cut, offset: { x: 0, y: 0 }, symmetric: true, fabric: { id: DEFAULT_FABRIC[type], color: 0 }, specs: m.specs, points: d.points };

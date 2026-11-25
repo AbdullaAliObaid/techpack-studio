@@ -3,10 +3,12 @@ import { useStore, type Project } from '../store';
 import { GARMENT_LABEL, type GarmentType } from '../data/presets';
 import { deleteProject, listProjects, saveProject } from '../lib/projects';
 import { uid } from '../lib/units';
+import { exportTechPack } from '../lib/exportPdf';
+import { piecesToDxf } from '../lib/exportDxf';
 
 export default function TopBar() {
   const { project, units, past, future, set, undo, redo, newProject, loadProject, rename } = useStore();
-  const [menu, setMenu] = useState<'new' | 'open' | null>(null);
+  const [menu, setMenu] = useState<'new' | 'open' | 'export' | null>(null);
   const [saved, setSaved] = useState(true);
   const [list, setList] = useState<Project[]>([]);
   const ref = useRef<HTMLDivElement>(null);
@@ -28,9 +30,26 @@ export default function TopBar() {
     };
   }, []);
 
-  const openMenu = (m: 'new' | 'open') => {
+  const openMenu = (m: 'new' | 'open' | 'export') => {
     if (m === 'open') setList(listProjects());
     setMenu(menu === m ? null : m);
+  };
+
+  const exportPdf = () => {
+    const canvas = document.querySelector('.viewport canvas') as HTMLCanvasElement | null;
+    let shot: string | null = null;
+    try { shot = canvas ? canvas.toDataURL('image/png') : null; } catch { shot = null; }
+    exportTechPack(project, units, shot);
+  };
+  const exportDxf = () => {
+    const b = project.body;
+    const dxf = piecesToDxf(project.pieces, { project: project.name, size: `H${Math.round(b.height)} C${Math.round(b.chest)} W${Math.round(b.waist)} H${Math.round(b.hips)}` });
+    const url = URL.createObjectURL(new Blob([dxf], { type: 'application/dxf' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${project.name.replace(/[^a-z0-9]+/gi, '_')}_pattern.dxf`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
   };
 
   const duplicate = () => {
@@ -79,6 +98,22 @@ export default function TopBar() {
           )}
         </div>
         <button className="btn ghost" onClick={duplicate}>Duplicate</button>
+        <div className="menu-wrap">
+          <button className="btn ghost" onClick={() => openMenu('export')}>Export ▾</button>
+          {menu === 'export' && (
+            <div className="menu wide">
+              <div className="menu-label">Send to a factory</div>
+              <button onClick={() => { exportPdf(); setMenu(null); }}>
+                <b>Tech pack (PDF)</b>
+                <small>Cover with 3D render, pattern sheet, specs, fit, seams, materials</small>
+              </button>
+              <button onClick={() => { exportDxf(); setMenu(null); }}>
+                <b>Pattern pieces (DXF)</b>
+                <small>Full size, cut + sewing lines, grain lines, in mm</small>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <input className="proj-name" value={project.name} onChange={(e) => rename(e.target.value)} />

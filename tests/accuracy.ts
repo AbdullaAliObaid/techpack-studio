@@ -32,26 +32,54 @@ for (const [name, b] of Object.entries(bodies)) {
   check('mesh waist girth', tape(f.torsoRing(f.waistH)), b.waist);
   check('mesh hip girth', tape(f.torsoRing(f.hipH)), b.hips);
   check('mesh neck girth', tape(f.neckRing(f.neckMeasureH)), b.neck);
-  check('crown height', f.neckH + 0.034 * f.H + f.headH, b.height);
+  check('crown height', f.neckH + 0.029 * f.H + f.headH, b.height);
   check('crotch height (inseam)', f.crotchH, b.inseam);
   check('shoulder point to point', 2 * f.acromion.x, b.shoulder);
   check('shoulder point to wrist (arm)', Math.hypot(f.acromion.x - f.wrist.x, f.acromion.y - f.wrist.y), b.arm);
 
   // the rendered body mesh, measured like a tape (convex hull of the slice around the torso)
   const mesh = meshField(calibratedField(b));
+  // slice the rendered mesh, link the cut segments into closed loops, take the loop around the torso centre
   const slice = (h: number) => {
-    const P = mesh.positions, I = mesh.indices, pts: [number, number][] = [];
+    const P = mesh.positions, I = mesh.indices;
+    const pt = new Map<string, [number, number]>();
+    const adj = new Map<string, string[]>();
+    const key = (a: number, c: number) => (a < c ? `${a}_${c}` : `${c}_${a}`);
     for (let t = 0; t < I.length; t += 3) {
+      const cut: string[] = [];
       for (let e = 0; e < 3; e++) {
-        const a = I[t + e] * 3, c = I[t + ((e + 1) % 3)] * 3;
-        const ya = P[a + 1], yc = P[c + 1];
+        const a = I[t + e], c = I[t + ((e + 1) % 3)];
+        const ya = P[a * 3 + 1], yc = P[c * 3 + 1];
         if ((ya - h) * (yc - h) >= 0) continue;
-        const u = (h - ya) / (yc - ya);
-        const x = P[a] + (P[c] - P[a]) * u, z = P[a + 2] + (P[c + 2] - P[a + 2]) * u;
-        if (Math.abs(x) < f.torsoAt(h).a + 0.6) pts.push([x, z]); // torso section only, not the arms
+        const u = (h - ya) / (yc - ya), k = key(a, c);
+        pt.set(k, [P[a * 3] + (P[c * 3] - P[a * 3]) * u, P[a * 3 + 2] + (P[c * 3 + 2] - P[a * 3 + 2]) * u]);
+        cut.push(k);
+      }
+      if (cut.length === 2) {
+        (adj.get(cut[0]) ?? adj.set(cut[0], []).get(cut[0])!).push(cut[1]);
+        (adj.get(cut[1]) ?? adj.set(cut[1], []).get(cut[1])!).push(cut[0]);
       }
     }
-    return hullLength(pts);
+    const seen = new Set<string>();
+    let best: [number, number][] = [];
+    for (const start of adj.keys()) {
+      if (seen.has(start)) continue;
+      const loop: [number, number][] = [];
+      let cur: string | undefined = start;
+      while (cur && !seen.has(cur)) {
+        seen.add(cur);
+        loop.push(pt.get(cur)!);
+        cur = adj.get(cur)!.find((n) => !seen.has(n));
+      }
+      // keep the loop that encloses the torso centre (x = 0, z = 0)
+      let inside = false;
+      for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+        const [xi, zi] = loop[i], [xj, zj] = loop[j];
+        if (zi > 0 !== zj > 0 && 0 < ((xj - xi) * (0 - zi)) / (zj - zi) + xi) inside = !inside;
+      }
+      if (inside && loop.length > best.length) best = loop;
+    }
+    return hullLength(best);
   };
   check('rendered mesh chest (tape)', slice(f.chestH), b.chest, 0.25);
   check('rendered mesh waist (tape)', slice(f.waistH), b.waist, 0.25);
@@ -89,7 +117,7 @@ for (const [name, b] of Object.entries(bodies)) {
       const ring = seat.rings.reduce((a, r) => (Math.abs(r.y - h) < Math.abs(a.y - h) ? r : a));
       check('pants 3D hip ring = pattern hip', perimeter(ring.a, ring.b, ring.shape, 720), 2 * (w(fp, hipY) + w(bp, bcr + (hipY - cr))), 0.6);
       const legTop = Math.max(...seat.rings.map((r) => r.y));
-      check('pants waistband lands on body waist', legTop, f.waistH, 1.2);
+      check('pants leg pieces + waistband reach the body waist', legTop + 4, f.waistH, 1.2);
     }
   }
 }

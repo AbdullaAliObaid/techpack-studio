@@ -31,7 +31,7 @@ export default function Toolbar() {
       <div className="tool-sep" />
       <Btn on={symmetry} title="Symmetry bind (S)" onClick={() => set({ symmetry: !symmetry })}>{I.sym}</Btn>
       <Btn on={showMeasure} title="Measurements (M)" onClick={() => set({ showMeasure: !showMeasure })}>{I.measure}</Btn>
-      <Btn on={showStitch} title="Stitch lines" onClick={() => set({ showStitch: !showStitch })}>{I.stitch}</Btn>
+      <Btn on={showStitch} title="Seam allowance (cut line, 1 cm outside the sewing line)" onClick={() => set({ showStitch: !showStitch })}>{I.stitch}</Btn>
       <div className="tool-sep" />
       <Btn title="Fit to screen (F)" onClick={() => window.dispatchEvent(new Event('tps-fit'))}>{I.fit}</Btn>
     </div>

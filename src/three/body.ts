@@ -11,11 +11,28 @@ export interface Body {
   arm: number;
   inseam: number;
   neck: number;
+  // optional: when left empty they are estimated from the main measurements
+  thigh?: number;
+  calf?: number;
+  bicep?: number;
+  wrist?: number;
+  ankle?: number;
+}
+
+/** Girths that can be typed in or estimated from the main measurements. */
+export function limbGirths(b: Body) {
+  return {
+    thigh: b.thigh ?? b.hips * 0.575,
+    calf: b.calf ?? b.hips * 0.37,
+    bicep: b.bicep ?? b.chest * 0.31,
+    wrist: b.wrist ?? b.neck * 0.43,
+    ankle: b.ankle ?? b.hips * 0.225,
+  };
 }
 
 export const DEFAULT_BODY: Body = { height: 175, chest: 100, waist: 84, hips: 100, shoulder: 46, arm: 62, inseam: 80, neck: 39 };
 
-export const BODY_FIELDS: { key: keyof Body; label: string; min: number; max: number }[] = [
+export const BODY_FIELDS: { key: keyof Body; label: string; min: number; max: number; advanced?: boolean }[] = [
   { key: 'height', label: 'Height', min: 140, max: 210 },
   { key: 'chest', label: 'Chest', min: 70, max: 150 },
   { key: 'waist', label: 'Waist', min: 55, max: 150 },
@@ -24,6 +41,11 @@ export const BODY_FIELDS: { key: keyof Body; label: string; min: number; max: nu
   { key: 'arm', label: 'Arm length', min: 45, max: 80 },
   { key: 'inseam', label: 'Inseam', min: 60, max: 100 },
   { key: 'neck', label: 'Neck', min: 30, max: 50 },
+  { key: 'thigh', label: 'Thigh', min: 40, max: 85, advanced: true },
+  { key: 'calf', label: 'Calf', min: 28, max: 55, advanced: true },
+  { key: 'bicep', label: 'Bicep', min: 22, max: 50, advanced: true },
+  { key: 'wrist', label: 'Wrist', min: 13, max: 22, advanced: true },
+  { key: 'ankle', label: 'Ankle', min: 17, max: 32, advanced: true },
 ];
 
 export const SKIN_TONES = [
@@ -239,8 +261,8 @@ export function bodyFrame(b: Body): BodyFrame {
     { k: chestH - 0.045 * H, v: [under.a, under.b] },
     { k: chestH, v: [chest.a, chest.b] },
     { k: shoulderH - 0.03 * H, v: [Math.max(shA + 1, chest.a * 1.0), chest.b * 0.9] },
-    { k: shoulderH - 0.008 * H, v: [shA, chest.b * 0.72] },
-    { k: shoulderH + 0.003 * H, v: [shA * 0.72, chest.b * 0.6] },
+    { k: shoulderH - 0.008 * H, v: [shA, chest.b * 0.74] },
+    { k: shoulderH + 0.004 * H, v: [shA * 0.82, chest.b * 0.62] },
     { k: neckH - 0.002 * H, v: [neck.a * 1.35, neck.b * 1.18] },
     { k: neckH, v: [neck.a, neck.b] },
   ]);
@@ -249,7 +271,7 @@ export function bodyFrame(b: Body): BodyFrame {
     return { a, b: bb };
   };
 
-  const pecAmp = 0.045 + 0.12 * Math.max(0, b.chest / b.waist - 1.08);
+  const pecAmp = 0.06 + 0.12 * Math.max(0, b.chest / b.waist - 1.08);
   const gluteAmp = 0.07 + 0.18 * Math.max(0, b.hips / b.waist - 1.08);
   const torsoShape = (h: number, cloth = false): Shape => {
     const wPec = pecAmp * g(h, chestH - 0.014 * H, 0.026 * H);
@@ -281,15 +303,16 @@ export function bodyFrame(b: Body): BodyFrame {
   };
 
   // ---------------- legs ----------------
-  const thigh = (b.hips * 0.575) / TAU;
-  const kneeR = (b.hips * 0.365) / TAU;
-  const calfR = (b.hips * 0.34) / TAU;
-  const ankleR = (b.hips * 0.215) / TAU;
+  const lg = limbGirths(b);
+  const thigh = lg.thigh / TAU;
+  const kneeR = (lg.thigh * 0.64) / TAU;
+  const calfR = lg.calf / TAU;
+  const ankleR = lg.ankle / TAU;
   const leg = makeCurve([
     { k: ankleH - 5, v: [ankleR * 0.92] },
     { k: ankleH, v: [ankleR] },
     { k: ankleH + 0.06 * H, v: [ankleR * 1.12] },
-    { k: kneeH - 0.07 * H, v: [calfR] },
+    { k: kneeH - 0.07 * H, v: [calfR * 0.93] },
     { k: kneeH, v: [kneeR] },
     { k: kneeH + 0.06 * H, v: [kneeR * 1.12] },
     { k: (kneeH + crotchH) / 2 + 0.03 * H, v: [thigh * 0.9] },
@@ -327,11 +350,18 @@ export function bodyFrame(b: Body): BodyFrame {
   const legMaxAt = (h: number) => legAt(h) * Math.max(maxOf(legShape(h, 1)), 1);
 
   // ---------------- arms ----------------
-  const bicep = (b.chest * 0.31) / TAU;
+  const bicep = lg.bicep / TAU;
   const R0 = bicep * 1.12;
-  const armAngle = (20 * Math.PI) / 180; // relaxed A-pose, like a draping avatar
   const acromion = { x: b.shoulder / 2, y: shoulderH };
   const joint = { x: b.shoulder / 2 - 0.55 * R0, y: shoulderH - 0.6 * R0 };
+  // relaxed A-pose: open the arms just enough that they clear the torso at the chest line (like a fitting stance)
+  let armAngle = (20 * Math.PI) / 180;
+  for (let deg = 20; deg <= 40; deg++) {
+    armAngle = (deg * Math.PI) / 180;
+    const sc = (joint.y - chestH) / Math.cos(armAngle);
+    const inner = joint.x + sc * Math.sin(armAngle) - bicep * 1.15;
+    if (inner >= chest.a * 1.06 + 2.5) break;
+  }
   const u = { x: Math.sin(armAngle), y: -Math.cos(armAngle) }; // down the arm
   const d = { x: acromion.x - joint.x, y: acromion.y - joint.y };
   const du = d.x * u.x + d.y * u.y;
@@ -339,7 +369,7 @@ export function bodyFrame(b: Body): BodyFrame {
   const wrist = { x: joint.x + L * u.x, y: joint.y + L * u.y };
   const upperArm = 0.56 * L;
   const foreArm = L - upperArm;
-  const wristR = (b.neck * 0.42) / TAU;
+  const wristR = lg.wrist / TAU;
   const arm = makeCurve([
     { k: 0, v: [bicep * 1.12] },
     { k: 0.2 * L, v: [bicep] },
@@ -405,7 +435,7 @@ export function bodyFrame(b: Body): BodyFrame {
     armDome: dome,
     upperArm, foreArm,
     footLen: 0.152 * H,
-    headH: H - (neckH + 0.034 * H),
+    headH: H - (neckH + 0.029 * H),
     wristR, kneeR, ankleR,
   };
 }

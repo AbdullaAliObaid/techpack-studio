@@ -30,9 +30,9 @@ export class ClothSim {
   nStretch: number;
   gravity = -981;
   substeps = 10;
-  staticFriction = 1.0;
+  staticFriction = 0.5;
   maxMove = 1.2; // cm per substep, keeps early sewing from exploding
-  collider: { project(p: Float32Array, i: number, out: { nx: number; ny: number; nz: number; depth: number }): boolean } | null = null;
+  collider: { project(p: Float32Array, i: number, out: { nx: number; ny: number; nz: number; depth: number; vx?: number; vy?: number; vz?: number }): boolean } | null = null;
   // self collision
   selfRadius = 0;
   panelOf: Uint16Array | null = null;
@@ -43,6 +43,10 @@ export class ClothSim {
   private hashItems = new Int32Array(0);
   params: ClothParams;
   sleeping = false;
+  /** keep simulating (body is moving) */
+  awake = false;
+  /** called before each substep (k of n), e.g. to move the body smoothly between frames */
+  substepHook: ((k: number, n: number) => void) | null = null;
   frames = 0;
   /** frames of the sewing phase: low gravity, no friction, so seams can close before the cloth settles */
   sewFrames = 45;
@@ -75,13 +79,14 @@ export class ClothSim {
     const n = this.n;
     const h2 = h * h;
     const damp = Math.pow(this.params.damping, 1 / this.substeps);
-    const nrm = { nx: 0, ny: 0, nz: 0, depth: 0 };
+    const nrm = { nx: 0, ny: 0, nz: 0, depth: 0, vx: 0, vy: 0, vz: 0 };
     const sewing = this.frames < this.sewFrames;
     const fr = sewing ? 0 : this.params.friction;
     const grav = sewing ? 0 : this.gravity;
     const sfr = sewing ? 0 : this.staticFriction;
     let maxV = 0;
     for (let s = 0; s < this.substeps; s++) {
+      if (this.substepHook) this.substepHook(s, this.substeps);
       for (let i = 0; i < n; i++) {
         if (!invMass[i]) continue;
         const j = i * 3;
@@ -132,7 +137,8 @@ export class ClothSim {
             pos[j + 2] = prev[j + 2] + (pos[j + 2] - prev[j + 2]) * 0.2;
           }
           if (this.collider.project(pos, j, nrm)) {
-            const mx = pos[j] - prev[j], my = pos[j + 1] - prev[j + 1], mz = pos[j + 2] - prev[j + 2];
+            // slide relative to the skin underneath (the body may be moving)
+            const mx = pos[j] - prev[j] - (nrm.vx ?? 0), my = pos[j + 1] - prev[j + 1] - (nrm.vy ?? 0), mz = pos[j + 2] - prev[j + 2] - (nrm.vz ?? 0);
             const dn = mx * nrm.nx + my * nrm.ny + mz * nrm.nz;
             const tx = mx - dn * nrm.nx, ty = my - dn * nrm.ny, tz = mz - dn * nrm.nz;
             const tl = Math.sqrt(tx * tx + ty * ty + tz * tz);
@@ -151,8 +157,8 @@ export class ClothSim {
       }
     }
     this.frames++;
-    if (this.frames > this.sewFrames + 60 && maxV < 1.5) this.sleeping = true;
-    if (this.frames > this.sewFrames + 330) this.sleeping = true;
+    if (!this.awake && this.frames > this.sewFrames + 60 && maxV < 1.5) this.sleeping = true;
+    if (!this.awake && this.frames > this.sewFrames + 330) this.sleeping = true;
     return maxV;
   }
 

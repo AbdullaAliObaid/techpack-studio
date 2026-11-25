@@ -197,3 +197,15 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; }
 .seam-row > span:nth-child(2), .seam-row b { text-align: right; font-variant-numeric: tabular-nums; }
 .seam-row .pos { color: #157f3c; }
 .seam-row .neg { color: #b42318; }
+
+.est { color: var(--muted); font-size: 10.5px; font-style: italic; }
+.clear { border: 0; background: none; color: var(--muted); font-size: 10px; padding: 0 0 0 4px; }
+.btn.more { align-self: flex-start; color: var(--accent); }
+
+.fit-bar { display: flex; align-items: center; gap: 10px; padding: 10px 12px 0; font-weight: 600; font-size: 12px; color: #475569; }
+
+.motion-bar { position: absolute; left: 50%; transform: translateX(-50%); bottom: 12px; display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.95); border: 1px solid var(--line); border-radius: 10px; padding: 5px 6px 5px 12px; box-shadow: var(--shadow); font-size: 12px; font-weight: 600; color: #475569; max-width: calc(100% - 24px); overflow-x: auto; }
+.motion-bar .seg button { font-size: 12px; padding: 5px 9px; }
+.motion-bar .seg button.on { background: var(--accent); color: #fff; }
+.legend { bottom: 64px !important; }
+.drape-bar { bottom: 64px !important; }

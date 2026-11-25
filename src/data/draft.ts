@@ -4,7 +4,7 @@
 // Pants are drawn as single leg pieces with the grainline (crease) at x = 0.
 
 import { outlineLength, type PPoint } from '../lib/geometry';
-import { bodyFrame, type Body, type BodyFrame } from '../three/body';
+import { bodyFrame, limbGirths, type Body, type BodyFrame } from '../three/body';
 import type { GarmentType } from './presets';
 
 const TAU = Math.PI * 2;
@@ -13,18 +13,28 @@ const TAU = Math.PI * 2;
 export const EASE = {
   jacket: { chest: 10, waist: 14, hem: 8, neck: 4, armhole: 6, bicep: 12, cuff: 14, sleeve: 3, length: 3, shoulder: 1, capEase: 2.5 },
   shirt: { chest: 10, waist: 12, hem: 6, neck: 2, armhole: 4, bicep: 9, cuff: 8, sleeve: 1, length: 5, shoulder: 0, capEase: 1, pleat: 6 },
-  pants: { waist: 2, hip: 6, thigh: 0, knee: 14, legOpening: 18 },
+  pants: { waist: 2, hip: 6, thigh: 0, knee: 12, legOpening: 16, waistband: 4 },
 };
+
+export type Fit = 'slim' | 'regular' | 'relaxed';
+export const FITS: Fit[] = ['slim', 'regular', 'relaxed'];
+
+/** Ease for a garment in a given fit. Regular is the base table; slim and relaxed take room out or add it. */
+export function easeFor<T extends GarmentType>(type: T, fit: Fit = 'regular'): (typeof EASE)[T] {
+  const base = { ...EASE[type] } as Record<string, number>;
+  if (fit === 'regular') return base as (typeof EASE)[T];
+  const slim = fit === 'slim';
+  const adj: Record<string, [number, number]> = type === 'pants'
+    ? { hip: [-2, 4], knee: [-5, 6], legOpening: [-5, 6] }
+    : { chest: [-4, 8], waist: [-6, 8], hem: [-2, 8], bicep: [-4, 5], cuff: type === 'jacket' ? [-3, 2] : [0, 0], armhole: [-1, 1.5] };
+  for (const [k, [s, r]] of Object.entries(adj)) base[k] += slim ? s : r;
+  return base as (typeof EASE)[T];
+}
 
 /** Body girths that are not typed in but estimated from the typed ones (same formulas the 3D body uses). */
 export function derivedGirths(b: Body) {
-  return {
-    bicep: b.chest * 0.31,
-    wrist: b.neck * 0.42,
-    thigh: b.hips * 0.575,
-    knee: b.hips * 0.365,
-    ankle: b.hips * 0.215,
-  };
+  const l = limbGirths(b);
+  return { bicep: l.bicep, wrist: l.wrist, thigh: l.thigh, knee: l.thigh * 0.64, ankle: l.ankle };
 }
 
 type P = [number, number, boolean?, string?, string?]; // x, y, smooth, tag, key/pair
@@ -61,8 +71,8 @@ function free(role: string, pts: P[]): PPoint[] {
   return out;
 }
 
-function tops(type: 'jacket' | 'shirt', b: Body, f: BodyFrame): DraftPiece[] {
-  const E = EASE[type];
+function tops(type: 'jacket' | 'shirt', b: Body, f: BodyFrame, fit: Fit): DraftPiece[] {
+  const E = easeFor(type, fit);
   const g = derivedGirths(b);
   const hps = f.neckH; // high point shoulder height on the body; pattern y = 0 sits here
   const uaY = hps - f.chestH + E.armhole; // chest line, a little below the armpit
@@ -95,7 +105,7 @@ function tops(type: 'jacket' | 'shirt', b: Body, f: BodyFrame): DraftPiece[] {
   const sLen = b.arm + E.sleeve - cuffH;
   const xB = (g.bicep + E.bicep) / 2;
   const cuffLen = g.wrist + E.cuff;
-  const xCuff = (type === 'shirt' ? cuffLen + (EASE.shirt.pleat ?? 0) : cuffLen) / 2; // shirt sleeve end is pleated into the cuff
+  const xCuff = (type === 'shirt' ? cuffLen + EASE.shirt.pleat : cuffLen) / 2; // shirt sleeve end is pleated into the cuff
   const armhole = (side: 'r' | 'l') =>
     outlineLength(front, front[side === 'r' ? 3 : front.length - 3].id, front[side === 'r' ? 5 : front.length - 5].id) +
     outlineLength(back, back[side === 'r' ? 3 : back.length - 3].id, back[side === 'r' ? 5 : back.length - 5].id);
@@ -141,12 +151,14 @@ function tops(type: 'jacket' | 'shirt', b: Body, f: BodyFrame): DraftPiece[] {
   return out;
 }
 
-function pants(b: Body, f: BodyFrame): DraftPiece[] {
-  const E = EASE.pants;
+function pants(b: Body, f: BodyFrame, fit: Fit): DraftPiece[] {
+  const E = easeFor('pants', fit);
   const g = derivedGirths(b);
-  const rise = f.waistH - f.crotchH; // waistline to crotch
-  const hipD = f.waistH - f.hipH; // waistline to hip line
-  const kneeY = f.waistH - f.kneeH;
+  // the waistband (E.waistband tall) sits on the natural waist, so the leg pieces start that much lower
+  const wbH = E.waistband;
+  const rise = f.waistH - f.crotchH - wbH; // top of the leg piece to the crotch
+  const hipD = f.waistH - f.hipH - wbH; // top of the leg piece to the hip line
+  const kneeY = f.waistH - f.kneeH - wbH;
   const hemY = rise + b.inseam - 3; // hem 3 cm off the floor
   const wF = (b.waist + E.waist) / 4 - 1, wB = (b.waist + E.waist) / 4 + 1;
   const hF = (b.hips + E.hip) / 4 - 1, hB = (b.hips + E.hip) / 4 + 1;
@@ -194,7 +206,7 @@ function pants(b: Body, f: BodyFrame): DraftPiece[] {
   }
   const front_ = front;
   const wb = b.waist + E.waist;
-  const band = half('waistband', [[0, 0], [wb / 2, 0, false, 'wb'], [wb / 2, 4], [0, 4]]);
+  const band = half('waistband', [[0, 0], [wb / 2, 0, false, 'wb'], [wb / 2, wbH], [0, wbH]]);
   return [
     { role: 'front', points: front_ },
     { role: 'back', points: back },
@@ -202,9 +214,9 @@ function pants(b: Body, f: BodyFrame): DraftPiece[] {
   ];
 }
 
-export function draft(type: GarmentType, b: Body): DraftPiece[] {
+export function draft(type: GarmentType, b: Body, fit: Fit = 'regular'): DraftPiece[] {
   const f = bodyFrame(b);
-  return type === 'pants' ? pants(b, f) : tops(type, b, f);
+  return type === 'pants' ? pants(b, f, fit) : tops(type, b, f, fit);
 }
 
 /**

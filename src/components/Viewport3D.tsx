@@ -2,7 +2,7 @@ import { Canvas } from '@react-three/fiber';
 import { ContactShadows, OrbitControls } from '@react-three/drei';
 import { useStore } from '../store';
 import { SKIN_TONES } from '../three/body';
-import Joints from '../three/Joints';
+import { MODES } from '../sim/pose';
 import { fabricById } from '../data/fabrics';
 import ClothView from '../three/ClothView';
 import StudioLight from '../three/StudioLight';
@@ -10,7 +10,7 @@ import BodyPanel from './BodyPanel';
 import MeasureOverlay from '../three/MeasureOverlay';
 
 export default function Viewport3D() {
-  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus } = useStore();
+  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode } = useStore();
   const { body, pieces, garment } = project;
   const stretch = view3d === 'stretch';
   const H = body.height;
@@ -19,7 +19,7 @@ export default function Viewport3D() {
 
   return (
     <div className="viewport">
-      <Canvas shadows dpr={[1, 2]} camera={{ position: [-H * 0.18, H * 0.6, H * 2.3], fov: 32, near: 1, far: 5000 }}>
+      <Canvas shadows dpr={[1, 2]} gl={{ preserveDrawingBuffer: true }} camera={{ position: [-H * 0.18, H * 0.6, H * 2.3], fov: 32, near: 1, far: 5000 }}>
         <color attach="background" args={['#f1f3f6']} />
         <StudioLight />
         <hemisphereLight intensity={0.45} groundColor="#c9ccd3" />
@@ -27,8 +27,8 @@ export default function Viewport3D() {
           shadow-camera-left={-120} shadow-camera-right={120} shadow-camera-top={220} shadow-camera-bottom={-20} shadow-camera-far={800} />
         <directionalLight position={[-160, 140, -120]} intensity={0.55} />
         <directionalLight position={[0, 80, 260]} intensity={0.25} />
-        {showJoints && <Joints body={body} />}
-        <ClothView type={garment} pieces={pieces} body={body} stretch={stretch} showBody={showBody} showGarment={showGarment} skin={SKIN_TONES[skin]?.hex ?? SKIN_TONES[0].hex} />
+        
+        <ClothView type={garment} pieces={pieces} body={body} stretch={stretch} showBody={showBody} showGarment={showGarment} skin={SKIN_TONES[skin]?.hex ?? SKIN_TONES[0].hex} mode={mode} showJoints={showJoints} />
         {showTape && <MeasureOverlay body={body} units={units} />}
         <ContactShadows position={[0, 0.05, 0]} scale={220} blur={2.6} opacity={0.35} far={60} />
         <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
@@ -57,6 +57,15 @@ export default function Viewport3D() {
         </label>
       </div>
 
+      <div className="motion-bar">
+        <span>Movement</span>
+        <div className="seg">
+          {MODES.map((m) => (
+            <button key={m.id} className={mode === m.id ? 'on' : ''} onClick={() => set({ mode: m.id })}>{m.label}</button>
+          ))}
+        </div>
+      </div>
+
       <div className="drape-bar">
         <span className={`drape-dot ${draping ? 'on' : ''}`} />
         {draping ? simStatus || 'Simulating fabric…' : 'Draped'}
@@ -76,12 +85,13 @@ export default function Viewport3D() {
               <>Everything has room. Loose fit, no strain.</>
             ) : (
               <>
-                Tightest at the <b>{peak.where}</b>: stretching {(peak.strain * 100).toFixed(1)}%
+                {mode !== 'stand' ? 'Worst moment while ' + MODES.find((m) => m.id === mode)!.label.toLowerCase() + ': ' : ''}Tightest at the <b>{peak.where}</b>: stretching {(peak.strain * 100).toFixed(1)}%
                 {' '}({Math.round(peak.ratio * 100)}% of what {peakFabric.name.toLowerCase()} can safely take)
+                {peak.over !== undefined && peak.over > 0.005 && <>. {(peak.over * 100).toFixed(0)}% of the garment is past its safe stretch.</>}
               </>
             )}
           </div>
-          <div className="legend-note">Measured from the simulated cloth. Standing pose; movement modes come next.</div>
+          <div className="legend-note">Measured from the simulated cloth{mode === 'stand' ? ', standing. Pick a movement to stress test it.' : ' through the movement.'}</div>
         </div>
       )}
 

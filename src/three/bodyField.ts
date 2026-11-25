@@ -13,6 +13,7 @@ interface Row { a: number; b: number; cx: number; cz: number; m: Float32Array }
 
 interface Tube {
   kind: 'tube';
+  chain?: number;
   y0: number;
   rows: Row[];
   /** world point -> [radial x, axial, radial z] in the tube's frame */
@@ -21,8 +22,8 @@ interface Tube {
   group: number;
   scale?: (ax: number) => number;
 }
-interface Capsule { kind: 'cap'; a: number[]; b: number[]; r0: number; r1: number; box: number[]; group: number }
-interface Ellipsoid { kind: 'ell'; c: number[]; r: number[]; box: number[]; group: number }
+interface Capsule { chain?: number; kind: 'cap'; a: number[]; b: number[]; r0: number; r1: number; box: number[]; group: number }
+interface Ellipsoid { chain?: number; kind: 'ell'; c: number[]; r: number[]; box: number[]; group: number }
 type Part = Tube | Capsule | Ellipsoid;
 
 function rowsFrom(y0: number, y1: number, step: number, ring: (y: number) => BRing & { cx?: number }): Row[] {
@@ -60,9 +61,9 @@ function headShape(t: number): Shape {
     return Math.exp(-0.5 * (d / s) ** 2);
   };
   const F = Math.PI / 2, B = (3 * Math.PI) / 2;
-  const nose = 0.12 * g(t, 0.42, 0.07) + 0.05 * g(t, 0.36, 0.03);
-  const brow = 0.035 * g(t, 0.62, 0.04), eyes = 0.045 * g(t, 0.55, 0.035), cheek = 0.035 * g(t, 0.42, 0.06);
-  const lips = 0.03 * g(t, 0.25, 0.03), chin = 0.05 * g(t, 0.08, 0.05), occ = 0.04 * g(t, 0.55, 0.12);
+  const nose = 0.085 * g(t, 0.42, 0.07) + 0.03 * g(t, 0.36, 0.03);
+  const brow = 0.025 * g(t, 0.62, 0.05), eyes = 0.022 * g(t, 0.55, 0.04), cheek = 0.03 * g(t, 0.42, 0.07);
+  const lips = 0.012 * g(t, 0.25, 0.04), chin = 0.05 * g(t, 0.08, 0.05), occ = 0.04 * g(t, 0.55, 0.12);
   return (th) =>
     1 + nose * ga(th, F, 0.13) + brow * ga(th, F, 0.7) - eyes * (ga(th, F - 0.38, 0.16) + ga(th, F + 0.38, 0.16)) +
     cheek * (ga(th, F - 0.7, 0.35) + ga(th, F + 0.7, 0.35)) + lips * ga(th, F, 0.3) + chin * ga(th, F, 0.35) + occ * ga(th, B, 0.8);
@@ -76,6 +77,7 @@ export class BodyField {
   box: number[];
   private o = new Float64Array(3);
   cal: Calibration = { torso: [], neck: 1 };
+  armMaps: Record<number, (x: number, y: number, z: number, o: Float64Array) => void> = {};
 
   constructor(public body: Body, cal?: Calibration) {
     this.f = bodyFrame(body);
@@ -126,7 +128,7 @@ export class BodyField {
     (P[P.length - 1] as Tube & { dy?: number }).dy = 0.5;
 
     // head
-    const Hh = f.headH, hy = f.neckH + 0.034 * H, hz = 0.016 * H;
+    const Hh = f.headH, hy = f.neckH + 0.029 * H, hz = 0.016 * H;
     const hd = rowsFrom(0, Hh, Hh / 60, (y) => {
       const t = y / Hh;
       const [a, b, cz] = HEAD(t);
@@ -139,6 +141,8 @@ export class BodyField {
     }
 
     for (const side of [1, -1]) {
+      const armChain = side > 0 ? 1 : 2, legChain = side > 0 ? 3 : 4;
+      const first = P.length;
       // arm: one tube from the shoulder dome to just past the wrist, in the arm's own frame
       const jx = side * f.shoulderJoint.x, jy = f.shoulderJoint.y, ang = side * f.armAngle;
       const ca = Math.cos(-ang), sa = Math.sin(-ang);
@@ -180,12 +184,12 @@ export class BodyField {
       const hbox = [Math.min(hb[0], wpt[0]) - 7, Math.min(hb[1], wpt[1]) - 4, -7, Math.max(hb[0], wpt[0]) + 7, Math.max(hb[1], wpt[1]) + 3, 8];
       P.push({ kind: 'tube', y0: 0, rows: pr, group: 1, map: palmMap, box: hbox } as Tube);
       (P[P.length - 1] as Tube & { dy?: number }).dy = 1;
-      const fingers: [number, number, number][] = [[2.95, 7.0, 0.84], [0.98, 7.8, 0.88], [-0.98, 7.3, 0.82], [-2.85, 5.9, 0.72]];
+      const fingers: [number, number, number][] = [[2.55, 7.0, 0.86], [0.85, 7.8, 0.9], [-0.85, 7.3, 0.85], [-2.45, 5.9, 0.76]];
       const curl = -side;
       for (const [zf, len, r] of fingers) {
         const L1 = len * sc * 0.55, L2 = len * sc * 0.45, R = r * sc;
         const base = [-side * 0.25 * sc, -palmL + 0.4 * sc, zf * sc];
-        const a1 = curl * 0.18, a2 = curl * 0.5;
+        const a1 = curl * 0.12, a2 = curl * 0.3;
         const k1 = [base[0] + Math.sin(a1) * L1, base[1] - Math.cos(a1) * L1, base[2]];
         const k2 = [k1[0] + Math.sin(a2) * L2, k1[1] - Math.cos(a2) * L2, k1[2]];
         const A = toWorld(base[0], base[1], base[2]), Bp = toWorld(k1[0], k1[1], k1[2]), C = toWorld(k2[0], k2[1], k2[2]);
@@ -204,6 +208,9 @@ export class BodyField {
       const lx = side * f.legX;
       const lg = rowsFrom(f.ankleH - 5, f.hipJointH + 4, 0.5, (h) => f.legRing(h, side));
       const lR = bx(lg, 1);
+      for (let q = first; q < P.length; q++) P[q].chain = armChain;
+      const legFirst = P.length;
+      this.armMaps[side] = armMap;
       P.push({ kind: 'tube', y0: f.ankleH - 5, rows: lg, group: 2, box: [lx - lR, f.ankleH - 7, -lR, lx + lR, f.hipJointH + 6, lR], map: (x, y, z, o) => { o[0] = x - lx; o[1] = y; o[2] = z; } } as Tube);
       (P[P.length - 1] as Tube & { dy?: number }).dy = 0.5;
 
@@ -227,10 +234,11 @@ export class BodyField {
       };
       P.push({ kind: 'tube', y0: 0, rows: fr, group: 0, map: footMap, box: [lx - 8, -1, hz0 - 2, lx + 8, 0.4 * FL, hz0 + FL + 3] } as Tube);
       (P[P.length - 1] as Tube & { dy?: number }).dy = 1;
+      for (let q = legFirst; q < P.length; q++) P[q].chain = legChain;
     }
   }
 
-  private partDist(p: Part, x: number, y: number, z: number): number {
+  partDist(p: Part, x: number, y: number, z: number): number {
     if (p.kind === 'cap') {
       const [ax, ay, az] = p.a, [bx, by, bz] = p.b;
       const vx = bx - ax, vy = by - ay, vz = bz - az;
@@ -282,6 +290,55 @@ export class BodyField {
     d = smin(d, hand, 0.9);
     d = smin(d, ear, 0.35);
     return d;
+  }
+
+  /** Which chain (torso, arms, legs) owns the surface nearest this point. */
+  chainAt(x: number, y: number, z: number): number {
+    const best = [1e9, 1e9, 1e9, 1e9, 1e9];
+    for (const p of this.parts) {
+      const bb = p.box;
+      if (x < bb[0] - 8 || x > bb[3] + 8 || y < bb[1] - 8 || y > bb[4] + 8 || z < bb[2] - 8 || z > bb[5] + 8) continue;
+      const c = p.chain ?? 0;
+      best[c] = Math.min(best[c], this.partDist(p, x, y, z));
+    }
+    let c = 0;
+    for (let i = 1; i < 5; i++) if (best[i] < best[c]) c = i;
+    return c;
+  }
+
+  /** Arm axial coordinate (distance down the arm from the shoulder joint). */
+  armS(side: number, x: number, y: number, z: number) {
+    const o = new Float64Array(3);
+    this.armMaps[side](x, y, z, o);
+    return o[1];
+  }
+
+  /** Bone that owns this point (0 torso, 1/2 arm +x, 3/4 arm -x, 5/6 leg +x, 7/8 leg -x). */
+  boneAt(x: number, y: number, z: number): number {
+    const c = this.chainAt(x, y, z);
+    if (c === 0) return 0;
+    if (c <= 2) {
+      const side = c === 1 ? 1 : -1;
+      return (side > 0 ? 1 : 3) + (this.armS(side, x, y, z) >= this.f.upperArm ? 1 : 0);
+    }
+    return (c === 3 ? 5 : 7) + (y < this.f.kneeH ? 1 : 0);
+  }
+
+  /** Smooth skin weights for a surface vertex: up to 3 bones, blended across the joints. */
+  skin(x: number, y: number, z: number): [number[], number[]] {
+    const f = this.f;
+    const sm = (a: number, b: number, v: number) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const c = this.chainAt(x, y, z);
+    if (c === 0) return [[0], [1]];
+    if (c <= 2) {
+      const side = c === 1 ? 1 : -1, up = side > 0 ? 1 : 3;
+      const s = this.armS(side, x, y, z);
+      const root = sm(-f.armDome - 1, 4, s), fore = sm(f.upperArm - 3, f.upperArm + 3, s);
+      return [[0, up, up + 1], [1 - root, root * (1 - fore), root * fore]];
+    }
+    const th = c === 3 ? 5 : 7;
+    const root = sm(f.hipJointH + 4, f.crotchH - 3, y), shin = sm(f.kneeH + 3, f.kneeH - 3, y);
+    return [[0, th, th + 1], [1 - root, root * (1 - shin), root * shin]];
   }
 
   grad(x: number, y: number, z: number, out: Float64Array) {

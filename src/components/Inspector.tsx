@@ -3,12 +3,23 @@ import { useStore } from '../store';
 import { FABRICS, fabricById, stretchLabel } from '../data/fabrics';
 import { fabricDataUrl } from '../lib/textures';
 import { fitTable, garmentSpecs, pieceSpecs, seamReport } from '../lib/specs';
+import { FITS } from '../data/draft';
 import { fmt, toUnit } from '../lib/units';
 
 export default function Inspector() {
   const [tab, setTab] = useState<'fabric' | 'specs'>('fabric');
+  const { project, setFit } = useStore();
+  const fit = project.fit ?? 'regular';
   return (
     <aside className="inspector">
+      <div className="fit-bar">
+        <span>Fit</span>
+        <div className="seg full">
+          {FITS.map((f) => (
+            <button key={f} className={fit === f ? 'on' : ''} onClick={() => setFit(f)}>{f[0].toUpperCase() + f.slice(1)}</button>
+          ))}
+        </div>
+      </div>
       <div className="tabs">
         <button className={tab === 'fabric' ? 'on' : ''} onClick={() => setTab('fabric')}>Fabric</button>
         <button className={tab === 'specs' ? 'on' : ''} onClick={() => setTab('specs')}>Specs</button>
