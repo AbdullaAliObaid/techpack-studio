@@ -1,5 +1,7 @@
 import type { Piece, SpecDef, GarmentType } from '../data/presets';
 import { bbox, dist, samplePoly, sliceSpan, type Pt } from './geometry';
+import { derivedGirths } from '../data/draft';
+import { bodyFrame, type Body } from '../three/body';
 
 export interface SpecValue {
   label: string;
@@ -86,4 +88,50 @@ export function garmentSpecs(type: GarmentType, pieces: Piece[]): { label: strin
     { label: 'Bicep circumference', value: get('sleeve', 'Bicep') },
     { label: 'Cuff opening', value: get('sleeve', 'Cuff') },
   ];
+}
+
+export interface FitRow {
+  label: string;
+  body: number | null; // body measurement (cm), null when not comparable
+  garment: number;
+  estimated?: boolean; // body value derived from other measurements
+  length?: boolean; // a length, where a difference is a style choice rather than tightness
+}
+
+/** Body vs garment, i.e. where the ease comes from. */
+export function fitTable(type: GarmentType, pieces: Piece[], b: Body): FitRow[] {
+  const gs = Object.fromEntries(garmentSpecs(type, pieces).map((r) => [r.label, r.value]));
+  const d = derivedGirths(b);
+  const f = bodyFrame(b);
+  const collar = pieces.find((p) => p.role === 'collar');
+  const collarLen = collar ? computeSpec(collar, collar.specs[0])?.value ?? 0 : 0;
+  if (type === 'pants') {
+    const front = pieces.find((p) => p.role === 'front');
+    const inseam = front ? computeSpec(front, { label: 'Inseam', kind: 'vdist', tags: ['crotch', 'hem'] })?.value ?? 0 : 0;
+    return [
+      { label: 'Waist', body: b.waist, garment: gs['Waist circumference'] },
+      { label: 'Hip', body: b.hips, garment: gs['Hip circumference'] },
+      { label: 'Thigh', body: d.thigh, garment: gs['Thigh circumference'], estimated: true },
+      { label: 'Knee', body: d.knee, garment: gs['Knee circumference'], estimated: true },
+      { label: 'Leg opening', body: d.ankle, garment: gs['Leg opening'], estimated: true },
+      { length: true, label: 'Front rise', body: f.waistH - f.crotchH, garment: gs['Front rise'], estimated: true },
+      { length: true, label: 'Inseam', body: b.inseam, garment: inseam },
+      { length: true, label: 'Outseam', body: f.waistH, garment: gs['Outseam'], estimated: true },
+    ];
+  }
+  return [
+    { label: 'Chest', body: b.chest, garment: gs['Chest circumference'] },
+    { label: 'Waist', body: b.waist, garment: gs['Waist circumference'] },
+    { label: 'Hem / hips', body: b.hips, garment: gs['Hem circumference'] },
+    { length: true, label: 'Shoulder', body: b.shoulder, garment: gs['Shoulder width'] },
+    { label: 'Neck', body: b.neck, garment: collarLen },
+    { length: true, label: 'Sleeve / arm', body: b.arm, garment: gs['Sleeve length'] + (type === 'shirt' ? 6 : 0) },
+    { label: 'Bicep', body: d.bicep, garment: gs['Bicep circumference'], estimated: true },
+    { label: 'Cuff / wrist', body: d.wrist, garment: type === 'shirt' ? collarCuff(pieces) : gs['Cuff opening'], estimated: true },
+  ];
+}
+
+function collarCuff(pieces: Piece[]) {
+  const c = pieces.find((p) => p.role === 'cuff');
+  return c ? computeSpec(c, c.specs[0])?.value ?? 0 : 0;
 }

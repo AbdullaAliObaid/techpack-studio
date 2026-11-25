@@ -10,6 +10,7 @@ import { ringsGeometry, riskColor } from '../three/rings';
 import { fabricById } from '../data/fabrics';
 import { fabricCanvas } from '../lib/textures';
 import BodyPanel from './BodyPanel';
+import MeasureOverlay from '../three/MeasureOverlay';
 
 const stretchMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.65, side: THREE.DoubleSide });
 const matCache = new Map<string, THREE.MeshStandardMaterial>();
@@ -44,7 +45,7 @@ function GarmentPart({ part, stretch }: { part: ShellPart; stretch: boolean }) {
 }
 
 export default function Viewport3D() {
-  const { project, view3d, showBody, skin, showJoints, showGarment, set } = useStore();
+  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set } = useStore();
   const { body, pieces, garment } = project;
   const result = useMemo(() => buildGarment(garment, pieces, body), [garment, pieces, body]);
   const stretch = view3d === 'stretch';
@@ -65,6 +66,7 @@ export default function Viewport3D() {
         {showGarment && result.parts.map((p) => (
           <GarmentPart key={p.key} part={p} stretch={stretch} />
         ))}
+        {showTape && <MeasureOverlay body={body} units={units} />}
         <ContactShadows position={[0, 0.05, 0]} scale={220} blur={2.6} opacity={0.35} far={60} />
         <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
           <circleGeometry args={[70, 64]} />
@@ -86,6 +88,9 @@ export default function Viewport3D() {
         </label>
         <label className="chk">
           <input type="checkbox" checked={showJoints} onChange={(e) => set({ showJoints: e.target.checked })} /> Joints
+        </label>
+        <label className="chk">
+          <input type="checkbox" checked={showTape} onChange={(e) => set({ showTape: e.target.checked })} /> Tape measure
         </label>
       </div>
 

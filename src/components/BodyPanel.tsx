@@ -4,7 +4,7 @@ import { BODY_FIELDS, SKIN_TONES } from '../three/body';
 import { fromUnit, toUnit } from '../lib/units';
 
 export default function BodyPanel() {
-  const { project, units, setBody, resetBody, skin, set } = useStore();
+  const { project, units, setBody, resetBody, skin, set, setLink } = useStore();
   const [open, setOpen] = useState(() => window.innerWidth > 1500);
   const body = project.body;
   const step = units === 'cm' ? 0.5 : 0.25;
@@ -17,6 +17,10 @@ export default function BodyPanel() {
       </button>
       {open && (
         <div className="panel-body">
+          <label className="link-row">
+            <input type="checkbox" checked={project.linkPattern} onChange={(e) => setLink(e.target.checked)} />
+            <span>Pattern follows body. Turn off to test a fixed pattern on different bodies.</span>
+          </label>
           <div className="field">
             <div className="field-top"><label>Skin</label><span className="num">{SKIN_TONES[skin]?.name}</span></div>
             <div className="swatches">

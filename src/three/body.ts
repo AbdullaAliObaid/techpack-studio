@@ -61,6 +61,33 @@ export function maxOf(shape: Shape): number {
   return m;
 }
 
+/** Measured perimeter of a shaped ellipse ring (what a tape measure would read). */
+export function perimeter(a: number, b: number, shape?: Shape, n = 160): number {
+  let P = 0, px = 0, pz = 0;
+  for (let i = 0; i <= n; i++) {
+    const th = (i / n) * TAU;
+    const m = shape ? shape(th) : 1;
+    const x = a * m * Math.cos(th), z = b * m * Math.sin(th);
+    if (i) P += Math.hypot(x - px, z - pz);
+    px = x; pz = z;
+  }
+  return P;
+}
+
+/** A body cross section whose shaped perimeter equals C exactly. */
+export interface BRing {
+  a: number;
+  b: number;
+  shape: Shape;
+  C: number;
+  cz?: number;
+}
+
+export function normRing(a: number, b: number, shape: Shape, C: number): BRing {
+  const s = C / perimeter(a, b, shape);
+  return { a: a * s, b: b * s, shape, C };
+}
+
 /** Ellipse half-axes from a circumference and a depth/width ratio (Ramanujan approximation). */
 export function ellipseFromCirc(C: number, k: number): Ell {
   const f = 3 * (1 + k) - Math.sqrt((3 + k) * (1 + 3 * k));
@@ -116,6 +143,16 @@ export interface BodyFrame {
   armShape: (s: number, side: number) => Shape;
   armMaxAt: (s: number) => number;
   armFlat: (s: number) => [number, number];
+  torsoRing: (h: number) => BRing;
+  legRing: (h: number, side: number) => BRing;
+  armRing: (s: number, side: number) => BRing;
+  neckRing: (h: number) => BRing;
+  neckMeasureH: number;
+  neckTop: number;
+  acromion: { x: number; y: number };
+  acromionS: number;
+  wrist: { x: number; y: number };
+  armSeg: number;
   legX: number;
   shoulderJoint: { x: number; y: number };
   armAngle: number;
@@ -134,10 +171,10 @@ export function bodyFrame(b: Body): BodyFrame {
   const H = b.height;
   const shoulderH = 0.815 * H;
   const neckH = shoulderH + 0.014 * H;
-  const chestH = 0.72 * H;
-  const waistH = 0.62 * H;
-  const hipH = 0.52 * H;
-  const crotchH = Math.min(b.inseam, hipH - 5);
+  const crotchH = Math.min(b.inseam, 0.5 * H);
+  const hipH = Math.max(0.52 * H, crotchH + 7);
+  const waistH = Math.max(0.62 * H, hipH + 0.08 * H);
+  const chestH = Math.max(0.72 * H, waistH + 0.08 * H);
   const hipJointH = crotchH + 0.05 * H;
   const kneeH = Math.min(0.285 * H, crotchH - 15);
   const ankleH = 0.045 * H;
@@ -254,10 +291,18 @@ export function bodyFrame(b: Body): BodyFrame {
   const legMaxAt = (h: number) => legAt(h) * Math.max(maxOf(legShape(h, 1)), 1);
 
   // ---------------- arms ----------------
-  const L = b.arm;
+  const bicep = (b.chest * 0.31) / TAU;
+  const R0 = bicep * 1.12;
+  const armAngle = (9 * Math.PI) / 180;
+  const acromion = { x: b.shoulder / 2, y: shoulderH };
+  const joint = { x: b.shoulder / 2 - 0.55 * R0, y: shoulderH - 0.6 * R0 };
+  const u = { x: Math.sin(armAngle), y: -Math.cos(armAngle) }; // down the arm
+  const d = { x: acromion.x - joint.x, y: acromion.y - joint.y };
+  const du = d.x * u.x + d.y * u.y;
+  const L = du + Math.sqrt(du * du - (d.x * d.x + d.y * d.y) + b.arm * b.arm); // joint to wrist along the arm
+  const wrist = { x: joint.x + L * u.x, y: joint.y + L * u.y };
   const upperArm = 0.56 * L;
   const foreArm = L - upperArm;
-  const bicep = (b.chest * 0.31) / TAU;
   const wristR = (b.neck * 0.42) / TAU;
   const arm = makeCurve([
     { k: 0, v: [bicep * 1.12] },
@@ -269,7 +314,6 @@ export function bodyFrame(b: Body): BodyFrame {
     { k: L + 3, v: [wristR * 0.95] },
   ]);
   // shoulder end of the arm is a rounded dome (the deltoid cap) instead of a cone
-  const R0 = bicep * 1.12;
   const dome = R0 * 0.8;
   const armAt = (s: number) => (s < 0 ? R0 * Math.sqrt(Math.max(0.04, 1 - (s / dome) ** 2)) : arm(s)[0]);
   const armShape = (s: number, side: number): Shape => {
@@ -290,17 +334,42 @@ export function bodyFrame(b: Body): BodyFrame {
     return [1 - 0.2 * t, 1 + 0.16 * t];
   };
 
+  const torsoRing = (h: number): BRing => {
+    const e = torsoAt(h);
+    return normRing(e.a, e.b, torsoShape(h), ellipseCirc(e));
+  };
+  const legRing = (h: number, side: number): BRing => {
+    const r = legAt(h);
+    return normRing(r, r, legShape(h, side), TAU * r);
+  };
+  const armRing = (s: number, side: number): BRing => {
+    const r = armAt(s);
+    const [fx, fz] = armFlat(s);
+    return normRing(r * fx, r * fz, armShape(s, side), ellipseCirc({ a: r * fx, b: r * fz }));
+  };
+  // neck: the tape reading at neckMeasureH equals the neck measurement
+  const neckTop = neckH + 0.06 * H;
+  const neckMeasureH = neckH + 0.027 * H;
+  const neckRing = (h: number): BRing => {
+    const t = Math.max(0, (h - neckH) / (neckTop - neckH));
+    const flare = 0.28 * Math.max(0, 1 - t / 0.45) ** 2;
+    const C = b.neck * (1 + flare - 0.06 * (t - 0.45));
+    const e = ellipseFromCirc(C, 0.9 + flare * 0.2);
+    return { a: e.a, b: e.b, shape: () => 1, C, cz: 0.012 * H * t - flare * 2.2 };
+  };
+
   return {
+    torsoRing, legRing, armRing, neckRing, neckMeasureH, neckTop, acromion, acromionS: du, wrist, armSeg: L,
     b, H, neckH, shoulderH, chestH, waistH, hipH, crotchH, hipJointH, kneeH, ankleH, torsoBottom, torsoTop,
     torsoAt, torsoShape, legAt, legShape, legMaxAt, armAt, armShape, armMaxAt, armFlat,
     legX: hip.a * 0.46,
-    shoulderJoint: { x: b.shoulder / 2 - 3.4, y: shoulderH - 0.028 * H },
-    armAngle: (9 * Math.PI) / 180,
+    shoulderJoint: joint,
+    armAngle,
     armholeDepth: (shoulderH - chestH) * 0.85,
     armDome: dome,
     upperArm, foreArm,
     footLen: 0.152 * H,
-    headH: 0.13 * H,
+    headH: H - (neckH + 0.034 * H),
     wristR, kneeR, ankleR,
   };
 }

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { FABRICS, fabricById, stretchLabel } from '../data/fabrics';
 import { fabricDataUrl } from '../lib/textures';
-import { garmentSpecs, pieceSpecs } from '../lib/specs';
+import { fitTable, garmentSpecs, pieceSpecs } from '../lib/specs';
 import { fmt, toUnit } from '../lib/units';
 
 export default function Inspector() {
@@ -94,6 +94,24 @@ function SpecsTab() {
           </div>
         </div>
       )}
+      <div className="card">
+        <div className="card-title">Fit check</div>
+        <div className="fit-head"><span /><span>Body</span><span>Garment</span><span>Ease</span></div>
+        {fitTable(project.garment, project.pieces, project.body).map((r) => {
+          const ease = r.body === null ? null : r.garment - r.body;
+          return (
+            <div className="fit-row" key={r.label}>
+              <span>{r.label}</span>
+              <span className="muted">{r.body === null ? '·' : toUnit(r.body, units).toFixed(1)}{r.estimated ? '*' : ''}</span>
+              <b>{toUnit(r.garment, units).toFixed(1)}</b>
+              <span className={ease === null || r.length ? '' : ease < 0 ? 'neg' : ease < 2 ? 'tight' : 'pos'}>
+                {ease === null ? '' : (ease > 0 ? '+' : '') + toUnit(ease, units).toFixed(1)}
+              </span>
+            </div>
+          );
+        })}
+        <div className="fit-note">In {units}. * estimated from your other measurements. Negative ease means the garment is smaller than the body and has to stretch.</div>
+      </div>
       <div className="card">
         <div className="card-title">Garment specs</div>
         {g.map((r) => (

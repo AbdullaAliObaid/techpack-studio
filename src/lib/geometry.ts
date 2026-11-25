@@ -10,6 +10,8 @@ export interface PPoint {
   /** id of the mirrored partner point; equal to own id when the point sits on the axis */
   mirror: string | null;
   tag?: string;
+  /** stable id of a drafted point, used to regrade the pattern when the body changes */
+  key?: string;
 }
 
 export interface Bez {

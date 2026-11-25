@@ -11,6 +11,13 @@ Interactive tech pack builder: a CLO3D-style 2D pattern editor on the left, link
 6. 3D garment shell that follows the pattern, with the Stretch-Risk-O-Meter (standing pose)
 7. Projects autosave on the device, undo/redo, Apple Pencil and touch support
 
+## Accuracy
+1. Patterns are drafted from the body: every key point is a body measurement plus ease (see `src/data/draft.ts`)
+2. The 3D body's real geometry matches what you type: chest, waist, hips and neck girths, height, inseam, shoulder width and arm length
+3. The 3D garment's circumference at every height equals the pattern's, anchored at HPS, shoulder point and crotch
+4. Changing a measurement regrades the pattern and keeps your edits as offsets
+5. `npm test` checks all of this numerically on four body types
+
 ## Run
 npm install
 npm run dev

@@ -3,8 +3,8 @@ import { useStore } from '../store';
 
 // Local project storage (browser). Cloud sync with accounts comes in a later phase.
 
-const KEY = 'tps.projects.v1';
-const LAST = 'tps.last.v1';
+const KEY = 'techit.projects.v2';
+const LAST = 'techit.last.v2';
 
 function readAll(): Record<string, Project> {
   try {

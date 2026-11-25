@@ -62,18 +62,11 @@ const HEAD = makeCurve(
 );
 
 function buildGeometries(f: BodyFrame) {
-  const H = f.H;
   const torso: Ring[] = [];
-  for (let h = f.torsoBottom; h <= f.torsoTop + 0.01; h += 0.8) torso.push({ y: h, ...f.torsoAt(h), shape: f.torsoShape(h) });
+  for (let h = f.torsoBottom; h <= f.torsoTop + 0.01; h += 0.8) torso.push({ y: h, ...f.torsoRing(h) });
 
-  const neckR = (f.b.neck / TAU) * 0.97;
   const neck: Ring[] = [];
-  const neckTop = f.neckH + 0.06 * H;
-  for (let h = f.neckH - 5; h <= neckTop; h += 0.8) {
-    const t = Math.max(0, (h - f.neckH) / (neckTop - f.neckH));
-    const flare = 0.28 * Math.max(0, 1 - t / 0.45) ** 2; // widens into the trapezius
-    neck.push({ y: h, a: neckR * (1.0 + flare * 1.3 - 0.05 * t), b: neckR * (0.95 + flare * 0.5), cz: 0.012 * H * t - flare * 2.2 });
-  }
+  for (let h = f.neckH - 5; h <= f.neckTop; h += 0.8) neck.push({ y: h, ...f.neckRing(h) });
 
   const Hh = f.headH;
   const head: Ring[] = [];
@@ -85,25 +78,20 @@ function buildGeometries(f: BodyFrame) {
   const arm = (side: number) => {
     const upper: Ring[] = [];
     for (let s = -f.armDome * 0.98; s <= f.upperArm + 1.5; s += 0.6) {
-      const r = f.armAt(s);
-      const [fx, fz] = f.armFlat(s);
-      upper.push({ y: -s, a: r * fx, b: r * fz, shape: f.armShape(s, side) });
+      upper.push({ y: -s, ...f.armRing(s, side) });
     }
     const fore: Ring[] = [];
     for (let s = -1.5; s <= f.foreArm + 0.5; s += 0.9) {
-      const S = f.upperArm + s;
-      const r = f.armAt(S);
-      const [fx, fz] = f.armFlat(S);
-      fore.push({ y: -s, a: r * fx, b: r * fz, shape: f.armShape(S, side) });
+      fore.push({ y: -s, ...f.armRing(f.upperArm + s, side) });
     }
     return { upper: ringsGeometry(upper, { N: 40 }), fore: ringsGeometry(fore, { N: 40 }) };
   };
 
   const leg = (side: number) => {
     const thigh: Ring[] = [];
-    for (let h = f.hipJointH + 4; h >= f.kneeH - 1.5; h -= 1) thigh.push({ y: h - f.hipJointH, a: f.legAt(h), b: f.legAt(h), shape: f.legShape(h, side) });
+    for (let h = f.hipJointH + 4; h >= f.kneeH - 1.5; h -= 1) thigh.push({ y: h - f.hipJointH, ...f.legRing(h, side) });
     const shin: Ring[] = [];
-    for (let h = f.kneeH + 1.5; h >= f.ankleH - 3.5; h -= 1) shin.push({ y: h - f.kneeH, a: f.legAt(h), b: f.legAt(h), shape: f.legShape(h, side) });
+    for (let h = f.kneeH + 1.5; h >= f.ankleH - 3.5; h -= 1) shin.push({ y: h - f.kneeH, ...f.legRing(h, side) });
     return { thigh: ringsGeometry(thigh, { N: 44 }), shin: ringsGeometry(shin, { N: 44 }) };
   };
 
