@@ -5,7 +5,7 @@ import { fromUnit, toUnit } from '../lib/units';
 import Icon from './Icon';
 
 export default function BodyPanel() {
-  const { project, units, setBody, resetBody, skin, set, setLink } = useStore();
+  const { project, units, setBody, resetBody, skin, set, setLink, setBodyPreset } = useStore();
   const [open, setOpen] = useState(() => window.innerWidth > 1500);
   const [more, setMore] = useState(false);
   const body = project.body;
@@ -54,6 +54,10 @@ export default function BodyPanel() {
       </button>
       {open && (
         <div className="panel-body">
+          <div className="seg full" role="group" aria-label="Body preset">
+            <button className={body.sex !== 'female' ? 'on' : ''} aria-pressed={body.sex !== 'female'} onClick={() => setBodyPreset('male')}>Male</button>
+            <button className={body.sex === 'female' ? 'on' : ''} aria-pressed={body.sex === 'female'} onClick={() => setBodyPreset('female')}>Female</button>
+          </div>
           <label className="link-row">
             <input type="checkbox" checked={project.linkPattern} onChange={(e) => setLink(e.target.checked)} />
             <span>Pattern follows body. Turn off to test a fixed pattern on different bodies.</span>

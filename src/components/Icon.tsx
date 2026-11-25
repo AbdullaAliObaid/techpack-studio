@@ -22,6 +22,21 @@ const P: Record<string, ReactNode> = {
   share: <><path d="M12 15V3M8 7l4-4 4 4" /><path d="M6 11H5.5A2.5 2.5 0 003 13.5v5A2.5 2.5 0 005.5 21h13a2.5 2.5 0 002.5-2.5v-5a2.5 2.5 0 00-2.5-2.5H18" /></>,
   refresh: <path d="M20 12a8 8 0 11-2.6-5.9M20 4v5h-5" />,
   library: <><rect x="3.5" y="3.5" width="7" height="7" rx="2" /><rect x="13.5" y="3.5" width="7" height="7" rx="2" /><rect x="3.5" y="13.5" width="7" height="7" rx="2" /><rect x="13.5" y="13.5" width="7" height="7" rx="2" /></>,
+  seams: <path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" />,
+  pleat: <path d="M3 6l4 12 5-12 5 12 4-12" />,
+  pen: <path d="M4 20l1-5L16 4l4 4L9 19zM14 6l4 4" />,
+  patch: <><rect x="4.5" y="4.5" width="15" height="15" rx="3.5" strokeDasharray="3 2.5" /><path d="M9 12h6M12 9v6" /></>,
+  pose: <><circle cx="12" cy="4.8" r="2" /><path d="M12 8v6M5 10l7-2 7 2M12 14l-4 7M12 14l4 7" /></>,
+  trash: <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" />,
+  up: <path d="M12 19V5M6 11l6-6 6 6" />,
+  down: <path d="M12 5v14M6 13l6 6 6-6" />,
+  eye: <><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>,
+  eyeoff: <><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /><path d="M4 4l16 16" /></>,
+  flip: <><path d="M12 3v18" strokeDasharray="2 2" /><path d="M8 7L3 17h5zM16 7l5 10h-5z" /></>,
+  lock: <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 018 0v3" /></>,
+  unlock: <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 017.5-2" /></>,
+  layers: <path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5" />,
+  grid: <path d="M4 4h16v16H4zM4 12h16M12 4v16" />,
 };
 
 export default function Icon({ name, size = 20 }: { name: keyof typeof P | string; size?: number }) {

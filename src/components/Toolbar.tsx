@@ -13,11 +13,17 @@ function Btn(props: { on?: boolean; label: string; hint?: string; icon: string; 
 export default function Toolbar() {
   const { tool, symmetry, showMeasure, showStitch, set } = useStore();
   const t = (v: Tool) => () => set({ tool: v });
+  // edit tools open their controls in the inspector and drop any half finished action
+  const goto = (v: Tool) => () => set({ tool: v, inspectorTab: 'seams', seamDraft: { a: null, b: null, flip: false }, penDraft: [], penSheet: null });
   return (
     <div className="toolbar" role="toolbar" aria-label="Pattern tools" aria-orientation="vertical">
       <Btn on={tool === 'select'} label="Select and move" hint="V" icon="select" onClick={t('select')} />
       <Btn on={tool === 'add'} label="Add point" hint="P" icon="add" onClick={t('add')} />
       <Btn on={tool === 'pan'} label="Pan" hint="H" icon="pan" onClick={t('pan')} />
+      <div className="tool-sep" />
+      <Btn on={tool === 'seams'} label="Seams: join or open seams" hint="J" icon="seams" onClick={goto('seams')} />
+      <Btn on={tool === 'pleat'} label="Pleat: click an edge to add one" hint="L" icon="pleat" onClick={goto('pleat')} />
+      <Btn on={tool === 'pen'} label="Pen: draw a new piece" hint="D" icon="pen" onClick={goto('pen')} />
       <div className="tool-sep" />
       <Btn on={symmetry} label="Symmetry bind" hint="S" icon="sym" onClick={() => set({ symmetry: !symmetry })} />
       <Btn on={showMeasure} label="Measurements" hint="M" icon="measure" onClick={() => set({ showMeasure: !showMeasure })} />
