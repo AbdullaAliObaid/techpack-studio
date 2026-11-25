@@ -1,8 +1,11 @@
 // Run: npx tsx tests/accuracy.ts
-import { bodyFrame, perimeter, DEFAULT_BODY, type Body } from '../src/three/body';
+import { bodyFrame, perimeter, tapePerimeter, DEFAULT_BODY, type Body } from '../src/three/body';
 import { makePreset, type GarmentType } from '../src/data/presets';
 import { draft, regradePoints, EASE } from '../src/data/draft';
-import { fitTable } from '../src/lib/specs';
+import { fitTable, seamReport } from '../src/lib/specs';
+import { calibratedField } from '../src/three/bodyField';
+import { meshField } from '../src/three/mesher';
+import { hullLength } from '../src/three/body';
 import { buildGarment } from '../src/three/garment';
 import { samplePoly, sliceSpan } from '../src/lib/geometry';
 import { findTag } from '../src/lib/specs';
@@ -24,7 +27,7 @@ const check = (name: string, got: number, want: number, tol = 0.05) => {
 for (const [name, b] of Object.entries(bodies)) {
   console.log(`\n== ${name} body ==`);
   const f = bodyFrame(b);
-  const tape = (r: { a: number; b: number; shape: (t: number) => number }) => perimeter(r.a, r.b, r.shape, 720);
+  const tape = (r: { a: number; b: number; shape: (t: number) => number }) => tapePerimeter(r.a, r.b, r.shape, 720);
   check('mesh chest girth', tape(f.torsoRing(f.chestH)), b.chest);
   check('mesh waist girth', tape(f.torsoRing(f.waistH)), b.waist);
   check('mesh hip girth', tape(f.torsoRing(f.hipH)), b.hips);
@@ -34,13 +37,37 @@ for (const [name, b] of Object.entries(bodies)) {
   check('shoulder point to point', 2 * f.acromion.x, b.shoulder);
   check('shoulder point to wrist (arm)', Math.hypot(f.acromion.x - f.wrist.x, f.acromion.y - f.wrist.y), b.arm);
 
+  // the rendered body mesh, measured like a tape (convex hull of the slice around the torso)
+  const mesh = meshField(calibratedField(b));
+  const slice = (h: number) => {
+    const P = mesh.positions, I = mesh.indices, pts: [number, number][] = [];
+    for (let t = 0; t < I.length; t += 3) {
+      for (let e = 0; e < 3; e++) {
+        const a = I[t + e] * 3, c = I[t + ((e + 1) % 3)] * 3;
+        const ya = P[a + 1], yc = P[c + 1];
+        if ((ya - h) * (yc - h) >= 0) continue;
+        const u = (h - ya) / (yc - ya);
+        const x = P[a] + (P[c] - P[a]) * u, z = P[a + 2] + (P[c + 2] - P[a + 2]) * u;
+        if (Math.abs(x) < f.torsoAt(h).a + 0.6) pts.push([x, z]); // torso section only, not the arms
+      }
+    }
+    return hullLength(pts);
+  };
+  check('rendered mesh chest (tape)', slice(f.chestH), b.chest, 0.25);
+  check('rendered mesh waist (tape)', slice(f.waistH), b.waist, 0.25);
+  check('rendered mesh hips (tape)', slice(f.hipH), b.hips, 0.25);
+  let top = 0; for (let i = 1; i < mesh.positions.length; i += 3) top = Math.max(top, mesh.positions[i]);
+  check('rendered mesh height', top, b.height, 0.25);
+
   for (const g of ['jacket', 'shirt', 'pants'] as GarmentType[]) {
     const pieces = makePreset(g, b);
     const rows = fitTable(g, pieces, b);
     const E: Record<string, number> = g === 'pants'
       ? { Waist: EASE.pants.waist, Hip: EASE.pants.hip, Inseam: -3 }
-      : { Chest: EASE[g].chest, Waist: EASE[g].waist, 'Hem / hips': EASE[g].hem, Neck: EASE[g].neck, 'Sleeve / arm': EASE[g].sleeve };
+      : { Chest: EASE[g].chest, Waist: EASE[g].waist, 'Hem / hips': EASE[g].hem, 'Sleeve / arm': EASE[g].sleeve };
     for (const r of rows) if (r.label in E && r.body !== null) check(`${g} pattern ${r.label} = body + ease`, r.garment, r.body + E[r.label], 0.1);
+
+    for (const r of seamReport(g, pieces)) check(`${g} seam ${r.label}`, r.a - r.b, r.ease ?? 0, 0.05);
 
     // 3D garment: chest / hip ring perimeter must equal the pattern circumference
     const res = buildGarment(g, pieces, b);

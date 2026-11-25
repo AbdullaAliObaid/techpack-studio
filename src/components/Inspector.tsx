@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { FABRICS, fabricById, stretchLabel } from '../data/fabrics';
 import { fabricDataUrl } from '../lib/textures';
-import { fitTable, garmentSpecs, pieceSpecs } from '../lib/specs';
+import { fitTable, garmentSpecs, pieceSpecs, seamReport } from '../lib/specs';
 import { fmt, toUnit } from '../lib/units';
 
 export default function Inspector() {
@@ -111,6 +111,24 @@ function SpecsTab() {
           );
         })}
         <div className="fit-note">In {units}. * estimated from your other measurements. Negative ease means the garment is smaller than the body and has to stretch.</div>
+      </div>
+      <div className="card">
+        <div className="card-title">Seams</div>
+        {seamReport(project.garment, project.pieces).map((r) => {
+          const diff = r.a - r.b;
+          const want = r.ease ?? 0;
+          const ok = Math.abs(diff - want) < 0.1;
+          return (
+            <div className="seam-row" key={r.label}>
+              <span>{r.label}</span>
+              <span className="muted">{toUnit(r.a, units).toFixed(1)} / {toUnit(r.b, units).toFixed(1)}</span>
+              <b className={ok ? 'pos' : 'neg'}>
+                {r.ease !== undefined ? `ease ${(diff > 0 ? '+' : '') + toUnit(diff, units).toFixed(1)}` : ok ? '✓' : (diff > 0 ? '+' : '') + toUnit(diff, units).toFixed(1)}
+              </b>
+            </div>
+          );
+        })}
+        <div className="fit-note">Edge lengths that get sewn together. Green when they match (or carry their intended ease), red when a pattern edit makes them disagree.</div>
       </div>
       <div className="card">
         <div className="card-title">Garment specs</div>

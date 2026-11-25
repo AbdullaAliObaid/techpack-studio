@@ -17,7 +17,22 @@ interface Topo {
   fabrics: Piece['fabric'][];
 }
 
-export default function ClothView({ type, pieces, body, stretch }: { type: GarmentType; pieces: Piece[]; body: Body; stretch: boolean }) {
+function skinMaterial(skin: string) {
+  const grey = skin.toLowerCase() === '#d9dce2';
+  return new THREE.MeshPhysicalMaterial({
+    color: skin,
+    roughness: grey ? 0.55 : 0.5,
+    sheen: grey ? 0 : 0.35,
+    sheenColor: new THREE.Color(skin).lerp(new THREE.Color('#ffffff'), 0.4),
+    sheenRoughness: 0.6,
+    clearcoat: grey ? 0.25 : 0.06,
+    clearcoatRoughness: 0.5,
+  });
+}
+
+export default function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin }: { type: GarmentType; pieces: Piece[]; body: Body; stretch: boolean; showBody: boolean; showGarment: boolean; skin: string }) {
+  const [bodyGeo, setBodyGeo] = useState<THREE.BufferGeometry | null>(null);
+  const skinMat = useMemo(() => skinMaterial(skin), [skin]);
   const worker = useMemo(() => new Worker(new URL('../sim/worker.ts', import.meta.url), { type: 'module' }), []);
   const [topo, setTopo] = useState<Topo | null>(null);
   const pending = useRef<{ pos?: Float32Array; strain?: Float32Array }>({});
@@ -31,7 +46,19 @@ export default function ClothView({ type, pieces, body, stretch }: { type: Garme
   useEffect(() => {
     worker.onmessage = (e) => {
       const m = e.data;
-      if (m.type === 'built') {
+      if (m.type === 'status') {
+        set({ draping: true, simStatus: m.text });
+      } else if (m.type === 'body') {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(m.positions, 3));
+        g.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3));
+        g.setIndex(new THREE.BufferAttribute(m.indices, 1));
+        g.computeBoundingSphere();
+        setBodyGeo((old) => {
+          old?.dispose();
+          return g;
+        });
+      } else if (m.type === 'built') {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(m.pos, 3));
         geo.setAttribute('uv', new THREE.BufferAttribute(m.uv, 2));
@@ -44,7 +71,7 @@ export default function ClothView({ type, pieces, body, stretch }: { type: Garme
           old?.geo.dispose();
           return { geo, fabrics: m.fabrics };
         });
-        set({ draping: true });
+        set({ draping: true, simStatus: 'Simulating fabric…' });
       } else if (m.type === 'frame') {
         pending.current.pos = m.pos;
         if (m.strain) pending.current.strain = m.strain;
@@ -111,6 +138,12 @@ export default function ClothView({ type, pieces, body, stretch }: { type: Garme
   }, [stretch, topo]);
 
   const mats = useMemo(() => (topo ? topo.fabrics.map((fb) => fabricMaterial(fb)) : []), [topo]);
-  if (!topo) return null;
-  return <mesh geometry={topo.geo} material={stretch ? topo.fabrics.map(() => stretchMat) : mats} castShadow receiveShadow frustumCulled={false} />;
+  return (
+    <group>
+      {showBody && bodyGeo && <mesh geometry={bodyGeo} material={skinMat} castShadow receiveShadow />}
+      {showGarment && topo && (
+        <mesh geometry={topo.geo} material={stretch ? topo.fabrics.map(() => stretchMat) : mats} castShadow receiveShadow frustumCulled={false} />
+      )}
+    </group>
+  );
 }

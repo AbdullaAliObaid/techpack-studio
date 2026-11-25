@@ -1,5 +1,5 @@
 import type { Piece, SpecDef, GarmentType } from '../data/presets';
-import { bbox, dist, samplePoly, sliceSpan, type Pt } from './geometry';
+import { bbox, dist, outlineLength, samplePoly, sliceSpan, type Pt } from './geometry';
 import { derivedGirths } from '../data/draft';
 import { bodyFrame, type Body } from '../three/body';
 
@@ -134,4 +134,52 @@ export function fitTable(type: GarmentType, pieces: Piece[], b: Body): FitRow[] 
 function collarCuff(pieces: Piece[]) {
   const c = pieces.find((p) => p.role === 'cuff');
   return c ? computeSpec(c, c.specs[0])?.value ?? 0 : 0;
+}
+
+export interface SeamRow {
+  label: string;
+  a: number; // first edge length (cm)
+  b: number; // edge it is sewn to
+  ease?: number; // intended difference (cap ease, pleat); undefined means the two must match
+}
+
+/** Every sewing line with both edge lengths, like a seam-walking check on a cutting table. */
+export function seamReport(type: GarmentType, pieces: Piece[]): SeamRow[] {
+  const P = (role: string) => pieces.find((p) => p.role === role);
+  const L = (p: Piece | undefined, a: string, b: string) => {
+    if (!p) return 0;
+    const pa = p.points.find((q) => q.key === a), pb = p.points.find((q) => q.key === b);
+    return pa && pb ? outlineLength(p.points, pa.id, pb.id) : 0;
+  };
+  const f = P('front'), bk = P('back'), sl = P('sleeve');
+  if (type === 'pants') {
+    const wb = P('waistband');
+    const wbLen = wb ? computeSpec(wb, wb.specs[0])?.value ?? 0 : 0;
+    return [
+      { label: 'Inseam (front / back)', a: L(f, 'front.6', 'front.8'), b: L(bk, 'back.6', 'back.8') },
+      { label: 'Outseam (front / back)', a: L(f, 'front.1', 'front.5'), b: L(bk, 'back.1', 'back.5') },
+      { label: 'Waist edge / waistband', a: 2 * (L(f, 'front.0', 'front.1') + L(bk, 'back.0', 'back.1')), b: wbLen },
+    ];
+  }
+  const rows: SeamRow[] = [
+    { label: 'Shoulder R (front / back)', a: L(f, 'front.2', 'front.3'), b: L(bk, 'back.2m', 'back.3m') },
+    { label: 'Shoulder L (front / back)', a: L(f, 'front.2m', 'front.3m'), b: L(bk, 'back.2', 'back.3') },
+    { label: 'Side seam R (front / back)', a: L(f, 'front.5', 'front.7'), b: L(bk, 'back.5m', 'back.7m') },
+    { label: 'Side seam L (front / back)', a: L(f, 'front.5m', 'front.7m'), b: L(bk, 'back.5', 'back.7') },
+    { label: 'Sleeve seam (underarm)', a: L(sl, 'sleeve.3', 'sleeve.4'), b: L(sl, 'sleeve.3m', 'sleeve.4m') },
+    {
+      label: 'Sleeve cap / armhole', a: L(sl, 'sleeve.0', 'sleeve.3') + L(sl, 'sleeve.0', 'sleeve.3m'),
+      b: L(f, 'front.3', 'front.5') + L(bk, 'back.3m', 'back.5m'), ease: type === 'jacket' ? 2.5 : 1,
+    },
+  ];
+  const collar = P('collar');
+  if (collar) {
+    rows.push({ label: 'Collar / neckline', a: computeSpec(collar, collar.specs[0])?.value ?? 0, b: 2 * (L(f, 'front.0', 'front.2') + L(bk, 'back.0', 'back.2')) });
+  }
+  const cuff = P('cuff');
+  if (cuff && sl) {
+    const end = sl.points.filter((q) => q.tag === 'cuff');
+    rows.push({ label: 'Sleeve end / cuff (pleat)', a: end.length === 2 ? Math.abs(end[0].x - end[1].x) : 0, b: computeSpec(cuff, cuff.specs[0])?.value ?? 0, ease: 6 });
+  }
+  return rows;
 }

@@ -18,10 +18,19 @@ Interactive tech pack builder: a CLO3D-style 2D pattern editor on the left, link
 4. Changing a measurement regrades the pattern and keeps your edits as offsets
 5. `npm test` checks all of this numerically on four body types
 
+## Body
+1. One continuous high-poly mannequin (~170k triangles): anatomical parts are distance fields joined with a smooth union, meshed with surface nets and snapped onto the exact surface
+2. A calibration pass tape-measures the final surface and corrects it, so the rendered mesh reads exactly the typed chest, waist, hips, neck and height
+3. The same field is the cloth collision surface, so fabric rests on feet, hands and shoulders instead of passing through
+
+## Seams
+1. Drafts walk their seams like a pattern maker: back inseam/outseam match the front, sleeve cap = armhole + ease, collar = neckline, cuff + pleat = sleeve end
+2. The Specs tab shows every sewing line live and flags edits that make sewn edges disagree
+
 ## Cloth simulation (CLO style)
 1. Every pattern piece is triangulated into a cloth mesh whose rest lengths are the 2D pattern lengths
 2. Pieces are arranged around the avatar and sewn along their seams (shoulders, side seams, armholes, sleeves, inseam, outseam, rises)
-3. An XPBD solver in a Web Worker drapes them with gravity, fabric stretch and bending stiffness, strain limiting, body collision and friction
+3. An XPBD solver in a Web Worker drapes them with gravity, fabric weight (gsm), stretch and bending stiffness, strain limiting, body collision, friction and self-collision so heavy fabric folds on itself
 4. The Stretch-Risk-O-Meter reads the real simulated strain against each fabric's safe stretch
 5. Pattern and fabric edits warm start from the current drape; `npm run test:drape` checks stability, seam closure and strain
 

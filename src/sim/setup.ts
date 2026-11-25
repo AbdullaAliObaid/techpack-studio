@@ -69,7 +69,7 @@ export function warmStart(next: Garment3D, prev: Garment3D) {
   return true;
 }
 
-export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing = 2.2): Garment3D | null {
+export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing = 2.2, collider?: ClothSim['collider']): Garment3D | null {
   const f = bodyFrame(body);
   const front = pieces.find((p) => p.role === 'front');
   const back = pieces.find((p) => p.role === 'back');
@@ -242,6 +242,34 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     });
   }
   sim.prev.set(sim.pos);
-  sim.collider = new BodyCollider(body);
+  sim.collider = collider ?? new BodyCollider(body);
+  // fabric weight: heavier cloth (higher gsm) hangs and folds more under the same stiffness
+  const panelOf = new Uint16Array(count), uvs = new Float32Array(count * 2);
+  let heaviest = 0;
+  insts.forEach((pi, k) => {
+    const fab = fabricById(pi.piece.fabric.id);
+    heaviest = Math.max(heaviest, fab.gsm);
+    pi.mesh.uv.forEach((q, i) => {
+      const v = pi.offset + i;
+      sim.invMass[v] = Math.min(2, 250 / fab.gsm);
+      panelOf[v] = k; uvs[v * 2] = q.x; uvs[v * 2 + 1] = q.y;
+    });
+  });
+  const group = new Int32Array(count).map((_, i) => i);
+  const find = (i: number): number => (group[i] === i ? i : (group[i] = find(group[i])));
+  for (const [a, b] of sew) group[find(a)] = find(b);
+  for (let i = 0; i < count; i++) group[i] = find(i);
+  sim.panelOf = panelOf; sim.uv = uvs; sim.seamGroup = group;
+  const nearSeam = new Uint8Array(count);
+  const sewn = new Set<number>();
+  for (const [a, b] of sew) { sewn.add(a); sewn.add(b); }
+  for (const pi of insts) {
+    const seamPts = [...sewn].filter((v) => v >= pi.offset && v < pi.offset + pi.mesh.uv.length).map((v) => pi.mesh.uv[v - pi.offset]);
+    pi.mesh.uv.forEach((q, i) => {
+      for (const sp of seamPts) if ((sp.x - q.x) ** 2 + (sp.y - q.y) ** 2 < 9) { nearSeam[pi.offset + i] = 1; break; }
+    });
+  }
+  sim.nearSeam = nearSeam;
+  sim.selfRadius = Math.min(spacing * 0.45, 0.5 + heaviest / 1500); // thicker cloth keeps layers further apart
   return { sim, panels: insts.map(({ place: _p, ...rest }) => rest), limits };
 }

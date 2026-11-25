@@ -3,7 +3,7 @@
 // All values in cm. Tops are drawn as full front / full back pieces (centre line at x = 0).
 // Pants are drawn as single leg pieces with the grainline (crease) at x = 0.
 
-import type { PPoint } from '../lib/geometry';
+import { outlineLength, type PPoint } from '../lib/geometry';
 import { bodyFrame, type Body, type BodyFrame } from '../three/body';
 import type { GarmentType } from './presets';
 
@@ -11,8 +11,8 @@ const TAU = Math.PI * 2;
 
 /** Ease = how much bigger the garment is than the body, in cm of circumference (or length). */
 export const EASE = {
-  jacket: { chest: 10, waist: 14, hem: 8, neck: 4, armhole: 3, bicep: 12, cuff: 14, sleeve: 3, length: 3, shoulder: 1 },
-  shirt: { chest: 10, waist: 12, hem: 6, neck: 2, armhole: 2, bicep: 9, cuff: 9, sleeve: 1, length: 5, shoulder: 0 },
+  jacket: { chest: 10, waist: 14, hem: 8, neck: 4, armhole: 6, bicep: 12, cuff: 14, sleeve: 3, length: 3, shoulder: 1, capEase: 2.5 },
+  shirt: { chest: 10, waist: 12, hem: 6, neck: 2, armhole: 4, bicep: 9, cuff: 8, sleeve: 1, length: 5, shoulder: 0, capEase: 1, pleat: 6 },
   pants: { waist: 2, hip: 6, thigh: 0, knee: 14, legOpening: 18 },
 };
 
@@ -91,16 +91,41 @@ function tops(type: 'jacket' | 'shirt', b: Body, f: BodyFrame): DraftPiece[] {
   ]);
 
   // sleeve: cap top sits on the shoulder point (acromion); length = arm length + ease
-  const capH = (uaY - slope) * 0.72;
   const cuffH = type === 'shirt' ? 6 : 0;
   const sLen = b.arm + E.sleeve - cuffH;
   const xB = (g.bicep + E.bicep) / 2;
-  const xCuff = (g.wrist + E.cuff + (type === 'shirt' ? 6 : 0)) / 2; // shirt sleeve end is pleated into the cuff
-  const sleeve = half('sleeve', [
-    [0, 0, true], [xB * 0.38, capH * 0.12, true], [xB * 0.75, capH * 0.55, true], [xB, capH, false, 'underarm'], [xCuff, sLen, false, 'cuff'], [0, sLen],
-  ]);
+  const cuffLen = g.wrist + E.cuff;
+  const xCuff = (type === 'shirt' ? cuffLen + (EASE.shirt.pleat ?? 0) : cuffLen) / 2; // shirt sleeve end is pleated into the cuff
+  const armhole = (side: 'r' | 'l') =>
+    outlineLength(front, front[side === 'r' ? 3 : front.length - 3].id, front[side === 'r' ? 5 : front.length - 5].id) +
+    outlineLength(back, back[side === 'r' ? 3 : back.length - 3].id, back[side === 'r' ? 5 : back.length - 5].id);
+  const target = armhole('r') / 2 + E.capEase / 2; // per half of the cap
+  const makeSleeve = (capH: number, xb = xB) =>
+    half('sleeve', [[0, 0, true], [xb * 0.38, capH * 0.12, true], [xb * 0.75, capH * 0.55, true], [xb, capH, false, 'underarm'], [xCuff, sLen, false, 'cuff'], [0, sLen]]);
+  const capLen = (sv: PPoint[]) => outlineLength(sv, sv[0].id, sv[3].id);
+  // walk the cap: bisect the cap height until the cap is exactly armhole + ease
+  const depth = uaY - slope;
+  const hMin = depth * 0.4, hMax = depth * 1.0;
+  let sleeve = makeSleeve(hMin);
+  if (capLen(sleeve) > target) {
+    // even the flattest cap is too long for this armhole: narrow the bicep until it fits
+    let lo = xB * 0.6, hi = xB;
+    for (let it = 0; it < 40; it++) {
+      const mid = (lo + hi) / 2;
+      sleeve = makeSleeve(hMin, mid);
+      if (capLen(sleeve) > target) hi = mid; else lo = mid;
+    }
+  } else {
+    let lo = hMin, hi = hMax;
+    for (let it = 0; it < 40; it++) {
+      const mid = (lo + hi) / 2;
+      sleeve = makeSleeve(mid);
+      if (capLen(sleeve) < target) lo = mid; else hi = mid;
+    }
+  }
 
-  const neckLen = b.neck + E.neck;
+  // collar = the actual neckline it is sewn to (front + back, both sides)
+  const neckLen = 2 * (outlineLength(front, front[0].id, front[2].id) + outlineLength(back, back[0].id, back[2].id));
   const cH = type === 'shirt' ? 5.5 : 7;
   const collar = half('collar', [[0, 0, true], [neckLen / 2, 1.2, false, 'tip'], [neckLen / 2 + 0.8, cH + 0.8], [0, cH, true]]);
 
@@ -111,7 +136,6 @@ function tops(type: 'jacket' | 'shirt', b: Body, f: BodyFrame): DraftPiece[] {
     { role: 'collar', points: collar },
   ];
   if (type === 'shirt') {
-    const cuffLen = g.wrist + 8;
     out.push({ role: 'cuff', points: half('cuff', [[0, 0], [cuffLen / 2, 0, false, 'c'], [cuffLen / 2, 6], [0, 6]]) });
   }
   return out;
@@ -140,13 +164,35 @@ function pants(b: Body, f: BodyFrame): DraftPiece[] {
     [cfX, Math.min(hipD + 1.5, (hipD + rise - extF * 0.55) / 2)], [cfX, hipD - 1.5],
   ]);
   const sxB = hB * 0.45, cbX = sxB - hB;
+  // u shifts the back seat (waist, hip, crotch) sideways relative to the leg; dWaist raises or lowers the
+  // waist side point. Both are walked so the back inseam and outseam equal the front ones exactly.
+  const makeBack = (u: number, dWaist: number) => {
+    const vy = dWaist + 3; // waist side point height relative to the raised centre back
+    return free('back', [
+      [cbX + 2.2 + u, -3, false, 'waistC'], [cbX + 2.2 + u + Math.sqrt(Math.max(1, wB * wB - vy * vy)), dWaist, false, 'waistS'], [sxB + u, hipD, true, 'hip'], [sxB + 0.3 + u * 0.7, rise, true],
+      [kB / 2, kneeY, true, 'knee', 'k'], [oB / 2, hemY, false, 'hem', 'h'], [-oB / 2, hemY, false, undefined, 'h'], [-kB / 2, kneeY, true, undefined, 'k'],
+      [cbX - extB + u, rise + 1, false, 'crotch'], [cbX - extB * 0.4 + u, rise - extB * 0.35 + 0.5, true],
+      [cbX + u, Math.min(hipD + 1.5, (hipD + rise - extB * 0.35) / 2)], [cbX + u, hipD - 1.5],
+    ]);
+  };
+  const seam = (p: PPoint[], a: number, c: number) => outlineLength(p, p[a].id, p[c].id);
+  const fIn = seam(front, 6, 8), fOut = seam(front, 1, 5);
+  let u = 0, dW = 0, back = makeBack(0, 0);
+  for (let pass = 0; pass < 6; pass++) {
+    let lo = -6, hi = 14;
+    for (let it = 0; it < 40; it++) {
+      u = (lo + hi) / 2;
+      back = makeBack(u, dW);
+      if (seam(back, 6, 8) > fIn) lo = u; else hi = u; // moving the seat toward the leg shortens the inseam
+    }
+    lo = -10; hi = 10;
+    for (let it = 0; it < 40; it++) {
+      dW = (lo + hi) / 2;
+      back = makeBack(u, dW);
+      if (seam(back, 1, 5) > fOut) lo = dW; else hi = dW; // lowering the waist side point shortens the outseam
+    }
+  }
   const front_ = front;
-  const back = free('back', [
-    [cbX + 2.2, -3, false, 'waistC'], [cbX + 2.2 + Math.sqrt(wB * wB - 9), 0, false, 'waistS'], [sxB, hipD, true, 'hip'], [sxB + 0.3, rise, true],
-    [kB / 2, kneeY, true, 'knee', 'k'], [oB / 2, hemY, false, 'hem', 'h'], [-oB / 2, hemY, false, undefined, 'h'], [-kB / 2, kneeY, true, undefined, 'k'],
-    [cbX - extB, rise, false, 'crotch'], [cbX - extB * 0.4, rise - extB * 0.35, true],
-    [cbX, Math.min(hipD + 1.5, (hipD + rise - extB * 0.35) / 2)], [cbX, hipD - 1.5],
-  ]);
   const wb = b.waist + E.waist;
   const band = half('waistband', [[0, 0], [wb / 2, 0, false, 'wb'], [wb / 2, 4], [0, 4]]);
   return [

@@ -193,3 +193,16 @@ export function pointInPoly(poly: Pt[], p: Pt): boolean {
   }
   return inside;
 }
+
+/** Length along the outline between two points (by id), taking the shorter way round. */
+export function outlineLength(pts: PPoint[], fromId: string, toId: string): number {
+  const ia = pts.findIndex((p) => p.id === fromId), ib = pts.findIndex((p) => p.id === toId);
+  if (ia < 0 || ib < 0) return 0;
+  const bz = toBeziers(pts);
+  const n = pts.length;
+  const fwd = (ib - ia + n) % n, back = (ia - ib + n) % n;
+  let L = 0;
+  if (fwd <= back) for (let i = ia; i !== ib; i = (i + 1) % n) L += bezLength(bz[i], 48);
+  else for (let i = ib; i !== ia; i = (i + 1) % n) L += bezLength(bz[i], 48);
+  return L;
+}

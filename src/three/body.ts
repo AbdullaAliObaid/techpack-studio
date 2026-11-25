@@ -83,8 +83,44 @@ export interface BRing {
   cz?: number;
 }
 
+/** What a tape measure reads around a shaped ring: it bridges hollows, so this is the convex hull perimeter. */
+export function tapePerimeter(a: number, b: number, shape?: Shape, n = 180): number {
+  const pts: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const th = (i / n) * TAU;
+    const m = shape ? shape(th) : 1;
+    pts.push([a * m * Math.cos(th), b * m * Math.sin(th)]);
+  }
+  return hullLength(pts);
+}
+
+/** Perimeter of the convex hull of 2D points (monotone chain). */
+export function hullLength(pts: [number, number][]): number {
+  if (pts.length < 3) return 0;
+  const p = [...pts].sort((u, v) => u[0] - v[0] || u[1] - v[1]);
+  const cross = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: [number, number][] = [], upper: [number, number][] = [];
+  for (const q of p) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
+    lower.push(q);
+  }
+  for (let i = p.length - 1; i >= 0; i--) {
+    const q = p[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
+    upper.push(q);
+  }
+  const h = lower.slice(0, -1).concat(upper.slice(0, -1));
+  let L = 0;
+  for (let i = 0; i < h.length; i++) {
+    const a = h[i], b = h[(i + 1) % h.length];
+    L += Math.hypot(a[0] - b[0], a[1] - b[1]);
+  }
+  return L;
+}
+
+/** A body cross section scaled so a tape around it reads exactly C. */
 export function normRing(a: number, b: number, shape: Shape, C: number): BRing {
-  const s = C / perimeter(a, b, shape);
+  const s = C / tapePerimeter(a, b, shape);
   return { a: a * s, b: b * s, shape, C };
 }
 

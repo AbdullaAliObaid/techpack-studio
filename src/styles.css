@@ -191,3 +191,9 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; }
 .drape-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
 .drape-dot.on { background: #f59e0b; animation: pulse 0.9s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
+
+.seam-row { display: grid; grid-template-columns: 1.6fr 1fr 0.8fr; gap: 4px; font-size: 12px; padding: 3px 0; align-items: baseline; }
+.seam-row > span:first-child { color: #475569; }
+.seam-row > span:nth-child(2), .seam-row b { text-align: right; font-variant-numeric: tabular-nums; }
+.seam-row .pos { color: #157f3c; }
+.seam-row .neg { color: #b42318; }

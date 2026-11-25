@@ -2,7 +2,7 @@ import { Canvas } from '@react-three/fiber';
 import { ContactShadows, OrbitControls } from '@react-three/drei';
 import { useStore } from '../store';
 import { SKIN_TONES } from '../three/body';
-import Mannequin from '../three/Mannequin';
+import Joints from '../three/Joints';
 import { fabricById } from '../data/fabrics';
 import ClothView from '../three/ClothView';
 import StudioLight from '../three/StudioLight';
@@ -10,7 +10,7 @@ import BodyPanel from './BodyPanel';
 import MeasureOverlay from '../three/MeasureOverlay';
 
 export default function Viewport3D() {
-  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken } = useStore();
+  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus } = useStore();
   const { body, pieces, garment } = project;
   const stretch = view3d === 'stretch';
   const H = body.height;
@@ -27,8 +27,8 @@ export default function Viewport3D() {
           shadow-camera-left={-120} shadow-camera-right={120} shadow-camera-top={220} shadow-camera-bottom={-20} shadow-camera-far={800} />
         <directionalLight position={[-160, 140, -120]} intensity={0.55} />
         <directionalLight position={[0, 80, 260]} intensity={0.25} />
-        {showBody && <Mannequin body={body} skin={SKIN_TONES[skin]?.hex ?? SKIN_TONES[0].hex} showJoints={showJoints} />}
-        {showGarment && <ClothView type={garment} pieces={pieces} body={body} stretch={stretch} />}
+        {showJoints && <Joints body={body} />}
+        <ClothView type={garment} pieces={pieces} body={body} stretch={stretch} showBody={showBody} showGarment={showGarment} skin={SKIN_TONES[skin]?.hex ?? SKIN_TONES[0].hex} />
         {showTape && <MeasureOverlay body={body} units={units} />}
         <ContactShadows position={[0, 0.05, 0]} scale={220} blur={2.6} opacity={0.35} far={60} />
         <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
@@ -59,7 +59,7 @@ export default function Viewport3D() {
 
       <div className="drape-bar">
         <span className={`drape-dot ${draping ? 'on' : ''}`} />
-        {draping ? 'Simulating fabric…' : 'Draped'}
+        {draping ? simStatus || 'Simulating fabric…' : 'Draped'}
         <button className="btn small" onClick={() => set({ redrapeToken: redrapeToken + 1 })}>Re-drape</button>
       </div>
 

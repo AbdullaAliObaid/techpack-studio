@@ -2,11 +2,15 @@
 import { makePreset, type GarmentType } from '../src/data/presets';
 import { DEFAULT_BODY } from '../src/three/body';
 import { assemble } from '../src/sim/setup';
+import { calibratedField } from '../src/three/bodyField';
+import { meshField, GridCollider } from '../src/three/mesher';
+const FF = calibratedField(DEFAULT_BODY);
+const collider = new GridCollider(meshField(FF).grid, [FF.f.ankleH + 6, FF.f.crotchH + 1]);
 
 for (const g of ['jacket', 'shirt', 'pants'] as GarmentType[]) {
   const pieces = makePreset(g, DEFAULT_BODY);
   const t0 = performance.now();
-  const G = assemble(g, pieces, DEFAULT_BODY, Number(process.env.SP ?? 2.2))!;
+  const G = assemble(g, pieces, DEFAULT_BODY, Number(process.env.SP ?? 2.0), collider)!;
   const t1 = performance.now();
   const sim = G.sim;
   let frames = 0;

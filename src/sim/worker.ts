@@ -2,6 +2,11 @@
 import { assemble, warmStart, type Garment3D } from './setup';
 import type { GarmentType, Piece } from '../data/presets';
 import type { Body } from '../three/body';
+import { calibratedField } from '../three/bodyField';
+import { meshField, GridCollider } from '../three/mesher';
+
+let bodyKey = '';
+let collider: GridCollider | null = null;
 
 let G: Garment3D | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -37,7 +42,20 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
   const m = e.data;
   if (m.type !== 'build') return;
   if (timer) clearTimeout(timer);
-  const next = assemble(m.garment, m.pieces, m.body, m.spacing);
+  const key = JSON.stringify(m.body);
+  if (key !== bodyKey || !collider) {
+    (self as unknown as Worker).postMessage({ type: 'status', text: 'Building body…' });
+    const field = calibratedField(m.body);
+    const mesh = meshField(field);
+    const fr = field.f;
+    collider = new GridCollider(mesh.grid, [fr.ankleH + 6, fr.crotchH + 1]);
+    bodyKey = key;
+    (self as unknown as Worker).postMessage(
+      { type: 'body', positions: mesh.positions, normals: mesh.normals, indices: mesh.indices },
+      [mesh.positions.buffer, mesh.normals.buffer, mesh.indices.buffer],
+    );
+  }
+  const next = assemble(m.garment, m.pieces, m.body, m.spacing, collider);
   if (!next) { G = null; return; }
   if (m.warm && G) warmStart(next, G);
   G = next;
