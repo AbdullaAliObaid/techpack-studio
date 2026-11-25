@@ -1,0 +1,114 @@
+// Garment edits on top of the drafted pattern: attachments (pockets, patches, straps, prints/emblems),
+// seam edits (detach built-in seams, add custom seams), pleats, user-drawn pieces and custom poses.
+// Shared contract between the store, the 2D editor, the 3D view and the simulation. Units: cm, degrees.
+
+import type { Pt } from '../lib/geometry';
+
+/** Emblem / print shape library (BO2 emblem editor style layers). */
+export type ShapeId =
+  | 'rect' | 'rounded' | 'circle' | 'triangle' | 'star' | 'star4' | 'heart' | 'hexagon' | 'shield'
+  | 'chevron' | 'stripe' | 'bolt' | 'cross' | 'diamond' | 'ring' | 'text';
+
+export interface ShapeLayer {
+  id: string;
+  shape: ShapeId;
+  /** centre relative to the attachment centre (cm) */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotation: number;
+  color: string;
+  opacity?: number;
+  flipX?: boolean;
+  text?: string; // for shape 'text'
+}
+
+/**
+ * pocket  = separate cloth piece sewn on three sides (top open)
+ * patch   = separate cloth piece sewn all round
+ * strap   = separate strip sewn at its two ends (belt strap, tab, loop)
+ * print   = no extra cloth, printed / embroidered onto the host piece
+ */
+export type AttachKind = 'pocket' | 'patch' | 'strap' | 'print';
+
+export type Outline = 'rect' | 'rounded' | 'pointed' | 'circle' | 'shield' | 'custom';
+
+export interface Attachment {
+  id: string;
+  kind: AttachKind;
+  name: string;
+  /** host pattern piece and the centre position in that piece's local pattern coords (cm) */
+  pieceId: string;
+  x: number;
+  y: number;
+  rotation: number;
+  /** outline size of the attachment itself (cm); prints use it as the artwork box */
+  w: number;
+  h: number;
+  outline: Outline;
+  /** custom outline points (cm, centred on 0,0) when outline === 'custom' */
+  points?: Pt[];
+  /** emblem / print artwork, drawn on top of the attachment's fabric */
+  layers: ShapeLayer[];
+  /** fabric for cloth attachments; defaults to the host piece fabric */
+  fabric?: { id: string; color: number };
+}
+
+/** A run along a piece outline between two outline points (ids), taking the shorter way round. */
+export interface EdgeRef {
+  pieceId: string;
+  fromId: string;
+  toId: string;
+}
+
+export interface CustomSeam {
+  id: string;
+  a: EdgeRef;
+  b: EdgeRef;
+  /** sew b in the opposite direction */
+  flip?: boolean;
+}
+
+export type PleatType = 'knife' | 'box' | 'inverted';
+
+export interface Pleat {
+  id: string;
+  pieceId: string;
+  /** position on the outline: segment starting at this outline point, parameter 0..1 along it */
+  pointId: string;
+  t: number;
+  /** fabric folded away per side (cm); a knife pleat takes 2 x depth out of the edge length */
+  depth: number;
+  /** fold length into the piece (cm) */
+  length: number;
+  type: PleatType;
+  direction: 1 | -1;
+}
+
+/** How a user-drawn piece goes onto the garment. */
+export interface Placement {
+  mode: 'sewn' | 'patch';
+  /** for 'patch': host piece and centre position on it; for 'sewn': the seams come from customSeams */
+  hostPieceId?: string;
+  x?: number;
+  y?: number;
+  rotation?: number;
+}
+
+export interface SideAngles { shFlex: number; shAbd: number; shHoriz: number; elbow: number; hipFlex: number; hipAbd: number; knee: number }
+/** User pose (radians) for the 'custom' movement mode; index 0 = +x side, 1 = -x side. */
+export interface CustomPose { s: [SideAngles, SideAngles]; spineBend: number; spineTwist: number; headTurn: number }
+
+export const ZERO_SIDE: SideAngles = { shFlex: 0, shAbd: 0, shHoriz: 0, elbow: 0, hipFlex: 0, hipAbd: 0, knee: 0 };
+export const ZERO_POSE: CustomPose = { s: [{ ...ZERO_SIDE }, { ...ZERO_SIDE }], spineBend: 0, spineTwist: 0, headTurn: 0 };
+
+export interface Edits {
+  attachments: Attachment[];
+  customSeams: CustomSeam[];
+  /** ids of built-in seams the user has detached (ids from builtinSeams in src/sim/seams.ts) */
+  detachedSeams: string[];
+  pleats: Pleat[];
+}
+
+export const EMPTY_EDITS: Edits = { attachments: [], customSeams: [], detachedSeams: [], pleats: [] };

@@ -9,6 +9,9 @@ React + TypeScript + Vite, three.js via @react-three/fiber, zustand store, cloth
    tape-measure to the input. Never break `npm test`.
 3. User copy: plain language, no em dashes.
 4. Garment styles come from `src/data/catalog.ts` (the shared contract). Project.garment stores a StyleId.
+5. Garment edits (attachments, prints, custom seams, detached seams, pleats, user pieces, custom pose) use the types in
+   `src/data/edits.ts` and the store actions in `src/store.ts`. Shapes for emblems/outlines come from `src/lib/shapes.ts`.
+   Built-in seams with stable ids come from `src/sim/seams.ts`.
 
 ## Map
 - `src/data/catalog.ts` garment library (categories, styles, construction details)

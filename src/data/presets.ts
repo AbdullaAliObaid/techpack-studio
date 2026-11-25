@@ -1,3 +1,4 @@
+import type { Placement } from './edits';
 import { bbox, type PPoint, type Pt } from '../lib/geometry';
 import { uid } from '../lib/units';
 import { draft, type Fit } from './draft';
@@ -6,7 +7,7 @@ import { DEFAULT_BODY, type Body } from '../three/body';
 
 /** Kept for older imports: a garment is now any catalog style. */
 export type GarmentType = StyleId;
-export type Role = 'front' | 'back' | 'sleeve' | 'collar' | 'cuff' | 'waistband' | 'neckband' | 'placket' | 'crown' | 'brim';
+export type Role = 'front' | 'back' | 'sleeve' | 'collar' | 'cuff' | 'waistband' | 'neckband' | 'placket' | 'crown' | 'brim' | 'custom';
 
 export type SpecDef =
   | { label: string; kind: 'slice'; tag: string; dy?: number; /** measure straight across openings (a buttoned placket) */ full?: boolean }
@@ -32,6 +33,8 @@ export interface Piece {
   specs: SpecDef[];
   /** relaxed length of the elastic inside a waistband (cm); the band is gathered onto it */
   elastic?: number;
+  /** user-drawn pieces: how the piece goes onto the garment (src/data/edits.ts) */
+  placement?: Placement;
 }
 
 const TOP_SPECS: SpecDef[] = [

@@ -5,6 +5,8 @@ import { DEFAULT_BODY, type Body } from './three/body';
 import { draft, regradePoints, type Fit } from './data/draft';
 import { bezAt, toBeziers, type PPoint, type Pt } from './lib/geometry';
 import { uid, type Units } from './lib/units';
+import { EMPTY_EDITS, ZERO_POSE, type Attachment, type CustomPose, type CustomSeam, type Edits, type Placement, type Pleat } from './data/edits';
+import { FEMALE_BODY, MALE_BODY } from './three/body';
 
 export interface Project {
   id: string;
@@ -16,6 +18,8 @@ export interface Project {
   /** when on, the pattern is regraded whenever body measurements change */
   linkPattern: boolean;
   fit?: Fit;
+  /** attachments, seam edits and pleats on top of the pattern (src/data/edits.ts) */
+  edits?: Edits;
   updatedAt: number;
 }
 
@@ -78,6 +82,26 @@ interface State {
   setLink: (on: boolean) => void;
   setFit: (fit: Fit) => void;
   newProject: (id: StyleId) => void;
+  // --- edits (attachments, seams, pleats, user pieces) ---
+  selAttachment: string | null;
+  addAttachment: (a: Omit<Attachment, 'id'>) => string;
+  updateAttachment: (id: string, patch: Partial<Attachment>) => void;
+  removeAttachment: (id: string) => void;
+  addCustomSeam: (s: Omit<CustomSeam, 'id'>) => string;
+  removeCustomSeam: (id: string) => void;
+  setSeamAttached: (builtinId: string, attached: boolean) => void;
+  addPleat: (p: Omit<Pleat, 'id'>) => string;
+  updatePleat: (id: string, patch: Partial<Pleat>) => void;
+  removePleat: (id: string) => void;
+  /** add a user-drawn piece (closed outline, local coords) and how it goes onto the garment */
+  addCustomPiece: (name: string, points: Pt[], placement: Placement) => string;
+  updatePiece: (id: string, patch: Partial<Piece>) => void;
+  removePiece: (id: string) => void;
+  // --- body presets and posing ---
+  setBodyPreset: (sex: 'male' | 'female') => void;
+  customPose: CustomPose;
+  setPoseAngle: (side: 0 | 1 | null, key: string, value: number) => void;
+  resetPose: () => void;
   loadProject: (p: Project) => void;
   rename: (name: string) => void;
 }
@@ -101,6 +125,8 @@ function regrade(p: Project, from: Body, to: Body, fitFrom: Fit = p.fit ?? 'regu
 const mapPiece = (pieces: Piece[], id: string, fn: (p: Piece) => Piece) => pieces.map((p) => (p.id === id ? fn(p) : p));
 
 export const useStore = create<State>((set, get) => {
+  const setEdits = (fn: (e: Edits) => Edits) =>
+    set((s) => ({ project: { ...s.project, edits: fn(s.project.edits ?? EMPTY_EDITS), updatedAt: Date.now() } }));
   const setPieces = (pieces: Piece[]) => set((s) => ({ project: { ...s.project, pieces, updatedAt: Date.now() } }));
 
   return {
@@ -266,5 +292,87 @@ export const useStore = create<State>((set, get) => {
     // older saves stored 'jacket' | 'shirt' | 'pants'; map them onto catalog styles
     loadProject: (p) => set((s) => ({ project: { ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }, past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
     rename: (name) => set((s) => ({ project: { ...s.project, name, updatedAt: Date.now() } })),
+
+    // ---- edits ----
+    selAttachment: null,
+    addAttachment: (a) => {
+      const id = uid();
+      get().commit();
+      setEdits((e) => ({ ...e, attachments: [...e.attachments, { ...a, id }] }));
+      set({ selAttachment: id });
+      return id;
+    },
+    updateAttachment: (id, patch) => setEdits((e) => ({ ...e, attachments: e.attachments.map((a) => (a.id === id ? { ...a, ...patch } : a)) })),
+    removeAttachment: (id) => {
+      get().commit();
+      setEdits((e) => ({ ...e, attachments: e.attachments.filter((a) => a.id !== id) }));
+      set((s) => ({ selAttachment: s.selAttachment === id ? null : s.selAttachment }));
+    },
+    addCustomSeam: (cs) => {
+      const id = uid();
+      get().commit();
+      setEdits((e) => ({ ...e, customSeams: [...e.customSeams, { ...cs, id }] }));
+      return id;
+    },
+    removeCustomSeam: (id) => {
+      get().commit();
+      setEdits((e) => ({ ...e, customSeams: e.customSeams.filter((c) => c.id !== id) }));
+    },
+    setSeamAttached: (builtinId, attached) => {
+      get().commit();
+      setEdits((e) => ({ ...e, detachedSeams: attached ? e.detachedSeams.filter((d) => d !== builtinId) : [...new Set([...e.detachedSeams, builtinId])] }));
+    },
+    addPleat: (pl) => {
+      const id = uid();
+      get().commit();
+      setEdits((e) => ({ ...e, pleats: [...e.pleats, { ...pl, id }] }));
+      return id;
+    },
+    updatePleat: (id, patch) => setEdits((e) => ({ ...e, pleats: e.pleats.map((p) => (p.id === id ? { ...p, ...patch } : p)) })),
+    removePleat: (id) => {
+      get().commit();
+      setEdits((e) => ({ ...e, pleats: e.pleats.filter((p) => p.id !== id) }));
+    },
+    addCustomPiece: (name, pts, placement) => {
+      get().commit();
+      const id = uid();
+      const points: PPoint[] = pts.map((q) => ({ id: uid(), x: q.x, y: q.y, smooth: false, mirror: null }));
+      const host = get().project.pieces.find((p) => p.id === placement.hostPieceId);
+      const fabric = host ? { ...host.fabric } : { ...get().project.pieces[0].fabric };
+      const maxX = Math.max(0, ...get().project.pieces.map((p) => p.offset.x + Math.max(...p.points.map((q) => q.x))));
+      const piece: Piece = { id, name, role: 'custom', cut: 1, offset: { x: maxX + 25, y: 20 }, symmetric: false, points, fabric, specs: [{ label: 'Length', kind: 'length' }], placement };
+      setPieces([...get().project.pieces, piece]);
+      set({ selPiece: id, selPoint: null });
+      return id;
+    },
+    updatePiece: (id, patch) => setPieces(get().project.pieces.map((p) => (p.id === id ? { ...p, ...patch } : p))),
+    removePiece: (id) => {
+      get().commit();
+      setPieces(get().project.pieces.filter((p) => p.id !== id));
+      setEdits((e) => ({
+        ...e,
+        attachments: e.attachments.filter((a) => a.pieceId !== id),
+        customSeams: e.customSeams.filter((c) => c.a.pieceId !== id && c.b.pieceId !== id),
+        pleats: e.pleats.filter((p) => p.pieceId !== id),
+      }));
+      set({ selPiece: null, selPoint: null });
+    },
+
+    // ---- body presets and posing ----
+    setBodyPreset: (sex) =>
+      set((s) => {
+        const body = { ...(sex === 'female' ? FEMALE_BODY : MALE_BODY) };
+        const pieces = s.project.linkPattern ? regrade(s.project, s.project.body, body) : s.project.pieces;
+        return { project: { ...s.project, body, pieces, updatedAt: Date.now() } };
+      }),
+    customPose: ZERO_POSE,
+    setPoseAngle: (side, key, value) =>
+      set((s) => {
+        const p: CustomPose = { ...s.customPose, s: [{ ...s.customPose.s[0] }, { ...s.customPose.s[1] }] };
+        if (side === null) (p as unknown as Record<string, number>)[key] = value;
+        else (p.s[side] as unknown as Record<string, number>)[key] = value;
+        return { customPose: p, mode: 'custom' as never };
+      }),
+    resetPose: () => set({ customPose: ZERO_POSE }),
   };
 });

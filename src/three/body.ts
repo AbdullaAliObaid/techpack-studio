@@ -3,6 +3,8 @@
 // Ring angle convention: 0 = +X (body's left side on screen right), PI/2 = front (+Z), 3PI/2 = back.
 
 export interface Body {
+  /** body shape preset; female shaping uses chest as the bust measurement */
+  sex?: 'male' | 'female';
   height: number;
   chest: number;
   waist: number;
@@ -33,6 +35,9 @@ export function limbGirths(b: Body) {
 }
 
 export const DEFAULT_BODY: Body = { height: 175, chest: 100, waist: 84, hips: 100, shoulder: 46, arm: 62, inseam: 80, neck: 39 };
+export const MALE_BODY: Body = { ...DEFAULT_BODY, sex: 'male' };
+/** Preset female fit model (chest = bust). */
+export const FEMALE_BODY: Body = { sex: 'female', height: 165, chest: 90, waist: 70, hips: 98, shoulder: 39, arm: 57, inseam: 76, neck: 33 };
 
 export const BODY_FIELDS: { key: keyof Body; label: string; min: number; max: number; advanced?: boolean }[] = [
   { key: 'height', label: 'Height', min: 140, max: 210 },
