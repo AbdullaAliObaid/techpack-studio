@@ -315,10 +315,10 @@ export class BodyField {
     return o[1];
   }
 
-  /** Bone that owns this point (0 torso, 1/2 arm +x, 3/4 arm -x, 5/6 leg +x, 7/8 leg -x). */
+  /** Bone that owns this point (0 pelvis, 1/2 arm +x, 3/4 arm -x, 5/6 leg +x, 7/8 leg -x, 9 chest, 10 head). */
   boneAt(x: number, y: number, z: number): number {
     const c = this.chainAt(x, y, z);
-    if (c === 0) return 0;
+    if (c === 0) return y >= this.f.headY - 1 ? 10 : y >= this.f.waistH ? 9 : 0;
     if (c <= 2) {
       const side = c === 1 ? 1 : -1;
       return (side > 0 ? 1 : 3) + (this.armS(side, x, y, z) >= this.f.upperArm ? 1 : 0);
@@ -331,12 +331,16 @@ export class BodyField {
     const f = this.f;
     const sm = (a: number, b: number, v: number) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
     const c = this.chainAt(x, y, z);
-    if (c === 0) return [[0], [1]];
+    if (c === 0) {
+      // the spine bends over the lumbar region, the head turns over the upper neck
+      const chest = sm(f.waistH - 0.04 * f.H, f.waistH + 0.05 * f.H, y), head = sm(f.neckH + 0.004 * f.H, f.headY + 0.01 * f.H, y);
+      return [[0, 9, 10], [1 - chest, chest * (1 - head), chest * head]];
+    }
     if (c <= 2) {
       const side = c === 1 ? 1 : -1, up = side > 0 ? 1 : 3;
       const s = this.armS(side, x, y, z);
       const root = sm(-f.armDome - 1, 4, s), fore = sm(f.upperArm - 3, f.upperArm + 3, s);
-      return [[0, up, up + 1], [1 - root, root * (1 - fore), root * fore]];
+      return [[9, up, up + 1], [1 - root, root * (1 - fore), root * fore]];
     }
     const th = c === 3 ? 5 : 7;
     const root = sm(f.hipJointH + 4, f.crotchH - 3, y), shin = sm(f.kneeH + 3, f.kneeH - 3, y);

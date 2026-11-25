@@ -7,7 +7,8 @@ import { meshField, PosedCollider } from '../three/mesher';
 import { bodyFrame, type BodyFrame } from '../three/body';
 import { buildDetails, detailTransfers } from './details';
 import { migrateGarment, styleById } from '../data/catalog';
-import { boneMatrices, invert, poseAt, type Mode } from './pose';
+import { boneMatrices, clampPose, invert, lerpPose, poseAt, poseDistance, stepPose, type Mode } from './pose';
+import { ZERO_POSE, type CustomPose } from '../data/edits';
 
 let bodyKey = '';
 let collider: PosedCollider | null = null;
@@ -18,10 +19,18 @@ let modeStart = 0;
 let motionPeak = 0;
 let motionPeakInfo: { ratio: number; strain: number; y: number; over: number } | null = null;
 
+// custom pose: the body eases toward the slider pose at a capped joint speed so the cloth cannot be torn
+const POSE_SPEED = 2.5; // radians per second
+let poseTarget: CustomPose = ZERO_POSE;
+let poseCur: CustomPose = ZERO_POSE;
+let posePrev: CustomPose = ZERO_POSE;
+let poseMovedAt = -1e9;
+
 function applyPose(dt = 0) {
   if (!collider || !frame) return 0;
   const t = simTime - modeStart + dt;
-  const M = boneMatrices(frame, poseAt(mode, t, frame));
+  const custom = mode === 'custom' ? lerpPose(posePrev, poseCur, Math.min(1, dt * 60)) : undefined;
+  const M = boneMatrices(frame, poseAt(mode, t, frame, custom));
   collider.setPose(M, invert(M));
   return t;
 }
@@ -30,15 +39,25 @@ let G: Garment3D | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let gen = 0;
 
-type BuildMsg = { type: 'build'; garment: GarmentType; pieces: Piece[]; body: Body; warm: boolean; spacing: number } | { type: 'mode'; mode: Mode };
+type BuildMsg = { type: 'build'; garment: GarmentType; pieces: Piece[]; body: Body; warm: boolean; spacing: number } | { type: 'mode'; mode: Mode } | { type: 'pose'; pose: CustomPose };
+
+function wake() {
+  if (!G || !G.sim.sleeping) return;
+  G.sim.sleeping = false;
+  G.sim.frames = Math.max(G.sim.frames, G.sim.sewFrames + 1);
+  if (timer) clearTimeout(timer);
+  loop(gen);
+}
 
 function loop(myGen: number) {
   if (!G || myGen !== gen) return;
   const t0 = performance.now();
   const poseT = simTime - modeStart;
   // move the body a little on every substep so fast limbs cannot tunnel through the cloth
+  posePrev = poseCur;
+  if (mode === 'custom' && poseDistance(poseCur, poseTarget) > 0) { poseCur = stepPose(poseCur, poseTarget, POSE_SPEED / 60); poseMovedAt = simTime; }
   G.sim.substepHook = (k, n) => applyPose(((k + 1) / n) / 60);
-  G.sim.awake = mode !== 'stand' || poseT < 1.2;
+  G.sim.awake = mode === 'custom' ? poseT < 1.2 || simTime - poseMovedAt < 1.0 : mode !== 'stand' || poseT < 1.2;
   G.sim.step();
   simTime += 1 / 60;
   const pos = new Float32Array(G.sim.n * 3);
@@ -66,14 +85,21 @@ function loop(myGen: number) {
       if (motionPeakInfo) peak = motionPeakInfo;
     }
   }
-  const msg = { type: 'frame', pos, strain, peak, sleeping: G.sim.sleeping, mode, t: simTime - modeStart };
+  const msg = { type: 'frame', pos, strain, peak, sleeping: G.sim.sleeping, mode, t: simTime - modeStart, pose: mode === 'custom' ? poseCur : undefined };
   (self as unknown as Worker).postMessage(msg, [pos.buffer, ...(strain ? [strain.buffer] : [])]);
   if (!G.sim.sleeping) timer = setTimeout(() => loop(myGen), Math.max(0, 16 - (performance.now() - t0)));
 }
 
 self.onmessage = (e: MessageEvent<BuildMsg>) => {
   const m = e.data;
+  if (m.type === 'pose') {
+    poseTarget = clampPose(m.pose);
+    if (mode !== 'custom') { poseCur = posePrev = poseTarget; return; }
+    wake();
+    return;
+  }
   if (m.type === 'mode') {
+    if (m.mode === 'custom') poseCur = posePrev = poseTarget; // the mode blends in from standing on its own
     mode = m.mode;
     modeStart = simTime;
     motionPeak = 0;

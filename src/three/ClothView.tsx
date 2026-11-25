@@ -8,7 +8,8 @@ import { fabricMaterial, stretchMat } from './materials';
 import { useStore } from '../store';
 import Details, { type DetailUpdater } from './Details';
 import type { DetailsMsg } from '../sim/details';
-import { boneMatrices, jointPoints, poseAt, NBONES, type Mode } from '../sim/pose';
+import { boneMatrices, jointPoints, poseAt, NBONES, JOINT_COUNT, type Mode } from '../sim/pose';
+import type { CustomPose } from '../data/edits';
 
 // Live cloth view. The simulation runs in a Web Worker (src/sim/worker.ts); this component sends it the
 // pattern, fabric and body, and streams back positions and strain every frame.
@@ -43,7 +44,8 @@ function setBone(bone: THREE.Bone, M: Float64Array, b: number) {
 
 export default function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, mode, showJoints }: { type: GarmentType; pieces: Piece[]; body: Body; stretch: boolean; showBody: boolean; showGarment: boolean; skin: string; mode: Mode; showJoints: boolean }) {
   const [bodyGeo, setBodyGeo] = useState<THREE.BufferGeometry | null>(null);
-  const pose = useRef<{ mode: Mode; t: number }>({ mode: 'stand', t: 0 });
+  const pose = useRef<{ mode: Mode; t: number; custom?: CustomPose }>({ mode: 'stand', t: 0 });
+  const customPose = useStore((s) => s.customPose);
   const bones = useMemo(() => Array.from({ length: NBONES }, () => { const b = new THREE.Bone(); b.matrixAutoUpdate = false; return b; }), []);
   const skinned = useMemo(() => {
     if (!bodyGeo) return null;
@@ -105,7 +107,7 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         setDetails(m);
       } else if (m.type === 'frame') {
         pending.current.pos = m.pos;
-        pose.current = { mode: m.mode, t: m.t };
+        pose.current = { mode: m.mode, t: m.t, custom: m.pose };
         if (m.strain) pending.current.strain = m.strain;
         if (m.peak) {
           const fr = fRef.current;
@@ -139,6 +141,10 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
     worker.postMessage({ type: 'mode', mode });
   }, [mode, worker]);
 
+  useEffect(() => {
+    worker.postMessage({ type: 'pose', pose: customPose });
+  }, [customPose, worker]);
+
   const paint = (geo: THREE.BufferGeometry, ratios: Float32Array) => {
     const col = geo.getAttribute('color') as THREE.BufferAttribute;
     if (col.count !== ratios.length) return;
@@ -151,7 +157,7 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
 
   useFrame(() => {
     // pose the body and joints with the same pose the cloth was simulated against
-    const M = boneMatrices(fRef.current, poseAt(pose.current.mode, pose.current.t, fRef.current));
+    const M = boneMatrices(fRef.current, poseAt(pose.current.mode, pose.current.t, fRef.current, pose.current.custom));
     bones.forEach((b, i) => setBone(b, M, i));
     if (showJoints) jointPoints(fRef.current, M).forEach((p, i) => jointRefs.current[i]?.position.set(p[0], p[1], p[2]));
     if (!topo) return;
@@ -182,7 +188,7 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
   return (
     <group>
       {showBody && skinned && <primitive object={skinned} material={skinMat} />}
-      {showJoints && Array.from({ length: 13 }, (_, i) => (
+      {showJoints && Array.from({ length: JOINT_COUNT }, (_, i) => (
         <mesh key={i} ref={(el) => { if (el) jointRefs.current[i] = el; }} geometry={jointGeo} material={jointMat} renderOrder={10} />
       ))}
       {showGarment && topo && (

@@ -3,6 +3,7 @@
 
 import type { BodyField } from './bodyField';
 import type { BodyFrame } from './body';
+import { NBONES } from '../sim/pose';
 
 export interface SDFGrid {
   ox: number; oy: number; oz: number; res: number;
@@ -236,9 +237,9 @@ export class GridCollider {
 export class PosedCollider {
   thickness = 0.45;
   flat: [number, number] = [-1, -1];
-  M = new Float64Array(9 * 12);
-  Mprev = new Float64Array(9 * 12);
-  Minv = new Float64Array(9 * 12);
+  M = new Float64Array(NBONES * 12);
+  Mprev = new Float64Array(NBONES * 12);
+  Minv = new Float64Array(NBONES * 12);
   private g = new Float64Array(3);
   private q = new Float64Array(3);
   /** rounded caps over bending joints (knees, elbows) so the cloth cannot fall into the gap a bent joint opens */
@@ -256,7 +257,7 @@ export class PosedCollider {
         this.caps.push({ bone: k === 0 ? 5 : 7, rest: kn, r: f.legRing(f.kneeH, side).a * 1.12, pos: [...kn], prev: [...kn] });
       }
     }
-    for (let b = 0; b < 9; b++) { const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]; this.M.set(I, b * 12); this.Mprev.set(I, b * 12); this.Minv.set(I, b * 12); }
+    for (let b = 0; b < NBONES; b++) { const I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]; this.M.set(I, b * 12); this.Mprev.set(I, b * 12); this.Minv.set(I, b * 12); }
   }
   setPose(M: Float64Array, Minv: Float64Array) {
     this.Mprev.set(this.M); this.M.set(M); this.Minv.set(Minv);
@@ -272,7 +273,7 @@ export class PosedCollider {
     out.vx = 0; out.vy = 0; out.vz = 0;
     const G = this.grid, L = G.labels!;
     let hit = false;
-    for (let b = 0; b < 9; b++) {
+    for (let b = 0; b < NBONES; b++) {
       const o = b * 12, Mi = this.Minv;
       const x = p[i], y = p[i + 1], z = p[i + 2];
       const qx = Mi[o] * x + Mi[o + 1] * y + Mi[o + 2] * z + Mi[o + 3];
