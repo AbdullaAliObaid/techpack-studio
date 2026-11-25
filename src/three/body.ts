@@ -1,4 +1,6 @@
-// Parametric mannequin driven by tailor measurements (all cm). Y is up, the body faces +Z.
+// Parametric human driven by tailor measurements (all cm). Y is up, the body faces +Z.
+// Cross sections are ellipses shaped by anatomical "bumps" (pecs, shoulder blades, glutes, calves...).
+// Ring angle convention: 0 = +X (body's left side on screen right), PI/2 = front (+Z), 3PI/2 = back.
 
 export interface Body {
   height: number;
@@ -24,9 +26,39 @@ export const BODY_FIELDS: { key: keyof Body; label: string; min: number; max: nu
   { key: 'neck', label: 'Neck', min: 30, max: 50 },
 ];
 
+export const SKIN_TONES = [
+  { name: 'Mannequin', hex: '#d9dce2' },
+  { name: 'Light', hex: '#f0d2bd' },
+  { name: 'Medium', hex: '#d4a483' },
+  { name: 'Tan', hex: '#b5805b' },
+  { name: 'Deep', hex: '#7d5238' },
+  { name: 'Dark', hex: '#4e3325' },
+];
+
 export interface Ell {
   a: number; // half width (x)
   b: number; // half depth (z)
+}
+
+export type Shape = (theta: number) => number;
+
+const TAU = Math.PI * 2;
+const F = Math.PI / 2; // front
+const B = (3 * Math.PI) / 2; // back
+
+const g = (x: number, mu: number, s: number) => Math.exp(-0.5 * ((x - mu) / s) ** 2);
+const angDiff = (a: number, b: number) => {
+  let d = (a - b) % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d < -Math.PI) d += TAU;
+  return d;
+};
+const ga = (th: number, mu: number, s: number) => Math.exp(-0.5 * (angDiff(th, mu) / s) ** 2);
+
+export function maxOf(shape: Shape): number {
+  let m = 0;
+  for (let i = 0; i < 48; i++) m = Math.max(m, shape((i / 48) * TAU));
+  return m;
 }
 
 /** Ellipse half-axes from a circumference and a depth/width ratio (Ramanujan approximation). */
@@ -47,7 +79,7 @@ function cr(p0: number, p1: number, p2: number, p3: number, t: number) {
 }
 
 /** Smooth interpolation through keyframes sorted by key ascending. */
-function makeCurve(keys: { k: number; v: number[] }[]) {
+export function makeCurve(keys: { k: number; v: number[] }[], floor = 0.2) {
   return (k: number): number[] => {
     if (k <= keys[0].k) return keys[0].v;
     const last = keys[keys.length - 1];
@@ -57,7 +89,7 @@ function makeCurve(keys: { k: number; v: number[] }[]) {
     const k1 = keys[i], k2 = keys[i + 1];
     const k0 = keys[Math.max(0, i - 1)], k3 = keys[Math.min(keys.length - 1, i + 2)];
     const t = (k - k1.k) / (k2.k - k1.k);
-    return k1.v.map((_, j) => Math.max(0.2, cr(k0.v[j], k1.v[j], k2.v[j], k3.v[j], t)));
+    return k1.v.map((_, j) => Math.max(floor, cr(k0.v[j], k1.v[j], k2.v[j], k3.v[j], t)));
   };
 }
 
@@ -70,17 +102,32 @@ export interface BodyFrame {
   waistH: number;
   hipH: number;
   crotchH: number;
+  hipJointH: number;
   kneeH: number;
   ankleH: number;
   torsoBottom: number;
   torsoTop: number;
   torsoAt: (h: number) => Ell;
+  torsoShape: (h: number, cloth?: boolean) => Shape;
   legAt: (h: number) => number;
+  legShape: (h: number, side: number) => Shape;
+  legMaxAt: (h: number) => number;
   armAt: (s: number) => number;
+  armShape: (s: number, side: number) => Shape;
+  armMaxAt: (s: number) => number;
+  armFlat: (s: number) => [number, number];
   legX: number;
   shoulderJoint: { x: number; y: number };
   armAngle: number;
   armholeDepth: number;
+  armDome: number;
+  upperArm: number;
+  foreArm: number;
+  footLen: number;
+  headH: number;
+  wristR: number;
+  kneeR: number;
+  ankleR: number;
 }
 
 export function bodyFrame(b: Body): BodyFrame {
@@ -91,80 +138,177 @@ export function bodyFrame(b: Body): BodyFrame {
   const waistH = 0.62 * H;
   const hipH = 0.52 * H;
   const crotchH = Math.min(b.inseam, hipH - 5);
+  const hipJointH = crotchH + 0.05 * H;
   const kneeH = Math.min(0.285 * H, crotchH - 15);
   const ankleH = 0.045 * H;
 
-  const chest = ellipseFromCirc(b.chest, 0.7);
-  const under = ellipseFromCirc(b.chest * 0.65 + b.waist * 0.35, 0.72);
-  const waist = ellipseFromCirc(b.waist, 0.74);
-  const hip = ellipseFromCirc(b.hips, 0.78);
-  const crotch = ellipseFromCirc(b.hips * 0.93, 0.8);
-  const neck = ellipseFromCirc(b.neck * 1.1, 0.9);
+  // ---------------- torso ----------------
+  const chest = ellipseFromCirc(b.chest, 0.68);
+  const under = ellipseFromCirc(b.chest * 0.62 + b.waist * 0.38, 0.7);
+  const waist = ellipseFromCirc(b.waist, 0.72);
+  const hip = ellipseFromCirc(b.hips, 0.76);
+  const seat = ellipseFromCirc(b.hips * 0.97, 0.78);
+  const crotch = ellipseFromCirc(b.hips * 0.86, 0.8);
+  const neck = ellipseFromCirc(b.neck * 1.05, 0.92);
   const shA = b.shoulder / 2 - 4;
 
-  const torsoBottom = crotchH - 1;
+  const torsoBottom = crotchH - 2.5;
   const torsoTop = neckH;
-  const keys = [
-    { k: torsoBottom - 14, v: [crotch.a * 0.95, crotch.b * 0.95] },
-    { k: torsoBottom, v: [crotch.a * 0.9, crotch.b * 0.9] },
-    { k: crotchH + 3, v: [crotch.a, crotch.b] },
+  const torso = makeCurve([
+    { k: torsoBottom - 6, v: [crotch.a * 0.3, crotch.b * 0.25] },
+    { k: torsoBottom, v: [crotch.a * 0.32, crotch.b * 0.28] },
+    { k: crotchH, v: [crotch.a * 0.7, crotch.b * 0.62] },
+    { k: crotchH + 3.5, v: [crotch.a, crotch.b] },
+    { k: (hipH + crotchH) / 2, v: [seat.a, seat.b] },
     { k: hipH, v: [hip.a, hip.b] },
+    { k: hipH + (waistH - hipH) * 0.45, v: [hip.a * 0.55 + waist.a * 0.45, hip.b * 0.5 + waist.b * 0.5] },
     { k: waistH, v: [waist.a, waist.b] },
-    { k: chestH - 0.04 * H, v: [under.a, under.b] },
+    { k: chestH - 0.045 * H, v: [under.a, under.b] },
     { k: chestH, v: [chest.a, chest.b] },
-    { k: shoulderH - 0.025 * H, v: [Math.max(shA + 0.8, chest.a * 0.97), chest.b * 0.9] },
-    { k: shoulderH, v: [shA, chest.b * 0.72] },
-    { k: neckH - 0.004 * H, v: [neck.a * 1.6, neck.b * 1.25] },
+    { k: shoulderH - 0.03 * H, v: [Math.max(shA + 1, chest.a * 1.0), chest.b * 0.9] },
+    { k: shoulderH - 0.008 * H, v: [shA, chest.b * 0.72] },
+    { k: shoulderH + 0.003 * H, v: [shA * 0.72, chest.b * 0.6] },
+    { k: neckH - 0.002 * H, v: [neck.a * 1.35, neck.b * 1.18] },
     { k: neckH, v: [neck.a, neck.b] },
-  ];
-  const torso = makeCurve(keys);
+  ]);
   const torsoAt = (h: number): Ell => {
     const [a, bb] = torso(h);
     return { a, b: bb };
   };
 
-  const thigh = (b.hips * 0.57) / (2 * Math.PI);
-  const kneeR = (b.hips * 0.37) / (2 * Math.PI);
-  const calfR = (b.hips * 0.36) / (2 * Math.PI);
-  const ankleR = (b.hips * 0.22) / (2 * Math.PI);
+  const pecAmp = 0.045 + 0.12 * Math.max(0, b.chest / b.waist - 1.08);
+  const gluteAmp = 0.07 + 0.18 * Math.max(0, b.hips / b.waist - 1.08);
+  const torsoShape = (h: number, cloth = false): Shape => {
+    const wPec = pecAmp * g(h, chestH - 0.014 * H, 0.026 * H);
+    const wStern = 0.02 * g(h, chestH - 0.01 * H, 0.04 * H);
+    const wScap = 0.05 * g(h, chestH + 0.025 * H, 0.032 * H);
+    const wSpine = 0.035 * g(h, waistH + 0.05 * H, 0.09 * H);
+    const wGlute = gluteAmp * g(h, (hipH + crotchH) / 2 - 0.004 * H, 0.032 * H);
+    const wCleft = 0.06 * g(h, crotchH + 0.025 * H, 0.03 * H);
+    const wAbs = 0.022 * g(h, waistH - 0.025 * H, 0.04 * H);
+    const wClav = 0.035 * g(h, shoulderH - 0.012 * H, 0.012 * H);
+    const wLat = 0.025 * g(h, chestH - 0.03 * H, 0.04 * H);
+    const wTrap = 0.05 * g(h, shoulderH + 0.002 * H, 0.008 * H);
+    return (th) => {
+      let m = 1;
+      m += wPec * (ga(th, F - 0.5, 0.36) + ga(th, F + 0.5, 0.36));
+      m += wScap * (ga(th, B - 0.62, 0.42) + ga(th, B + 0.62, 0.42));
+      m += wGlute * (ga(th, B - 0.48, 0.42) + ga(th, B + 0.48, 0.42));
+      m += wAbs * ga(th, F, 0.6);
+      m += wClav * (ga(th, F - 0.8, 0.35) + ga(th, F + 0.8, 0.35));
+      m += wLat * (ga(th, 0, 0.5) + ga(th, Math.PI, 0.5));
+      m += wTrap * ga(th, B, 0.9);
+      if (!cloth) {
+        m -= wStern * ga(th, F, 0.13);
+        m -= wSpine * ga(th, B, 0.12);
+        m -= wCleft * ga(th, B, 0.09);
+      }
+      return m;
+    };
+  };
+
+  // ---------------- legs ----------------
+  const thigh = (b.hips * 0.575) / TAU;
+  const kneeR = (b.hips * 0.365) / TAU;
+  const calfR = (b.hips * 0.34) / TAU;
+  const ankleR = (b.hips * 0.215) / TAU;
   const leg = makeCurve([
-    { k: ankleH - 4, v: [ankleR * 0.95] },
+    { k: ankleH - 5, v: [ankleR * 0.92] },
     { k: ankleH, v: [ankleR] },
+    { k: ankleH + 0.06 * H, v: [ankleR * 1.12] },
     { k: kneeH - 0.07 * H, v: [calfR] },
     { k: kneeH, v: [kneeR] },
-    { k: (kneeH + crotchH) / 2, v: [thigh * 0.88] },
+    { k: kneeH + 0.06 * H, v: [kneeR * 1.12] },
+    { k: (kneeH + crotchH) / 2 + 0.03 * H, v: [thigh * 0.9] },
     { k: crotchH, v: [thigh] },
-    { k: crotchH + 8, v: [thigh * 1.05] },
+    { k: hipJointH + 1, v: [thigh * 1.0] },
+    { k: hipJointH + 4, v: [thigh * 0.8] },
   ]);
   const legAt = (h: number) => leg(h)[0];
+  const thighMid = (crotchH + kneeH) / 2;
+  const legShape = (h: number, side: number): Shape => {
+    const outer = side > 0 ? 0 : Math.PI;
+    const inner = side > 0 ? Math.PI : 0;
+    const calfDir = side > 0 ? (5 * Math.PI) / 4 : (7 * Math.PI) / 4;
+    const wQuad = 0.06 * g(h, thighMid + 0.03 * H, 0.08 * H);
+    const wOut = 0.03 * g(h, thighMid + 0.02 * H, 0.1 * H);
+    const wAdd = 0.05 * g(h, crotchH - 0.02 * H, 0.045 * H);
+    const wCap = 0.08 * g(h, kneeH + 0.004 * H, 0.016 * H);
+    const wPop = 0.035 * g(h, kneeH, 0.02 * H);
+    const wCalf = 0.15 * g(h, kneeH - 0.065 * H, 0.045 * H);
+    const wShin = 0.03 * g(h, (kneeH + ankleH) / 2, 0.06 * H);
+    const wMall = 0.08 * g(h, ankleH + 0.004 * H, 0.01 * H);
+    const wAch = 0.05 * g(h, ankleH + 0.02 * H, 0.03 * H);
+    return (th) =>
+      1 +
+      wQuad * ga(th, F, 0.75) +
+      wOut * ga(th, outer, 0.8) +
+      wAdd * ga(th, inner, 0.65) +
+      wCap * ga(th, F, 0.42) -
+      wPop * ga(th, B, 0.5) +
+      wCalf * ga(th, calfDir, 0.75) -
+      wShin * ga(th, F, 0.5) +
+      wMall * (ga(th, 0, 0.3) + ga(th, Math.PI, 0.3)) -
+      wAch * (ga(th, B - 0.5, 0.25) + ga(th, B + 0.5, 0.25));
+  };
+  const legMaxAt = (h: number) => legAt(h) * Math.max(maxOf(legShape(h, 1)), 1);
 
-  const bicep = (b.chest * 0.31) / (2 * Math.PI);
-  const wrist = (b.neck * 0.42) / (2 * Math.PI);
+  // ---------------- arms ----------------
   const L = b.arm;
+  const upperArm = 0.56 * L;
+  const foreArm = L - upperArm;
+  const bicep = (b.chest * 0.31) / TAU;
+  const wristR = (b.neck * 0.42) / TAU;
   const arm = makeCurve([
-    { k: -bicep * 1.1, v: [bicep * 0.35] },
-    { k: -bicep * 0.6, v: [bicep * 0.85] },
-    { k: 0, v: [bicep * 1.1] },
-    { k: 0.18 * L, v: [bicep] },
-    { k: 0.48 * L, v: [bicep * 0.8] },
-    { k: 0.62 * L, v: [bicep * 0.84] },
-    { k: L, v: [wrist] },
+    { k: 0, v: [bicep * 1.12] },
+    { k: 0.2 * L, v: [bicep] },
+    { k: upperArm - 0.03 * L, v: [bicep * 0.82] },
+    { k: upperArm + 0.08 * L, v: [bicep * 0.86] },
+    { k: L - 0.12 * L, v: [wristR * 1.12] },
+    { k: L, v: [wristR] },
+    { k: L + 3, v: [wristR * 0.95] },
   ]);
-  const armAt = (s: number) => arm(s)[0];
+  // shoulder end of the arm is a rounded dome (the deltoid cap) instead of a cone
+  const R0 = bicep * 1.12;
+  const dome = R0 * 0.8;
+  const armAt = (s: number) => (s < 0 ? R0 * Math.sqrt(Math.max(0.04, 1 - (s / dome) ** 2)) : arm(s)[0]);
+  const armShape = (s: number, side: number): Shape => {
+    const outer = side > 0 ? 0 : Math.PI;
+    const of = side > 0 ? Math.PI / 4 : (3 * Math.PI) / 4;
+    const wDelt = 0.13 * g(s, 0.05 * L, 0.08 * L);
+    const wBi = 0.08 * g(s, 0.3 * L, 0.09 * L);
+    const wTri = 0.07 * g(s, 0.24 * L, 0.11 * L);
+    const wElb = 0.08 * g(s, upperArm, 0.022 * L);
+    const wFore = 0.09 * g(s, upperArm + 0.1 * L, 0.07 * L);
+    return (th) =>
+      1 + wDelt * ga(th, outer, 0.95) + wBi * ga(th, F, 0.6) + wTri * ga(th, B, 0.7) + wElb * ga(th, B, 0.35) + wFore * ga(th, of, 0.6);
+  };
+  const armMaxAt = (s: number) => armAt(s) * Math.max(maxOf(armShape(s, 1)), 1);
+  /** forearm flattens toward the wrist: [x scale, z scale] */
+  const armFlat = (s: number): [number, number] => {
+    const t = Math.min(1, Math.max(0, (s - upperArm) / foreArm));
+    return [1 - 0.2 * t, 1 + 0.16 * t];
+  };
 
   return {
-    b, H, neckH, shoulderH, chestH, waistH, hipH, crotchH, kneeH, ankleH, torsoBottom, torsoTop, torsoAt, legAt, armAt,
-    legX: hip.a * 0.47,
-    shoulderJoint: { x: b.shoulder / 2 - 3, y: shoulderH - 3.5 },
-    armAngle: (10 * Math.PI) / 180,
+    b, H, neckH, shoulderH, chestH, waistH, hipH, crotchH, hipJointH, kneeH, ankleH, torsoBottom, torsoTop,
+    torsoAt, torsoShape, legAt, legShape, legMaxAt, armAt, armShape, armMaxAt, armFlat,
+    legX: hip.a * 0.46,
+    shoulderJoint: { x: b.shoulder / 2 - 3.4, y: shoulderH - 0.028 * H },
+    armAngle: (9 * Math.PI) / 180,
     armholeDepth: (shoulderH - chestH) * 0.85,
+    armDome: dome,
+    upperArm, foreArm,
+    footLen: 0.152 * H,
+    headH: 0.13 * H,
+    wristR, kneeR, ankleR,
   };
 }
 
-/** Rough "hull" circumference around the hips and thighs below the crotch, used for long tops. */
+/** Rough "hull" around the hips and thighs below the crotch, used for long tops. */
 export function hullAt(f: BodyFrame, h: number): Ell {
-  if (h >= f.torsoBottom) return f.torsoAt(h);
-  const base = f.torsoAt(f.crotchH + 3);
+  const base = f.torsoAt(f.crotchH + 3.5);
+  if (h >= f.crotchH + 3.5) return f.torsoAt(h);
   const t = Math.min(1, (f.torsoBottom - h) / 30);
-  return { a: base.a * (1 - 0.06 * t), b: base.b * (1 - 0.06 * t) };
+  return { a: base.a * (1 - 0.04 * t), b: base.b * (1 - 0.04 * t) };
 }

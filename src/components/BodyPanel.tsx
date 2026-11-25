@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useStore } from '../store';
-import { BODY_FIELDS } from '../three/body';
+import { BODY_FIELDS, SKIN_TONES } from '../three/body';
 import { fromUnit, toUnit } from '../lib/units';
 
 export default function BodyPanel() {
-  const { project, units, setBody, resetBody } = useStore();
+  const { project, units, setBody, resetBody, skin, set } = useStore();
   const [open, setOpen] = useState(() => window.innerWidth > 1500);
   const body = project.body;
   const step = units === 'cm' ? 0.5 : 0.25;
@@ -17,6 +17,14 @@ export default function BodyPanel() {
       </button>
       {open && (
         <div className="panel-body">
+          <div className="field">
+            <div className="field-top"><label>Skin</label><span className="num">{SKIN_TONES[skin]?.name}</span></div>
+            <div className="swatches">
+              {SKIN_TONES.map((t, i) => (
+                <button key={t.name} title={t.name} className={skin === i ? 'on' : ''} style={{ background: t.hex }} onClick={() => set({ skin: i })} />
+              ))}
+            </div>
+          </div>
           {BODY_FIELDS.map((f) => {
             const v = toUnit(body[f.key], units);
             return (

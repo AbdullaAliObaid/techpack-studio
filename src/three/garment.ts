@@ -42,12 +42,13 @@ function torsoRing(f: BodyFrame, h: number, garmentCirc: number | null, limit: n
   const body = below ? hullAt(f, h) : f.torsoAt(h);
   const k = body.b / body.a;
   const bodyC = ellipseCirc(body);
-  if (garmentCirc === null) return { ring: { y: h, a: body.a + 1.2, b: body.b + 1.2 }, ratio: 0, strain: 0 };
+  const shape = f.torsoShape(Math.max(h, f.torsoBottom), true);
+  if (garmentCirc === null) return { ring: { y: h, a: body.a + 1.2, b: body.b + 1.2, shape }, ratio: 0, strain: 0 };
   const g = ellipseFromCirc(garmentCirc, k);
   const strain = bodyC / garmentCirc - 1;
   const a = Math.max(g.a, body.a + GAP);
   const b = Math.max(g.b, body.b + GAP);
-  return { ring: { y: h, a, b }, ratio: strain / limit, strain };
+  return { ring: { y: h, a, b, shape }, ratio: strain / limit, strain };
 }
 
 function where(f: BodyFrame, h: number) {
@@ -88,7 +89,7 @@ export function buildGarment(type: GarmentType, pieces: Piece[], body: Body): Ga
       const e = f.torsoAt(h);
       const t = (h - f.chestH) / (f.neckH - f.chestH);
       const add = ease * (1 - t) + 0.8 * t;
-      rings.push({ y: h, a: e.a + add, b: e.b + add * 0.8 });
+      rings.push({ y: h, a: e.a + add, b: e.b + add * 0.8, shape: f.torsoShape(h, true) });
       strains.push(0);
     }
     for (let d = 0; d <= len + 0.01; d += STEP) {
@@ -111,8 +112,8 @@ export function buildGarment(type: GarmentType, pieces: Piece[], body: Body): Ga
       const ss: number[] = [];
       const bicepC = widthAt(sp, sUA);
       const sEase = Math.max(0.5, bicepC / (2 * Math.PI) - f.armAt(s0));
-      for (let s = -f.armAt(0) * 1.1; s < s0; s += STEP) {
-        const r = f.armAt(s) + sEase * Math.min(1, (s + f.armAt(0)) / (s0 + f.armAt(0)) + 0.4);
+      for (let s = -f.armDome * 0.95; s < s0; s += STEP) {
+        const r = f.armMaxAt(s) * 1.02 + sEase * Math.min(1, (s + f.armAt(0)) / (s0 + f.armAt(0)) + 0.4);
         sr.push({ y: -s, a: r, b: r });
         ss.push(0);
       }
@@ -123,7 +124,8 @@ export function buildGarment(type: GarmentType, pieces: Piece[], body: Body): Ga
         const rg = C / (2 * Math.PI);
         const strain = (2 * Math.PI * rb) / Math.max(C, 1) - 1;
         const ratio = strain / sLimit;
-        const r = Math.max(rg, rb + GAP);
+        const clear = f.armMaxAt(s) * Math.max(...f.armFlat(s)) + GAP;
+        const r = Math.max(rg, clear);
         sr.push({ y: -s, a: r, b: r });
         ss.push(ratio);
         track(ratio, strain, d < sLen * 0.4 ? 'upper arm' : 'forearm');
@@ -178,7 +180,7 @@ export function buildGarment(type: GarmentType, pieces: Piece[], body: Body): Ga
       const rb = f.legAt(h);
       const strain = (2 * Math.PI * rb) / Math.max(C, 1) - 1;
       const ratio = strain / limit;
-      const r = Math.max(C / (2 * Math.PI), rb + GAP);
+      const r = Math.max(C / (2 * Math.PI), f.legMaxAt(h) * 1.04 + GAP);
       lr.push({ y: h, a: r, b: r });
       ls.push(ratio);
       track(ratio, strain, h > f.kneeH + 10 ? 'thigh' : h > f.kneeH - 8 ? 'knee' : 'calf');

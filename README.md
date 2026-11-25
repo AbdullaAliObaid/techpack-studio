@@ -1,4 +1,4 @@
-# Techpack Studio
+# tech-it
 
 Interactive tech pack builder: a CLO3D-style 2D pattern editor on the left, linked live to a 3D mannequin on the right.
 

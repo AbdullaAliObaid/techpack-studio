@@ -26,6 +26,9 @@ interface State {
   selPoint: string | null;
   view3d: 'fabric' | 'stretch';
   showBody: boolean;
+  skin: number;
+  showJoints: boolean;
+  showGarment: boolean;
   fabricScope: 'all' | 'piece';
   past: Piece[][];
   future: Piece[][];
@@ -69,6 +72,9 @@ export const useStore = create<State>((set, get) => {
     selPoint: null,
     view3d: 'fabric',
     showBody: true,
+    skin: 1,
+    showJoints: false,
+    showGarment: true,
     fabricScope: 'all',
     past: [],
     future: [],

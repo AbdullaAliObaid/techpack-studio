@@ -139,7 +139,7 @@ input { font: inherit; color: inherit; }
 
 /* 3D viewport */
 .viewport { position: relative; flex: 1; min-width: 0; touch-action: none; }
-.vp-top { position: absolute; top: 12px; left: 12px; display: flex; gap: 10px; align-items: center; }
+.vp-top { position: absolute; top: 12px; left: 12px; right: 276px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; z-index: 2; }
 .vp-top .seg { background: rgba(255, 255, 255, 0.9); border: 1px solid var(--line); box-shadow: var(--shadow); }
 .vp-top .seg button.on { background: var(--accent); color: #fff; }
 .chk { display: flex; gap: 6px; align-items: center; background: rgba(255, 255, 255, 0.9); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; box-shadow: var(--shadow); }
