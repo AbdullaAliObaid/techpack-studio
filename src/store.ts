@@ -8,6 +8,9 @@ import { uid, type Units } from './lib/units';
 import { EMPTY_EDITS, ZERO_POSE, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
 import { FEMALE_BODY, MALE_BODY } from './three/body';
 
+/** undo history entry: pattern pieces plus garment edits */
+export interface Snapshot { pieces: Piece[]; edits?: Edits }
+
 export interface Project {
   id: string;
   name: string;
@@ -68,8 +71,8 @@ interface State {
   redrapeToken: number;
   mode: import('./sim/pose').Mode;
   fabricScope: 'all' | 'piece';
-  past: Piece[][];
-  future: Piece[][];
+  past: Snapshot[];
+  future: Snapshot[];
   fitToken: number;
   // --- UI state for the edit tools ---
   selLayer: string | null;
@@ -145,6 +148,8 @@ function regrade(p: Project, from: Body, to: Body, fitFrom: Fit = p.fit ?? 'regu
 const mapPiece = (pieces: Piece[], id: string, fn: (p: Piece) => Piece) => pieces.map((p) => (p.id === id ? fn(p) : p));
 
 export const useStore = create<State>((set, get) => {
+  const snap = (p: Project): Snapshot => ({ pieces: p.pieces, edits: p.edits });
+  const restore = (h: Snapshot) => set((s) => ({ project: { ...s.project, pieces: h.pieces, edits: h.edits, updatedAt: Date.now() } }));
   const setEdits = (fn: (e: Edits) => Edits) =>
     set((s) => ({ project: { ...s.project, edits: fn(s.project.edits ?? EMPTY_EDITS), updatedAt: Date.now() } }));
   const setPieces = (pieces: Piece[]) => set((s) => ({ project: { ...s.project, pieces, updatedAt: Date.now() } }));
@@ -188,20 +193,20 @@ export const useStore = create<State>((set, get) => {
 
     set: (s) => set(s),
 
-    commit: () => set((s) => ({ past: [...s.past.slice(-99), s.project.pieces], future: [] })),
+    commit: () => set((s) => ({ past: [...s.past.slice(-99), snap(s.project)], future: [] })),
 
     undo: () => {
       const { past, future, project } = get();
       if (!past.length) return;
-      set({ past: past.slice(0, -1), future: [project.pieces, ...future], selPoint: null });
-      setPieces(past[past.length - 1]);
+      set({ past: past.slice(0, -1), future: [snap(project), ...future], selPoint: null });
+      restore(past[past.length - 1]);
     },
 
     redo: () => {
       const { past, future, project } = get();
       if (!future.length) return;
-      set({ past: [...past, project.pieces], future: future.slice(1), selPoint: null });
-      setPieces(future[0]);
+      set({ past: [...past, snap(project)], future: future.slice(1), selPoint: null });
+      restore(future[0]);
     },
 
     select: (piece, point = null) => set({ selPiece: piece, selPoint: point }),
