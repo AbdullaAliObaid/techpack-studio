@@ -5,7 +5,7 @@ import { DEFAULT_BODY, type Body } from './three/body';
 import { draft, regradePoints, type Fit } from './data/draft';
 import { bezAt, toBeziers, type PPoint, type Pt } from './lib/geometry';
 import { uid, type Units } from './lib/units';
-import { EMPTY_EDITS, ZERO_POSE, type Attachment, type CustomPose, type CustomSeam, type Edits, type Placement, type Pleat } from './data/edits';
+import { EMPTY_EDITS, ZERO_POSE, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
 import { FEMALE_BODY, MALE_BODY } from './three/body';
 
 export interface Project {
@@ -23,9 +23,15 @@ export interface Project {
   updatedAt: number;
 }
 
-export type Tool = 'select' | 'add' | 'pan';
+export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen';
 export type ThemePref = 'system' | 'light' | 'dark';
-export type InspectorTab = 'library' | 'fabric' | 'specs';
+export type InspectorTab = 'library' | 'fabric' | 'patchwork' | 'seams' | 'pose' | 'specs';
+
+/** Seam being joined by hand: a range on one piece, then a range on another (point ids on the outline). */
+export interface SeamDraft { a: Partial<EdgeRef> | null; b: Partial<EdgeRef> | null; flip: boolean }
+export const EMPTY_SEAM_DRAFT: SeamDraft = { a: null, b: null, flip: false };
+/** A point of the pen tool outline in pattern space (cm); smooth when the pointer was dragged. */
+export interface PenPoint { x: number; y: number; smooth: boolean }
 
 const THEME_KEY = 'tech-it-theme';
 export function readTheme(): ThemePref {
@@ -65,6 +71,20 @@ interface State {
   past: Piece[][];
   future: Piece[][];
   fitToken: number;
+  // --- UI state for the edit tools ---
+  selLayer: string | null;
+  selPleat: string | null;
+  hoverSeam: string | null;
+  seamDraft: SeamDraft;
+  penDraft: PenPoint[];
+  penSnap: boolean;
+  /** closed pen outline waiting for the "Place on garment" sheet */
+  penSheet: PenPoint[] | null;
+  /** hint shown after placing a sewn piece */
+  seamHint: string | null;
+  symmetricPose: boolean;
+  /** drop every half-finished tool action and go back to Select */
+  cancelTools: () => void;
 
   set: (s: Partial<State>) => void;
   commit: () => void;
@@ -155,6 +175,16 @@ export const useStore = create<State>((set, get) => {
     past: [],
     future: [],
     fitToken: 0,
+    selLayer: null,
+    selPleat: null,
+    hoverSeam: null,
+    seamDraft: EMPTY_SEAM_DRAFT,
+    penDraft: [],
+    penSnap: true,
+    penSheet: null,
+    seamHint: null,
+    symmetricPose: true,
+    cancelTools: () => set({ tool: 'select', seamDraft: EMPTY_SEAM_DRAFT, penDraft: [], penSheet: null, seamHint: null, selLayer: null, selPleat: null, hoverSeam: null }),
 
     set: (s) => set(s),
 
@@ -332,6 +362,7 @@ export const useStore = create<State>((set, get) => {
     removePleat: (id) => {
       get().commit();
       setEdits((e) => ({ ...e, pleats: e.pleats.filter((p) => p.id !== id) }));
+      set((s) => ({ selPleat: s.selPleat === id ? null : s.selPleat }));
     },
     addCustomPiece: (name, pts, placement) => {
       get().commit();

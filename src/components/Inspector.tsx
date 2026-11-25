@@ -5,11 +5,17 @@ import { fitTable, garmentSpecs, pieceSpecs, seamReport } from '../lib/specs';
 import { FITS } from '../data/draft';
 import { fmt, toUnit } from '../lib/units';
 import Library from './Library';
+import PatchworkTab from './PatchworkTab';
+import SeamsTab from './SeamsTab';
+import PosePanel from './PosePanel';
 import type { InspectorTab } from '../store';
 
 const TABS: { id: InspectorTab; label: string }[] = [
   { id: 'library', label: 'Library' },
   { id: 'fabric', label: 'Fabric' },
+  { id: 'patchwork', label: 'Patchwork' },
+  { id: 'seams', label: 'Seams' },
+  { id: 'pose', label: 'Pose' },
   { id: 'specs', label: 'Specs' },
 ];
 
@@ -19,12 +25,12 @@ export default function Inspector() {
   return (
     <aside className="inspector" aria-label="Inspector">
       <div className="inspector-head">
-        <div className="seg full" role="tablist" aria-label="Inspector sections">
+        <div className="seg full tabs" role="tablist" aria-label="Inspector sections">
           {TABS.map((t) => (
             <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'on' : ''} onClick={() => set({ inspectorTab: t.id })}>{t.label}</button>
           ))}
         </div>
-        {tab !== 'library' && (
+        {(tab === 'fabric' || tab === 'specs') && (
           <div className="fit-bar">
             <span id="fit-label">Fit</span>
             <div className="seg full" role="group" aria-labelledby="fit-label">
@@ -35,7 +41,7 @@ export default function Inspector() {
           </div>
         )}
       </div>
-      <div className="inspector-body">{tab === 'library' ? <Library /> : tab === 'fabric' ? <FabricTab /> : <SpecsTab />}</div>
+      <div className="inspector-body">{tab === 'library' ? <Library /> : tab === 'fabric' ? <FabricTab /> : tab === 'patchwork' ? <PatchworkTab /> : tab === 'seams' ? <SeamsTab /> : tab === 'pose' ? <PosePanel /> : <SpecsTab />}</div>
     </aside>
   );
 }

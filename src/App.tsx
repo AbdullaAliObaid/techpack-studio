@@ -4,7 +4,8 @@ import Toolbar from './components/Toolbar';
 import PatternEditor from './components/PatternEditor';
 import Inspector from './components/Inspector';
 import Viewport3D from './components/Viewport3D';
-import { useStore } from './store';
+import PlaceSheet from './components/PlaceSheet';
+import { EMPTY_SEAM_DRAFT, useStore } from './store';
 import { useApplyTheme } from './components/theme';
 
 export default function App() {
@@ -15,7 +16,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       const st = useStore.getState();
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === 'z') {
@@ -31,9 +32,21 @@ export default function App() {
         else if (k === 'h') st.set({ tool: 'pan' });
         else if (k === 's') st.set({ symmetry: !st.symmetry });
         else if (k === 'm') st.set({ showMeasure: !st.showMeasure });
+        else if (k === 'j') st.set({ tool: 'seams', inspectorTab: 'seams', seamDraft: EMPTY_SEAM_DRAFT });
+        else if (k === 'l') st.set({ tool: 'pleat', inspectorTab: 'seams' });
+        else if (k === 'd') st.set({ tool: 'pen', inspectorTab: 'seams', penDraft: [] });
         else if (k === 'f') window.dispatchEvent(new Event('tps-fit'));
-        else if ((k === 'delete' || k === 'backspace') && st.selPiece && st.selPoint) st.deletePoint(st.selPiece, st.selPoint);
-        else if (k === 'escape') st.select(null, null);
+        else if (k === 'enter' && st.tool === 'pen' && st.penDraft.length >= 3) st.set({ penSheet: st.penDraft, penDraft: [] });
+        else if (k === 'backspace' && st.tool === 'pen' && st.penDraft.length) st.set({ penDraft: st.penDraft.slice(0, -1) });
+        else if (k === 'delete' || k === 'backspace') {
+          if (st.selAttachment) st.removeAttachment(st.selAttachment);
+          else if (st.selPleat) st.removePleat(st.selPleat);
+          else if (st.selPiece && st.selPoint) st.deletePoint(st.selPiece, st.selPoint);
+        } else if (k === 'escape') {
+          st.cancelTools();
+          st.set({ selAttachment: null });
+          st.select(null, null);
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -71,6 +84,7 @@ export default function App() {
           <Viewport3D />
         </section>
       </main>
+      <PlaceSheet />
     </div>
   );
 }
