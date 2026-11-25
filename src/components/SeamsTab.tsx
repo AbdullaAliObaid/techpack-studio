@@ -30,6 +30,16 @@ export default function SeamsTab() {
   const name = (id?: string) => pieces.find((p) => p.id === id)?.name ?? 'Piece';
   const seams = useMemo(() => builtinSeams(project.garment, pieces), [project.garment, pieces]);
   const detached = new Set(edits?.detachedSeams ?? []);
+  // seams that share a group (both halves of a sleeve cap) show as one row and toggle together
+  const rows = useMemo(() => {
+    const out: { key: string; label: string; ids: string[] }[] = [];
+    for (const s of seams) {
+      const g = s.group && out.find((r) => r.key === s.group);
+      if (g) g.ids.push(s.id);
+      else out.push({ key: s.group ?? s.id, label: s.group ? s.label.replace(/, (front|back)$/, '') : s.label, ids: [s.id] });
+    }
+    return out;
+  }, [seams]);
   const len = (r: EdgeRef | null) => {
     if (!complete(r)) return null;
     const p = pieces.find((q) => q.id === r.pieceId);
@@ -63,12 +73,13 @@ export default function SeamsTab() {
         <div className="card-title">Built in seams</div>
         {seams.length === 0 && <div className="group-note">This garment has no seam list yet. Custom seams still work.</div>}
         <ul className="seam-list">
-          {seams.map((s) => {
-            const on = !detached.has(s.id);
+          {rows.map((s) => {
+            const on = s.ids.some((id) => !detached.has(id));
+            const hov = s.ids[0];
             return (
-              <li key={s.id} className={`seam-item ${hoverSeam === s.id ? 'hover' : ''}`} onMouseEnter={() => set({ hoverSeam: s.id })} onMouseLeave={() => set({ hoverSeam: null })} onFocus={() => set({ hoverSeam: s.id })} onBlur={() => set({ hoverSeam: null })}>
+              <li key={s.key} className={`seam-item ${s.ids.includes(hoverSeam ?? '') ? 'hover' : ''}`} onMouseEnter={() => set({ hoverSeam: hov })} onMouseLeave={() => set({ hoverSeam: null })} onFocus={() => set({ hoverSeam: hov })} onBlur={() => set({ hoverSeam: null })}>
                 <span className="seam-name">{s.label}<small>{on ? 'Sewn' : 'Open'}</small></span>
-                <Switch label={`${s.label}: ${on ? 'sewn, turn off to open it' : 'open, turn on to sew it'}`} on={on} onChange={(v) => setSeamAttached(s.id, v)} />
+                <Switch label={`${s.label}: ${on ? 'sewn, turn off to open it' : 'open, turn on to sew it'}`} on={on} onChange={(v) => s.ids.forEach((id) => setSeamAttached(id, v))} />
               </li>
             );
           })}

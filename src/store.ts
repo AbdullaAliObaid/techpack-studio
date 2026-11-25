@@ -5,7 +5,7 @@ import { DEFAULT_BODY, type Body } from './three/body';
 import { draft, regradePoints, type Fit } from './data/draft';
 import { bezAt, toBeziers, type PPoint, type Pt } from './lib/geometry';
 import { uid, type Units } from './lib/units';
-import { EMPTY_EDITS, ZERO_POSE, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
+import { pleatIntakeOf, EMPTY_EDITS, ZERO_POSE, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
 import { FEMALE_BODY, MALE_BODY } from './three/body';
 
 /** undo history entry: pattern pieces plus garment edits */
@@ -150,6 +150,24 @@ const mapPiece = (pieces: Piece[], id: string, fn: (p: Piece) => Piece) => piece
 export const useStore = create<State>((set, get) => {
   const snap = (p: Project): Snapshot => ({ pieces: p.pieces, edits: p.edits });
   const restore = (h: Snapshot) => set((s) => ({ project: { ...s.project, pieces: h.pieces, edits: h.edits, updatedAt: Date.now() } }));
+  /** slash and spread: move every point past the pleat (along its edge) outward by `amount` cm */
+  const spreadPleat = (pl: Pick<Pleat, 'pieceId' | 'pointId' | 't'>, amount: number) => {
+    if (!amount) return;
+    const pieces = get().project.pieces;
+    const piece = pieces.find((p) => p.id === pl.pieceId);
+    if (!piece) return;
+    const i = piece.points.findIndex((q) => q.id === pl.pointId);
+    if (i < 0) return;
+    const a = piece.points[i], b = piece.points[(i + 1) % piece.points.length];
+    const L = Math.hypot(b.x - a.x, b.y - a.y);
+    if (L < 1e-6) return;
+    const tx = (b.x - a.x) / L, ty = (b.y - a.y) / L;
+    // undoing a spread: cut at the original position (length before the spread), the gap beyond it is empty
+    const at = pl.t * (amount < 0 ? L + amount : L);
+    const cx = a.x + tx * at, cy = a.y + ty * at;
+    const points = piece.points.map((q) => ((q.x - cx) * tx + (q.y - cy) * ty > 1e-6 ? { ...q, x: q.x + tx * amount, y: q.y + ty * amount } : q));
+    setPieces(pieces.map((p) => (p.id === piece.id ? { ...p, points } : p)));
+  };
   const setEdits = (fn: (e: Edits) => Edits) =>
     set((s) => ({ project: { ...s.project, edits: fn(s.project.edits ?? EMPTY_EDITS), updatedAt: Date.now() } }));
   const setPieces = (pieces: Piece[]) => set((s) => ({ project: { ...s.project, pieces, updatedAt: Date.now() } }));
@@ -357,15 +375,28 @@ export const useStore = create<State>((set, get) => {
       get().commit();
       setEdits((e) => ({ ...e, detachedSeams: attached ? e.detachedSeams.filter((d) => d !== builtinId) : [...new Set([...e.detachedSeams, builtinId])] }));
     },
+    // pleats: the pattern is spread beside the fold by the intake so the folded edge still walks to its seam
     addPleat: (pl) => {
       const id = uid();
       get().commit();
-      setEdits((e) => ({ ...e, pleats: [...e.pleats, { ...pl, id }] }));
+      const spread = pleatIntakeOf(pl);
+      spreadPleat(pl, spread);
+      setEdits((e) => ({ ...e, pleats: [...e.pleats, { ...pl, id, spread }] }));
       return id;
     },
-    updatePleat: (id, patch) => setEdits((e) => ({ ...e, pleats: e.pleats.map((p) => (p.id === id ? { ...p, ...patch } : p)) })),
+    updatePleat: (id, patch) => {
+      const old = get().project.edits?.pleats.find((p) => p.id === id);
+      if (!old) return;
+      const next = { ...old, ...patch };
+      const spread = pleatIntakeOf(next);
+      if (old.spread) spreadPleat(old, -old.spread);
+      spreadPleat(next, spread);
+      setEdits((e) => ({ ...e, pleats: e.pleats.map((p) => (p.id === id ? { ...next, spread } : p)) }));
+    },
     removePleat: (id) => {
       get().commit();
+      const old = get().project.edits?.pleats.find((p) => p.id === id);
+      if (old?.spread) spreadPleat(old, -old.spread);
       setEdits((e) => ({ ...e, pleats: e.pleats.filter((p) => p.id !== id) }));
       set((s) => ({ selPleat: s.selPleat === id ? null : s.selPleat }));
     },

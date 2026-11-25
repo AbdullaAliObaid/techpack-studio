@@ -22,10 +22,16 @@ interface BuiltMsg {
   groups: { start: number; count: number; panel: number }[];
   vPiece?: Uint16Array;
   vUV?: Float32Array;
+  /** names used by the worker (src/sim/worker.ts) */
+  vertexPiece?: Uint16Array;
+  vertexPatternUv?: Float32Array;
   pieceIds?: string[];
 }
 
 export function vertexPattern(m: BuiltMsg, pieces: Piece[]): VertexPattern {
+  if (m.vertexPiece && m.vertexPatternUv && m.pieceIds && m.vertexPiece.length === m.n && m.vertexPatternUv.length === m.n * 2) {
+    return { vPiece: m.vertexPiece, vUV: m.vertexPatternUv, pieceIds: m.pieceIds };
+  }
   if (m.vPiece && m.vUV && m.pieceIds && m.vPiece.length === m.n && m.vUV.length === m.n * 2) {
     return { vPiece: m.vPiece, vUV: m.vUV, pieceIds: m.pieceIds };
   }

@@ -11,7 +11,7 @@ import type { DetailsMsg } from '../sim/details';
 import Prints from './Prints';
 import { vertexPattern, type VertexPattern } from './printsAdapter';
 import { boneMatrices, jointPoints, poseAt, NBONES, JOINT_COUNT, type Mode } from '../sim/pose';
-import type { CustomPose } from '../data/edits';
+import { EMPTY_EDITS, type CustomPose, type Edits } from '../data/edits';
 
 // Live cloth view. The simulation runs in a Web Worker (src/sim/worker.ts); this component sends it the
 // pattern, fabric and body, and streams back positions and strain every frame.
@@ -132,6 +132,11 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
     return () => worker.terminate();
   }, [worker]);
 
+  // only edits that change the cloth (not artwork, names or prints) trigger a rebuild
+  const edits = useStore((s) => s.project.edits ?? EMPTY_EDITS);
+  const simKey = JSON.stringify({ ...edits, attachments: edits.attachments.filter((a) => a.kind !== 'print').map(({ layers: _l, name: _n, ...a }) => a) });
+  const simEdits = useMemo(() => JSON.parse(simKey) as Edits, [simKey]);
+
   // send a rebuild shortly after edits stop; pattern / fabric edits warm start from the current drape
   const lastBody = useRef<Body | null>(null);
   const lastToken = useRef(redrape);
@@ -143,10 +148,10 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
       lastBody.current = body;
       lastToken.current = redrape;
       lastType.current = type;
-      worker.postMessage({ type: 'build', garment: type, pieces, body, warm, spacing: SPACING });
+      worker.postMessage({ type: 'build', garment: type, pieces, body, warm, spacing: SPACING, edits: simEdits });
     }, first ? 0 : 160);
     return () => clearTimeout(t);
-  }, [type, pieces, body, redrape, worker]);
+  }, [type, pieces, body, redrape, worker, simEdits]);
 
   // stitching around pockets, patches and straps follows the attachments (debounced while dragging)
   useEffect(() => {

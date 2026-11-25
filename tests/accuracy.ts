@@ -11,7 +11,12 @@ import { meshField } from '../src/three/mesher';
 import { hullLength } from '../src/three/body';
 import { buildGarment } from '../src/three/garment';
 import { samplePoly, sliceSpan } from '../src/lib/geometry';
-import { findTag } from '../src/lib/specs';
+import { findTag, pieceSpecs } from '../src/lib/specs';
+import { readFileSync } from 'node:fs';
+import { builtinSeams } from '../src/sim/seams';
+import { assemble } from '../src/sim/setup';
+import { EMPTY_EDITS, type Edits } from '../src/data/edits';
+import { NO_COLLIDER, sewSignature } from './sewSnapshot';
 
 const bodies: Record<string, Body> = {
   default: DEFAULT_BODY,
@@ -215,6 +220,106 @@ for (const s of CATALOG) {
   if (!ok) console.log(`FAIL new project for ${s.id}`);
 }
 console.log(`ok   new project works for all ${CATALOG.length} styles`);
+
+// ---- built-in seams and garment edits ----
+console.log('\n== seams and edits ==');
+const pass = (ok: boolean, msg: string) => { if (!ok) fails++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); };
+const SEAM_IDS: Record<string, string[]> = {
+  tee: ['shoulder-r', 'shoulder-l', 'side-r', 'side-l', 'underarm-r', 'sleeve-cap-front-r', 'sleeve-cap-back-r', 'underarm-l', 'sleeve-cap-front-l', 'sleeve-cap-back-l', 'neckband-join', 'neckband'],
+  shirt: ['shoulder-r', 'shoulder-l', 'side-r', 'side-l', 'underarm-r', 'sleeve-cap-front-r', 'sleeve-cap-back-r', 'underarm-l', 'sleeve-cap-front-l', 'sleeve-cap-back-l', 'cuff-join-r', 'cuff-join-l', 'collar', 'cuff-r', 'cuff-l'],
+  jacket: ['shoulder-r', 'shoulder-l', 'side-r', 'side-l', 'underarm-r', 'sleeve-cap-front-r', 'sleeve-cap-back-r', 'underarm-l', 'sleeve-cap-front-l', 'sleeve-cap-back-l', 'collar'],
+  pants: ['outseam-r', 'inseam-r', 'outseam-l', 'inseam-l', 'crotch-front', 'crotch-back', 'waistband-join', 'waistband'],
+  bucket: ['crown-1', 'crown-2', 'crown-3', 'crown-4', 'crown-5', 'crown-6', 'brim-join', 'brim'],
+  cap: ['crown-1', 'crown-2', 'crown-3', 'crown-4', 'crown-5', 'crown-6', 'visor'],
+};
+const baseline = JSON.parse(readFileSync(new URL('./fixtures/sew-baseline.json', import.meta.url), 'utf8'));
+for (const st of CATALOG) {
+  const pieces = makePreset(st.id, DEFAULT_BODY);
+  const seams = builtinSeams(st.id, pieces);
+  const ids = seams.map((q) => q.id);
+  const unique = new Set(ids).size === ids.length && seams.every((q) => q.label && q.a.length && q.b.length);
+  // the same ids whatever the body or fit: they are stored in a project's detached seams
+  const stable = JSON.stringify(builtinSeams(st.id, makePreset(st.id, bodies.big, 'relaxed')).map((q) => q.id)) === JSON.stringify(ids);
+  let want = SEAM_IDS[st.family] ?? [];
+  if (st.family === 'polo') want = SEAM_IDS.jacket.slice(0, 10).concat(pieces.some((q) => q.role === 'placket') ? ['placket-r', 'placket-l', 'placket-base'] : [], ['collar']);
+  if (st.family === 'pants' && pieces.some((q) => q.role === 'cuff')) want = [...want.slice(0, 7), 'cuff-join-r', 'cuff-join-l', 'waistband', 'cuff-r', 'cuff-l'];
+  const expected = JSON.stringify(ids) === JSON.stringify(want);
+  pass(unique && stable && expected, `${st.id} built-in seams: ${ids.length} unique, stable ids${expected ? '' : ` (got ${ids.join(',')})`}`);
+  const sig = sewSignature(st.id, undefined, pieces);
+  pass(JSON.stringify(sig) === JSON.stringify(baseline[st.id]), `${st.id} sews exactly as before (${sig.n} sew links, start shape unchanged)`);
+}
+const pairSet = (G: NonNullable<ReturnType<typeof assemble>>) => { const r = new Set<string>(); for (let c = 0; c < G.sim.ca.length; c++) if (G.sim.rest[c] === 0) r.add(`${G.sim.ca[c]},${G.sim.cb[c]}`); return r; };
+const build = (g: string, pieces: ReturnType<typeof makePreset>, edits: Edits) => assemble(g as never, pieces, DEFAULT_BODY, 2.2, NO_COLLIDER, edits)!;
+for (const [g, id] of [['basic-tee', 'side-r'], ['button-up', 'cuff-l'], ['jeans', 'inseam-l'], ['polo', 'collar'], ['cap', 'visor'], ['bucket-hat', 'crown-3']] as const) {
+  const pieces = makePreset(g, DEFAULT_BODY);
+  const full = build(g, pieces, EMPTY_EDITS), cut = build(g, pieces, { ...EMPTY_EDITS, detachedSeams: [id] });
+  const A = pairSet(full), B = pairSet(cut), own = new Set(full.seamLinks[id].map(([i, j]) => `${i},${j}`));
+  const removed = [...A].filter((k) => !B.has(k));
+  const ok = own.size > 0 && [...B].every((k) => A.has(k)) && removed.length === own.size && removed.every((k) => own.has(k)) && !cut.seamLinks[id];
+  pass(ok, `${g}: detaching ${id} removes exactly its ${own.size} sew links, nothing else`);
+}
+{
+  // custom seam: close the right half of a tee hem, front to back
+  const pieces = makePreset('basic-tee', DEFAULT_BODY);
+  const fr = pieces.find((q) => q.role === 'front')!, bk = pieces.find((q) => q.role === 'back')!;
+  const id = (p: typeof fr, k: string) => p.points.find((q) => q.key === k)!.id;
+  const cs = { id: 'hem', a: { pieceId: fr.id, fromId: id(fr, 'front.8'), toId: id(fr, 'front.7') }, b: { pieceId: bk.id, fromId: id(bk, 'back.8'), toId: id(bk, 'back.7') } };
+  for (const flip of [false, true]) {
+    const G = build('basic-tee', pieces, { ...EMPTY_EDITS, customSeams: [{ ...cs, flip }] });
+    const F = G.panels[0], B = G.panels[1];
+    const links = G.seamLinks.hem ?? [];
+    const across = links.every(([i, j]) => i >= F.offset && i < F.offset + F.mesh.uv.length && j >= B.offset && j < B.offset + B.mesh.uv.length);
+    // first link: centre front meets centre back, or (flipped) the side of the back
+    const [i0, j0] = links[0] ?? [0, 0];
+    const fx = F.mesh.uv[i0 - F.offset]?.x ?? NaN, bx = B.mesh.uv[j0 - B.offset]?.x ?? NaN;
+    const dir = flip ? Math.abs(fx) < 1 && bx > 25 : Math.abs(fx) < 1 && Math.abs(bx) < 1;
+    pass(links.length > 10 && across && dir, `custom seam ${flip ? '(flipped) ' : ''}sews front hem to back hem: ${links.length} links, ends matched ${flip ? 'crossed' : 'in order'}`);
+  }
+  const rep = seamReport('basic-tee', pieces, { ...EMPTY_EDITS, customSeams: [cs], detachedSeams: ['side-r'] });
+  const row = rep.find((r) => r.seams?.includes('hem'));
+  pass(!!row && Math.abs(row.a - row.b) < 0.05 && !rep.some((r) => r.seams?.includes('side-r')) && rep.some((r) => r.seams?.includes('side-l')), 'seam report lists the custom seam and drops the detached side seam');
+}
+{
+  // pleats: the intake comes off the edge in the seam report, and shows in the piece specs
+  const pieces = makePreset('jeans', DEFAULT_BODY);
+  const fr = pieces.find((q) => q.role === 'front')!;
+  const w0 = fr.points.find((q) => q.key === 'front.0')!;
+  const pleated: Edits = { ...EMPTY_EDITS, pleats: [{ id: 'kp', pieceId: fr.id, pointId: w0.id, t: 0.55, depth: 1.5, length: 7, type: 'knife', direction: 1 }] };
+  const waist = (e?: Edits) => seamReport('jeans', pieces, e).find((r) => r.label.startsWith('Waist edge'))!;
+  check('knife pleat takes 2 x depth per front leg off the waist', waist().a - waist(pleated).a, 2 * 2 * 1.5);
+  const box: Edits = { ...pleated, pleats: [{ ...pleated.pleats[0], type: 'box' }] };
+  check('box pleat takes 4 x depth per front leg off the waist', waist().a - waist(box).a, 2 * 4 * 1.5);
+  check('pleat does not touch the outseam', seamReport('jeans', pieces, pleated)[1].a, seamReport('jeans', pieces)[1].a);
+  check('piece spec lists the pleat intake', pieceSpecs(fr, pleated).find((q) => q.label === 'Pleat intake (knife)')?.value ?? 0, 3);
+  // drafted wider by the intake, the pleated waist walks with the waistband again
+  const wide = makePreset('jeans', DEFAULT_BODY);
+  const wf = wide.find((q) => q.role === 'front')!;
+  const before = waist().a;
+  wf.points.find((q) => q.key === 'front.1')!.x += 3;
+  const wr = seamReport('jeans', wide, { ...pleated, pleats: [{ ...pleated.pleats[0], pieceId: wf.id, pointId: wf.points.find((q) => q.key === 'front.0')!.id }] }).find((r) => r.label.startsWith('Waist edge'))!;
+  check('front spread by the intake + pleat walks to the original waist', wr.a, before, 0.05);
+  // the sim sews the pleat shut at the edge on both legs
+  const G = build('jeans', pieces, pleated);
+  pass((G.seamLinks['pleat:kp'] ?? []).length === 2, 'pleat is stitched shut on both front legs');
+}
+{
+  // attachments: a pocket on both back legs, a patch, a strap, a print (no cloth)
+  const pieces = makePreset('jeans', DEFAULT_BODY);
+  const bk = pieces.find((q) => q.role === 'back')!;
+  const base = { name: 'x', rotation: 0, layers: [], outline: 'rect' as const, pieceId: bk.id };
+  const edits: Edits = { ...EMPTY_EDITS, attachments: [
+    { ...base, id: 'pk', kind: 'pocket', name: 'Back pocket', x: 1, y: 13, w: 14, h: 15, outline: 'pointed' },
+    { ...base, id: 'st', kind: 'strap', name: 'Belt loop', x: 5, y: 1.5, w: 1.2, h: 5, instance: 1 },
+    { ...base, id: 'pr', kind: 'print', name: 'Logo', x: 0, y: 40, w: 6, h: 6, layers: [{ id: 'l', shape: 'star', x: 0, y: 0, w: 5, h: 5, rotation: 0, color: '#fff' }] },
+  ] };
+  const G = build('jeans', pieces, edits);
+  const at = (id: string) => G.panels.filter((q) => q.attach?.id === id);
+  const plain = build('jeans', pieces, EMPTY_EDITS);
+  pass(at('pk').length === 2 && at('st').length === 1 && at('pr').length === 0 && G.panels.length === plain.panels.length + 3, 'pocket on both back legs, strap on the chosen leg, print adds no cloth');
+  pass(JSON.stringify([...pairSet(G)]) === JSON.stringify([...pairSet(plain)]), 'attachments leave the garment seams alone (pinned, not sewn)');
+  const sr = seamReport('jeans', pieces, edits);
+  pass(sr.some((r) => r.attachment === 'pk' && /3 sides/.test(r.label)) && sr.some((r) => r.attachment === 'st') && !sr.some((r) => r.attachment === 'pr'), 'seam report lists the sewn attachments');
+}
 
 // regrade keeps user edits
 console.log('\n== regrade ==');

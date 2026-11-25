@@ -502,9 +502,9 @@ function PieceView(props: {
       bb,
       c: centroid(poly),
       cut: polyD(offsetInward(poly, -SEAM_ALLOWANCE)),
-      specs: pieceSpecs(p),
+      specs: pieceSpecs(p, pleats.length ? { attachments: [], customSeams: [], detachedSeams: [], pleats } : undefined),
     };
-  }, [p.points, p.specs]);
+  }, [p.points, p.specs, pleats]);
 
   const sel = p.points.find((q) => q.id === selPoint);
   const fontPx = 11;

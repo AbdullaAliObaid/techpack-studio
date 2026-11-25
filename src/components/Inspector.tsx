@@ -144,7 +144,7 @@ function SpecsTab() {
       </div>
       <div className="card">
         <div className="card-title">Seams</div>
-        {seamReport(project.garment, project.pieces).map((r) => {
+        {seamReport(project.garment, project.pieces, project.edits).map((r) => {
           const diff = r.a - r.b;
           const want = r.ease ?? 0;
           const ok = Math.abs(diff - want) < 0.1;
@@ -169,7 +169,7 @@ function SpecsTab() {
       {project.pieces.map((p) => (
         <div className={`card ${p.id === selPiece ? 'hl' : ''}`} key={p.id}>
           <div className="card-title">{p.name} <span className="muted">· {fabricById(p.fabric.id).name} · cut {p.cut}</span></div>
-          {pieceSpecs(p).map((s) => (
+          {pieceSpecs(p, project.edits).map((s) => (
             <div className="kv" key={s.label}><span>{s.label}</span><b>{fmt(s.value, units)}</b></div>
           ))}
         </div>

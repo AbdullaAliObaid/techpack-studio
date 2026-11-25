@@ -1,0 +1,107 @@
+{
+ "basic-tee": {
+  "n": 171,
+  "sew": 4246411529,
+  "pos": 2252054702,
+  "particles": 2160,
+  "constraints": 11919
+ },
+ "boxy-tee": {
+  "n": 168,
+  "sew": 3497223526,
+  "pos": 1832443813,
+  "particles": 2407,
+  "constraints": 13392
+ },
+ "polo": {
+  "n": 205,
+  "sew": 3616261968,
+  "pos": 2210200417,
+  "particles": 2362,
+  "constraints": 13012
+ },
+ "collared-tee": {
+  "n": 169,
+  "sew": 1561516516,
+  "pos": 431341173,
+  "particles": 2220,
+  "constraints": 12250
+ },
+ "button-up": {
+  "n": 231,
+  "sew": 1622738630,
+  "pos": 2078657211,
+  "particles": 2921,
+  "constraints": 16203
+ },
+ "jacket": {
+  "n": 197,
+  "sew": 3658400696,
+  "pos": 966493952,
+  "particles": 2892,
+  "constraints": 16169
+ },
+ "sweatpants": {
+  "n": 304,
+  "sew": 3544397525,
+  "pos": 2906403767,
+  "particles": 2856,
+  "constraints": 15568
+ },
+ "jeans": {
+  "n": 263,
+  "sew": 1831281669,
+  "pos": 4177585729,
+  "particles": 2716,
+  "constraints": 14723
+ },
+ "straight-jeans": {
+  "n": 261,
+  "sew": 3146724675,
+  "pos": 708749276,
+  "particles": 2882,
+  "constraints": 15699
+ },
+ "bootcut-jeans": {
+  "n": 263,
+  "sew": 3831022220,
+  "pos": 3294268263,
+  "particles": 2812,
+  "constraints": 15263
+ },
+ "flared-jeans": {
+  "n": 263,
+  "sew": 1168979326,
+  "pos": 1978719404,
+  "particles": 2774,
+  "constraints": 15023
+ },
+ "baggy-jeans": {
+  "n": 267,
+  "sew": 4277385926,
+  "pos": 1819655503,
+  "particles": 3422,
+  "constraints": 18891
+ },
+ "shorts": {
+  "n": 157,
+  "sew": 4126518399,
+  "pos": 2754590741,
+  "particles": 1408,
+  "constraints": 7363
+ },
+ "bucket-hat": {
+  "n": 107,
+  "sew": 1584498788,
+  "pos": 307523725,
+  "particles": 376,
+  "constraints": 1619
+ },
+ "cap": {
+  "n": 84,
+  "sew": 2425163103,
+  "pos": 301753517,
+  "particles": 282,
+  "constraints": 1526
+ }
+}
