@@ -4,7 +4,7 @@
 // The field is used twice: meshed into the body you see, and sampled as the cloth collision surface.
 // A calibration pass measures the final surface like a tape and corrects it to the exact girths.
 
-import { bodyFrame, hullLength, makeCurve, type Body, type BodyFrame, type BRing, type Shape } from './body';
+import { bodyFrame, hullLength, limbGirths, makeCurve, type Body, type BodyFrame, type BRing, type Shape } from './body';
 
 const TAU = Math.PI * 2;
 const NA = 72;
@@ -69,7 +69,7 @@ function headShape(t: number): Shape {
     cheek * (ga(th, F - 0.7, 0.35) + ga(th, F + 0.7, 0.35)) + lips * ga(th, F, 0.3) + chin * ga(th, F, 0.35) + occ * ga(th, B, 0.8);
 }
 
-export interface Calibration { torso: [number, number][]; neck: number }
+export interface Calibration { torso: [number, number][]; neck: number; head?: number }
 
 export class BodyField {
   f: BodyFrame;
@@ -129,15 +129,17 @@ export class BodyField {
 
     // head
     const Hh = f.headH, hy = f.neckH + 0.029 * H, hz = 0.016 * H;
+    const hs = this.cal.head ?? 1; // head width / depth scale, calibrated to the head circumference
     const hd = rowsFrom(0, Hh, Hh / 60, (y) => {
       const t = y / Hh;
       const [a, b, cz] = HEAD(t);
-      return { a: a * Hh, b: b * Hh, shape: headShape(t), C: 0, cz: cz * Hh };
+      return { a: a * Hh * hs, b: b * Hh * hs, shape: headShape(t), C: 0, cz: cz * Hh };
     });
     P.push({ kind: 'tube', y0: 0, rows: hd, group: 0, box: [-0.45 * Hh, hy - 1, hz - 0.6 * Hh, 0.45 * Hh, hy + Hh + 1, hz + 0.65 * Hh], map: (x, y, z, o) => { o[0] = x; o[1] = y - hy; o[2] = z - hz; } } as Tube);
     (P[P.length - 1] as Tube & { dy?: number }).dy = Hh / 60;
     for (const side of [1, -1]) {
-      P.push({ kind: 'ell', c: [side * 0.325 * Hh, hy + 0.5 * Hh, hz - 0.03 * Hh], r: [0.032 * Hh, 0.1 * Hh, 0.062 * Hh], group: 3, box: [side * 0.325 * Hh - 2, hy + 0.35 * Hh, hz - 3, side * 0.325 * Hh + 2, hy + 0.65 * Hh, hz + 3] });
+      const ex = side * 0.325 * Hh * hs;
+      P.push({ kind: 'ell', c: [ex, hy + 0.5 * Hh, hz - 0.03 * Hh], r: [0.032 * Hh, 0.1 * Hh, 0.062 * Hh], group: 3, box: [ex - 2, hy + 0.35 * Hh, hz - 3, ex + 2, hy + 0.65 * Hh, hz + 3] });
     }
 
     for (const side of [1, -1]) {
@@ -376,12 +378,14 @@ export class BodyField {
 export function calibratedField(body: Body): BodyField {
   const f = bodyFrame(body);
   const marks: [number, number][] = [[f.hipH, body.hips], [f.waistH, body.waist], [f.chestH, body.chest]];
-  let cal: Calibration = { torso: marks.map(([h]) => [h, 1]), neck: 1 };
+  const head = limbGirths(body).head;
+  let cal: Calibration = { torso: marks.map(([h]) => [h, 1]), neck: 1, head: 1 };
   let field = new BodyField(body, cal);
   for (let it = 0; it < 3; it++) {
     cal = {
       torso: cal.torso.map(([h, s], i) => [h, s * (marks[i][1] / field.girthAt(h))]),
       neck: cal.neck * (body.neck / field.girthAt(f.neckMeasureH, 0, f.neckRing(f.neckMeasureH).cz ?? 0, 12)),
+      head: (cal.head ?? 1) * (head / field.girthAt(f.headBandH, 0, f.headCz, 16)),
     };
     field = new BodyField(body, cal);
   }

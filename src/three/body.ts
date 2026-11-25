@@ -17,6 +17,7 @@ export interface Body {
   bicep?: number;
   wrist?: number;
   ankle?: number;
+  head?: number; // head circumference at the hat band (just above the brow and ears)
 }
 
 /** Girths that can be typed in or estimated from the main measurements. */
@@ -27,6 +28,7 @@ export function limbGirths(b: Body) {
     bicep: b.bicep ?? b.chest * 0.31,
     wrist: b.wrist ?? b.neck * 0.43,
     ankle: b.ankle ?? b.hips * 0.225,
+    head: b.head ?? 57 + 0.15 * (b.height - 175),
   };
 }
 
@@ -46,6 +48,7 @@ export const BODY_FIELDS: { key: keyof Body; label: string; min: number; max: nu
   { key: 'bicep', label: 'Bicep', min: 22, max: 50, advanced: true },
   { key: 'wrist', label: 'Wrist', min: 13, max: 22, advanced: true },
   { key: 'ankle', label: 'Ankle', min: 17, max: 32, advanced: true },
+  { key: 'head', label: 'Head', min: 48, max: 66, advanced: true },
 ];
 
 export const SKIN_TONES = [
@@ -220,10 +223,20 @@ export interface BodyFrame {
   foreArm: number;
   footLen: number;
   headH: number;
+  /** bottom of the head (chin level) */
+  headY: number;
+  /** height where a hat band sits and the head circumference is taped (just above the brow and the ears) */
+  headBandH: number;
+  /** centre of the head section at the band (z), and its depth / width ratio */
+  headCz: number;
+  headK: number;
   wristR: number;
   kneeR: number;
   ankleR: number;
 }
+
+/** Hat band height as a fraction of the head (chin = 0, crown = 1). */
+export const HEAD_BAND_T = 0.645;
 
 export function bodyFrame(b: Body): BodyFrame {
   const H = b.height;
@@ -247,13 +260,14 @@ export function bodyFrame(b: Body): BodyFrame {
   const neck = ellipseFromCirc(b.neck * 1.05, 0.92);
   const shA = b.shoulder / 2 - 4;
 
-  const torsoBottom = crotchH - 2.5;
+  // the torso ends at the crotch (inseam height); below it only the legs carry on
+  const torsoBottom = crotchH - 0.3;
   const torsoTop = neckH;
   const torso = makeCurve([
     { k: torsoBottom - 6, v: [crotch.a * 0.3, crotch.b * 0.25] },
     { k: torsoBottom, v: [crotch.a * 0.32, crotch.b * 0.28] },
-    { k: crotchH, v: [crotch.a * 0.7, crotch.b * 0.62] },
-    { k: crotchH + 3.5, v: [crotch.a, crotch.b] },
+    { k: crotchH + 2, v: [crotch.a * 0.7, crotch.b * 0.62] },
+    { k: crotchH + 4.5, v: [crotch.a, crotch.b] },
     { k: (hipH + crotchH) / 2, v: [seat.a, seat.b] },
     { k: hipH, v: [hip.a, hip.b] },
     { k: hipH + (waistH - hipH) * 0.45, v: [hip.a * 0.55 + waist.a * 0.45, hip.b * 0.5 + waist.b * 0.5] },
@@ -436,6 +450,10 @@ export function bodyFrame(b: Body): BodyFrame {
     upperArm, foreArm,
     footLen: 0.152 * H,
     headH: H - (neckH + 0.029 * H),
+    headY: neckH + 0.029 * H,
+    headBandH: neckH + 0.029 * H + HEAD_BAND_T * (H - (neckH + 0.029 * H)),
+    headCz: 0.016 * H - 0.0046 * (H - (neckH + 0.029 * H)),
+    headK: 1.273,
     wristR, kneeR, ankleR,
   };
 }

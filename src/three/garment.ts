@@ -10,6 +10,7 @@
 
 import type { Piece, GarmentType } from '../data/presets';
 import { fabricById } from '../data/fabrics';
+import { migrateGarment, styleById } from '../data/catalog';
 import { samplePoly, sliceSpan, type Pt } from '../lib/geometry';
 import { findTag } from '../lib/specs';
 import { bodyFrame, ellipseCirc, hullAt, perimeter, type BRing, type Body, type BodyFrame, type Shape } from './body';
@@ -94,8 +95,10 @@ export function buildGarment(type: GarmentType, pieces: Piece[], body: Body): Ga
   const front = pieces.find((p) => p.role === 'front');
   const back = pieces.find((p) => p.role === 'back');
   const sleeve = pieces.find((p) => p.role === 'sleeve');
+  const fam = styleById(migrateGarment(type)).family;
+  const top = fam === 'tee' || fam === 'polo' || fam === 'shirt' || fam === 'jacket';
 
-  if (type !== 'pants' && front && back) {
+  if (top && front && back) {
     const fp = samplePoly(front.points), bp = samplePoly(back.points);
     // pattern y is measured down from the HPS; the body's HPS is the top of the torso at the neck
     const fTop = findTag(front, 'hps')?.y ?? 0;
@@ -176,7 +179,7 @@ export function buildGarment(type: GarmentType, pieces: Piece[], body: Body): Ga
     }
   }
 
-  if (type === 'pants' && front && back) {
+  if (fam === 'pants' && front && back) {
     const fp = samplePoly(front.points), bp = samplePoly(back.points);
     const fCr = findTag(front, 'crotch')?.y ?? 26;
     const bCr = findTag(back, 'crotch')?.y ?? 27;

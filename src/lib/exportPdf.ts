@@ -4,6 +4,7 @@
 import { jsPDF } from 'jspdf';
 import type { Project } from '../store';
 import { GARMENT_LABEL } from '../data/presets';
+import { styleById, type StyleId } from '../data/catalog';
 import { fabricById } from '../data/fabrics';
 import { BODY_FIELDS, limbGirths } from '../three/body';
 import { bbox, centroid, offsetInward, samplePoly } from './geometry';
@@ -107,7 +108,7 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
   table(doc, M + 100, 26, [{ title: 'Fit check', w: 30 }, { title: 'Body', w: 18, align: 'right' }, { title: 'Garment', w: 20, align: 'right' }, { title: 'Ease', w: 18, align: 'right' }],
     fitTable(p.garment, p.pieces, p.body).map((r) => [r.label, r.body === null ? '' : u(r.body) + (r.estimated ? '*' : ''), u(r.garment), r.body === null ? '' : (r.garment - r.body > 0 ? '+' : '') + u(r.garment - r.body)]), 'Body vs garment');
   table(doc, M + 200, 26, [{ title: 'Seam', w: 40 }, { title: 'Edges', w: 26, align: 'right' }, { title: '', w: 10, align: 'right' }],
-    seamReport(p.garment, p.pieces).map((r) => [r.label.replace(' (front / back)', ''), `${u(r.a)}/${u(r.b)}`, r.ease !== undefined ? `+${u(r.a - r.b)}` : Math.abs(r.a - r.b) < 0.1 ? 'OK' : 'CHECK']), 'Seam check');
+    seamReport(p.garment, p.pieces).map((r) => [r.label.replace(' (front / back)', ''), `${u(r.a)}/${u(r.b)}`, r.ease !== undefined ? `${r.a - r.b >= 0 ? '+' : ''}${u(r.a - r.b)}` : Math.abs(r.a - r.b) < 0.1 ? 'OK' : 'CHECK']), 'Seam check');
 
   // ---- 4. construction + BOM ----
   doc.addPage();
@@ -122,11 +123,31 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
   y = table(doc, M, 26, [{ title: 'Item', w: 60 }, { title: 'Detail', w: 70 }, { title: 'Qty', w: 30, align: 'right' }], [
     ...fabrics.map((fb) => { const f = fabricById(fb.id); return [`Shell fabric: ${f.name}`, `${f.colors[fb.color]?.name ?? ''}, ${f.gsm} gsm, 150 cm wide`, `${metres.toFixed(2)} m`]; }),
     ['Thread', 'Polyester core-spun, colour matched', '1 cone'],
-    ...(p.garment === 'pants' ? [['Shank button', '17 mm', '1'], ['Zip', 'Metal, 15 cm fly', '1']] : p.garment === 'shirt' ? [['Buttons', '11 mm, 4 hole', '9']] : [['Zip', 'Separating, to length', '1']]),
+    ...trims(p.garment),
     ['Care label', 'Woven', '1'],
   ], 'Bill of materials');
   table(doc, M, y + 4, [{ title: 'Seam', w: 60 }, { title: 'Stitch', w: 70 }, { title: 'Allowance', w: 30, align: 'right' }],
     seamReport(p.garment, p.pieces).map((r) => [r.label.replace(' (front / back)', ''), r.ease !== undefined ? 'Lockstitch 301, ease distributed' : 'Lockstitch 301 + overlock 504', u(1) + ' ' + U]), 'Construction');
 
   doc.save(`${p.name.replace(/[^a-z0-9]+/gi, '_')}_techpack.pdf`);
+}
+
+/** Trims for the bill of materials, by style. */
+function trims(id: StyleId): string[][] {
+  const s = styleById(id);
+  const out: string[][] = [];
+  if (s.family === 'pants') {
+    if (s.details.drawcord) out.push(['Elastic', '4 cm wide, knitted', '1'], ['Drawcord', 'Flat cotton, 140 cm', '1']);
+    else out.push(['Shank button', '17 mm', '1'], ['Zip', 'Metal, 15 cm fly', '1']);
+    if (s.details.rivets) out.push(['Rivets', 'Copper, 9 mm', '6']);
+  } else if (s.family === 'cap') {
+    out.push(['Top button', 'Fabric covered, 18 mm', '1'], ['Visor insert', 'Plastic, pre-curved', '1'], ['Sweatband', 'Cotton tape, 3 cm', '1']);
+  } else if (s.family === 'bucket') {
+    out.push(['Sweatband', 'Cotton tape, 3 cm', '1']);
+  } else if (s.family === 'jacket') {
+    out.push(['Buttons', '20 mm, 4 hole', String(s.details.buttons ?? 5)]);
+  } else if (s.details.buttons) {
+    out.push(['Buttons', s.family === 'polo' ? '15 mm, 4 hole' : '11 mm, 4 hole', String(s.details.buttons)]);
+  }
+  return out;
 }

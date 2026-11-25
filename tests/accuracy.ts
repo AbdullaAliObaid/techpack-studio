@@ -1,7 +1,9 @@
 // Run: npx tsx tests/accuracy.ts
 import { bodyFrame, perimeter, tapePerimeter, DEFAULT_BODY, type Body } from '../src/three/body';
-import { makePreset, type GarmentType } from '../src/data/presets';
-import { draft, regradePoints, EASE } from '../src/data/draft';
+import { makePreset } from '../src/data/presets';
+import { draft, regradePoints, EASE, crownArc, derivedGirths, FITS, RIB, neckBase } from '../src/data/draft';
+import { CATALOG, migrateGarment, styleById } from '../src/data/catalog';
+import { freshProject } from '../src/store';
 import { fitTable, seamReport } from '../src/lib/specs';
 import { calibratedField } from '../src/three/bodyField';
 import { meshField } from '../src/three/mesher';
@@ -38,7 +40,10 @@ for (const [name, b] of Object.entries(bodies)) {
   check('shoulder point to wrist (arm)', Math.hypot(f.acromion.x - f.wrist.x, f.acromion.y - f.wrist.y), b.arm);
 
   // the rendered body mesh, measured like a tape (convex hull of the slice around the torso)
-  const mesh = meshField(calibratedField(b));
+  const field = calibratedField(b);
+  const mesh = meshField(field);
+  const d = derivedGirths(b);
+  check('rendered head at hat band (tape)', field.girthAt(f.headBandH, 0, f.headCz, 16), d.head, 0.25);
   // slice the rendered mesh, link the cut segments into closed loops, take the loop around the torso centre
   const slice = (h: number) => {
     const P = mesh.positions, I = mesh.indices;
@@ -87,22 +92,58 @@ for (const [name, b] of Object.entries(bodies)) {
   let top = 0; for (let i = 1; i < mesh.positions.length; i += 3) top = Math.max(top, mesh.positions[i]);
   check('rendered mesh height', top, b.height, 0.25);
 
-  for (const g of ['jacket', 'shirt', 'pants'] as GarmentType[]) {
+  const ROLES = new Set(['front', 'back', 'sleeve', 'neckband', 'collar', 'placket', 'cuff', 'waistband', 'crown', 'brim']);
+  for (const style of CATALOG) {
+    const g = style.id, fam = style.family;
     const pieces = makePreset(g, b);
+    const E = EASE[g];
     const rows = fitTable(g, pieces, b);
-    const E: Record<string, number> = g === 'pants'
-      ? { Waist: EASE.pants.waist, Hip: EASE.pants.hip, Inseam: -3 }
-      : { Chest: EASE[g].chest, Waist: EASE[g].waist, 'Hem / hips': EASE[g].hem, 'Sleeve / arm': EASE[g].sleeve };
-    for (const r of rows) if (r.label in E && r.body !== null) check(`${g} pattern ${r.label} = body + ease`, r.garment, r.body + E[r.label], 0.1);
+    const row = (label: string) => rows.find((r) => r.label === label);
+    const want = (label: string, value: number, tol = 0.1) => {
+      const r = row(label);
+      if (!r) { fails++; console.log(`FAIL ${g} has no "${label}" row`); return; }
+      check(`${g} ${label}`, r.garment, value, tol);
+    };
+    if (!pieces.every((p) => ROLES.has(p.role))) { fails++; console.log(`FAIL ${g} has a piece without a known role`); }
+    if (pieces[0].fabric.id !== style.defaultFabric) { fails++; console.log(`FAIL ${g} does not start in ${style.defaultFabric}`); }
+    if (fam === 'pants') {
+      want('Waist', b.waist + E.waist);
+      want('Hip', b.hips + E.hip);
+      if (E.elastic !== undefined) want('Waist elastic', b.waist + E.elastic);
+      if (E.knee !== undefined) want('Knee', d.knee + E.knee);
+      const knee = d.knee + (E.knee ?? 0);
+      const opening = E.inseamLen !== undefined ? d.thigh + E.legOpening : E.flare !== undefined ? knee + E.flare : E.cuffH ? d.ankle + E.legOpening : Math.max(d.ankle + E.legOpening, 36);
+      want('Leg opening', opening);
+      const inseam = E.inseamLen ?? (E.cuffH ? f.crotchH - (f.ankleH - 1 + E.cuffH) + E.blouse : b.inseam - 3 + (E.inseam ?? 0));
+      want('Inseam', inseam);
+      if (E.cuffH) want('Ankle cuff', RIB.cuff * opening);
+    } else if (fam === 'bucket' || fam === 'cap') {
+      want('Head', d.head + E.head);
+      want('Crown depth', crownArc(d.head) + E.depth);
+    } else {
+      want('Chest', b.chest + E.chest);
+      want('Waist', b.waist + E.waist);
+      want('Hem / hips', b.hips + E.hem);
+      want('Shoulder', b.shoulder + E.shoulder + 2 * (E.drop ?? 0));
+      if (fam === 'tee' || fam === 'polo') {
+        want('Sleeve length', b.arm * E.sleeveRatio);
+        want('Neck base', neckBase(b) + E.neck);
+      }
+      else want('Sleeve / arm', b.arm + E.sleeve);
+    }
 
-    for (const r of seamReport(g, pieces)) check(`${g} seam ${r.label}`, r.a - r.b, r.ease ?? 0, 0.05);
+    for (const fit of FITS) {
+      const pf = fit === 'regular' ? pieces : makePreset(g, b, fit);
+      for (const r of seamReport(g, pf)) check(`${g}${fit === 'regular' ? '' : ' ' + fit} seam ${r.label}`, r.a - r.b, r.ease ?? 0, 0.05);
+    }
 
     // 3D garment: chest / hip ring perimeter must equal the pattern circumference
+    if (fam === 'bucket' || fam === 'cap') continue;
     const res = buildGarment(g, pieces, b);
     const front = pieces.find((p) => p.role === 'front')!, back = pieces.find((p) => p.role === 'back')!;
     const fp = samplePoly(front.points), bp = samplePoly(back.points);
     const w = (poly: typeof fp, y: number) => { const s = sliceSpan(poly, y); return s ? s.x2 - s.x1 : 0; };
-    if (g !== 'pants') {
+    if (fam !== 'pants') {
       const ua = findTag(front, 'underarm')!.y - findTag(front, 'hps')!.y;
       const h = f.neckH - ua;
       const torso = res.parts.find((p) => p.key === 'torso')!;
@@ -115,12 +156,27 @@ for (const [name, b] of Object.entries(bodies)) {
       const hipY = findTag(front, 'hip')!.y, cr = findTag(front, 'crotch')!.y, bcr = findTag(back, 'crotch')!.y;
       const h = f.crotchH - (hipY - cr);
       const ring = seat.rings.reduce((a, r) => (Math.abs(r.y - h) < Math.abs(a.y - h) ? r : a));
-      check('pants 3D hip ring = pattern hip', perimeter(ring.a, ring.b, ring.shape, 720), 2 * (w(fp, hipY) + w(bp, bcr + (hipY - cr))), 0.6);
+      check(`${g} 3D hip ring = pattern hip`, perimeter(ring.a, ring.b, ring.shape, 720), 2 * (w(fp, hipY) + w(bp, bcr + (hipY - cr))), 0.6);
       const legTop = Math.max(...seat.rings.map((r) => r.y));
-      check('pants leg pieces + waistband reach the body waist', legTop + 4, f.waistH, 1.2);
+      check(`${g} leg pieces + waistband reach the waist`, legTop + E.waistband + (E.riseDrop ?? 0), f.waistH, 1.2);
     }
   }
 }
+
+// old saves and new projects
+console.log('\n== projects ==');
+for (const [old, id] of [['pants', 'jeans'], ['shirt', 'button-up'], ['jacket', 'jacket'], ['nonsense', 'jacket']]) {
+  const ok = migrateGarment(old) === id;
+  if (!ok) fails++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} old garment "${old}" opens as ${migrateGarment(old)}`);
+}
+for (const s of CATALOG) {
+  const p = freshProject(s.id);
+  const ok = p.garment === s.id && p.pieces.length > 0 && p.pieces[0].fabric.id === styleById(s.id).defaultFabric;
+  if (!ok) fails++;
+  if (!ok) console.log(`FAIL new project for ${s.id}`);
+}
+console.log(`ok   new project works for all ${CATALOG.length} styles`);
 
 // regrade keeps user edits
 console.log('\n== regrade ==');
@@ -134,6 +190,14 @@ const target = draft('jacket', B)[0].points.find((p) => p.key === waist.key)!;
 check('slimmed waist keeps its -3 cm after regrade', moved.find((p) => p.key === waist.key)!.x, target.x - 3);
 const ua = moved.find((p) => p.tag === 'underarm' && p.x > 0)!;
 check('chest regrades to new body + ease', 4 * ua.x, B.chest + EASE.jacket.chest);
+// every style regrades across bodies and fits with its keys intact
+for (const s of CATALOG) {
+  const a = draft(s.id, A), c = draft(s.id, B, 'relaxed');
+  const ok = a.length === c.length && a.every((p, i) => p.role === c[i].role && p.points.length === c[i].points.length && p.points.every((q, j) => q.key === c[i].points[j].key));
+  if (!ok) fails++;
+  if (!ok) console.log(`FAIL ${s.id} keys change between bodies or fits`);
+}
+console.log(`ok   all ${CATALOG.length} styles keep their point keys across bodies and fits`);
 
 console.log(fails ? `\n${fails} FAILED` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
