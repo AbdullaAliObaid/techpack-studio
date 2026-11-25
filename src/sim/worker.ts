@@ -5,6 +5,8 @@ import type { Body } from '../three/body';
 import { calibratedField } from '../three/bodyField';
 import { meshField, PosedCollider } from '../three/mesher';
 import { bodyFrame, type BodyFrame } from '../three/body';
+import { buildDetails, detailTransfers } from './details';
+import { migrateGarment, styleById } from '../data/catalog';
 import { boneMatrices, invert, poseAt, type Mode } from './pose';
 
 let bodyKey = '';
@@ -131,5 +133,11 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
     type: 'built', n: G.sim.n, index: new Uint32Array(index), groups, uv, pos,
     fabrics: G.panels.map((p) => p.piece.fabric),
   });
+  try {
+    const det = buildDetails(G, styleById(migrateGarment(m.garment)).details);
+    (self as unknown as Worker).postMessage(det, detailTransfers(det));
+  } catch (err) {
+    console.warn('details failed', err);
+  }
   loop(gen);
 };

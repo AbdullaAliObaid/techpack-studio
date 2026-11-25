@@ -6,6 +6,8 @@ import { bodyFrame, type Body } from './body';
 import { riskColor } from './rings';
 import { fabricMaterial, stretchMat } from './materials';
 import { useStore } from '../store';
+import Details, { type DetailUpdater } from './Details';
+import type { DetailsMsg } from '../sim/details';
 import { boneMatrices, jointPoints, poseAt, NBONES, type Mode } from '../sim/pose';
 
 // Live cloth view. The simulation runs in a Web Worker (src/sim/worker.ts); this component sends it the
@@ -57,6 +59,8 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
   const skinMat = useMemo(() => skinMaterial(skin), [skin]);
   const worker = useMemo(() => new Worker(new URL('../sim/worker.ts', import.meta.url), { type: 'module' }), []);
   const [topo, setTopo] = useState<Topo | null>(null);
+  const [details, setDetails] = useState<DetailsMsg | null>(null);
+  const detailUpdater = useRef<DetailUpdater | null>(null);
   const pending = useRef<{ pos?: Float32Array; strain?: Float32Array }>({});
   const lastStrain = useRef<Float32Array | null>(null);
   const set = useStore((s) => s.set);
@@ -91,11 +95,14 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         for (const g of m.groups) geo.addGroup(g.start, g.count, g.panel);
         geo.computeVertexNormals();
         lastStrain.current = null;
+        setDetails(null);
         setTopo((old) => {
           old?.geo.dispose();
           return { geo, fabrics: m.fabrics };
         });
         set({ draping: true, simStatus: 'Simulating fabric…' });
+      } else if (m.type === 'details') {
+        setDetails(m);
       } else if (m.type === 'frame') {
         pending.current.pos = m.pos;
         pose.current = { mode: m.mode, t: m.t };
@@ -156,6 +163,7 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         attr.needsUpdate = true;
         topo.geo.computeVertexNormals();
         topo.geo.computeBoundingSphere();
+        detailUpdater.current?.(attr.array as Float32Array);
       }
       p.pos = undefined;
     }
@@ -180,6 +188,7 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
       {showGarment && topo && (
         <mesh geometry={topo.geo} material={stretch ? topo.fabrics.map(() => stretchMat) : mats} castShadow receiveShadow frustumCulled={false} />
       )}
+      {showGarment && topo && details && <Details data={details} geo={topo.geo} visible={!stretch} updater={detailUpdater} />}
     </group>
   );
 }
