@@ -1,11 +1,13 @@
-// Movement modes: joint angles over time, and forward kinematics for the 9-bone rig.
-// Bones: 0 torso, 1/2 upper arm / forearm (+x side), 3/4 upper arm / forearm (-x side),
-//        5/6 thigh / shin (+x side), 7/8 thigh / shin (-x side). Hands ride on the forearm, feet on the shin.
+// Movement modes: joint angles over time, and forward kinematics for the 11-bone rig.
+// Bones: 0 pelvis (hips and lower torso), 1/2 upper arm / forearm (+x side), 3/4 upper arm / forearm (-x side),
+//        5/6 thigh / shin (+x side), 7/8 thigh / shin (-x side), 9 chest (torso above the waist, carries the arms),
+//        10 head (head and upper neck). Hands ride on the forearm, feet on the shin.
 // A bone matrix maps a point from the standing (rest) body to the posed body.
 
 import type { BodyFrame } from '../three/body';
+import { ZERO_POSE, type CustomPose, type SideAngles } from '../data/edits';
 
-export type Mode = 'stand' | 'walk' | 'sit' | 'jacks' | 'cross' | 'hug';
+export type Mode = 'stand' | 'walk' | 'sit' | 'jacks' | 'cross' | 'hug' | 'custom';
 
 export const MODES: { id: Mode; label: string }[] = [
   { id: 'stand', label: 'Standing' },
@@ -14,14 +16,82 @@ export const MODES: { id: Mode; label: string }[] = [
   { id: 'jacks', label: 'Jumping jacks' },
   { id: 'cross', label: 'Crossed arms' },
   { id: 'hug', label: 'Hugging' },
+  { id: 'custom', label: 'Custom pose' },
 ];
 
-export const NBONES = 9;
+export const NBONES = 11;
+export const PELVIS = 0, CHEST = 9, HEAD = 10;
 
-interface Side { shFlex: number; shAbd: number; shHoriz: number; elbow: number; hipFlex: number; hipAbd: number; knee: number }
-export interface Angles { s: [Side, Side]; rootY: number } // s[0] = +x side, s[1] = -x side
+type Side = SideAngles;
+/** s[0] = +x side, s[1] = -x side; spine and head angles in radians (0 when absent) */
+export interface Angles { s: [Side, Side]; rootY: number; spineBend?: number; spineTwist?: number; headTurn?: number }
 
 const D = Math.PI / 180;
+
+export type PoseKey = keyof SideAngles | 'spineBend' | 'spineTwist' | 'headTurn';
+/**
+ * Anatomical range of every custom pose angle (radians), in slider order. perSide angles live in
+ * CustomPose.s[0] (+x side, the body's left) and CustomPose.s[1] (-x side, the body's right).
+ * Positive: shFlex arm forward, shAbd arm out to the side, shHoriz arm across the chest, elbow / knee bend,
+ * hipFlex leg forward, hipAbd leg out, spineBend lean forward, spineTwist and headTurn toward the +x side.
+ */
+export const POSE_LIMITS: { key: PoseKey; perSide: boolean; range: [number, number]; label: string }[] = [
+  { key: 'shFlex', perSide: true, range: [-50 * D, 170 * D], label: 'Arm forward / back' },
+  { key: 'shAbd', perSide: true, range: [-10 * D, 170 * D], label: 'Arm out to the side' },
+  { key: 'shHoriz', perSide: true, range: [-40 * D, 90 * D], label: 'Arm across the chest' },
+  { key: 'elbow', perSide: true, range: [0, 145 * D], label: 'Elbow bend' },
+  { key: 'hipFlex', perSide: true, range: [-20 * D, 120 * D], label: 'Leg forward / back' },
+  { key: 'hipAbd', perSide: true, range: [-15 * D, 45 * D], label: 'Leg out to the side' },
+  { key: 'knee', perSide: true, range: [0, 140 * D], label: 'Knee bend' },
+  { key: 'spineBend', perSide: false, range: [-25 * D, 60 * D], label: 'Lean forward / back' },
+  { key: 'spineTwist', perSide: false, range: [-40 * D, 40 * D], label: 'Twist' },
+  { key: 'headTurn', perSide: false, range: [-70 * D, 70 * D], label: 'Head turn' },
+];
+
+const clampTo = (key: PoseKey, v: number) => {
+  const r = POSE_LIMITS.find((l) => l.key === key)!.range;
+  return Number.isFinite(v) ? Math.min(r[1], Math.max(r[0], v)) : 0;
+};
+
+/** The pose with every angle clamped to its anatomical range (missing or bad values become 0). */
+export function clampPose(p: CustomPose | undefined): CustomPose {
+  const src = p ?? ZERO_POSE;
+  const side = (S: Partial<SideAngles> | undefined): SideAngles => {
+    const o = {} as SideAngles;
+    for (const l of POSE_LIMITS) if (l.perSide) o[l.key as keyof SideAngles] = clampTo(l.key, S?.[l.key as keyof SideAngles] ?? 0);
+    return o;
+  };
+  return {
+    s: [side(src.s?.[0]), side(src.s?.[1])],
+    spineBend: clampTo('spineBend', src.spineBend ?? 0),
+    spineTwist: clampTo('spineTwist', src.spineTwist ?? 0),
+    headTurn: clampTo('headTurn', src.headTurn ?? 0),
+  };
+}
+
+/** Move pose `from` toward `to`, each angle by at most maxStep radians (for smooth slider following). */
+export function stepPose(from: CustomPose, to: CustomPose, maxStep: number): CustomPose {
+  const mv = (a: number, b: number) => a + Math.max(-maxStep, Math.min(maxStep, b - a));
+  const side = (a: SideAngles, b: SideAngles) => {
+    const o = {} as SideAngles;
+    (Object.keys(b) as (keyof SideAngles)[]).forEach((k) => (o[k] = mv(a[k], b[k])));
+    return o;
+  };
+  return { s: [side(from.s[0], to.s[0]), side(from.s[1], to.s[1])], spineBend: mv(from.spineBend, to.spineBend), spineTwist: mv(from.spineTwist, to.spineTwist), headTurn: mv(from.headTurn, to.headTurn) };
+}
+
+/** Linear blend of two poses. */
+export function lerpPose(a: CustomPose, b: CustomPose, t: number): CustomPose {
+  const l = (x: number, y: number) => x + (y - x) * t;
+  return { s: [lerpSide(a.s[0], b.s[0], t), lerpSide(a.s[1], b.s[1], t)], spineBend: l(a.spineBend, b.spineBend), spineTwist: l(a.spineTwist, b.spineTwist), headTurn: l(a.headTurn, b.headTurn) };
+}
+
+/** Largest angle difference between two poses (radians). */
+export function poseDistance(a: CustomPose, b: CustomPose): number {
+  let m = Math.max(Math.abs(a.spineBend - b.spineBend), Math.abs(a.spineTwist - b.spineTwist), Math.abs(a.headTurn - b.headTurn));
+  for (const k of [0, 1]) for (const key of Object.keys(a.s[k]) as (keyof SideAngles)[]) m = Math.max(m, Math.abs(a.s[k][key] - b.s[k][key]));
+  return m;
+}
 const zero = (): Side => ({ shFlex: 0, shAbd: 0, shHoriz: 0, elbow: 0, hipFlex: 0, hipAbd: 0, knee: 0 });
 const ease = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
 const lerpSide = (a: Side, b: Side, t: number): Side => {
@@ -30,7 +100,7 @@ const lerpSide = (a: Side, b: Side, t: number): Side => {
   return o;
 };
 
-function target(mode: Mode, t: number): [Side, Side] {
+function target(mode: Mode, t: number, custom?: CustomPose): [Side, Side] {
   const A = zero(), B = zero();
   switch (mode) {
     case 'walk': {
@@ -58,17 +128,30 @@ function target(mode: Mode, t: number): [Side, Side] {
     case 'hug':
       for (const S of [A, B]) { S.shFlex = 78 * D; S.shAbd = 18 * D; S.shHoriz = 28 * D; S.elbow = 62 * D; }
       break;
+    case 'custom': {
+      const c = clampPose(custom);
+      return [c.s[0], c.s[1]];
+    }
   }
   return [A, B];
 }
 
-/** Joint angles at time t (seconds since the mode started), blending in from standing. */
-export function poseAt(mode: Mode, t: number, f: BodyFrame): Angles {
+/**
+ * Joint angles at time t (seconds since the mode started), blending in from standing.
+ * In 'custom' mode the angles come from `custom` (clamped to POSE_LIMITS).
+ */
+export function poseAt(mode: Mode, t: number, f: BodyFrame, custom?: CustomPose): Angles {
   const blend = ease(t / 0.9);
-  const [a, b] = target(mode, t);
+  const [a, b] = target(mode, t, custom);
   const s: [Side, Side] = [lerpSide(zero(), a, blend), lerpSide(zero(), b, blend)];
   const ang: Angles = { s, rootY: 0 };
-  if (mode === 'sit' || mode === 'walk' || mode === 'jacks') {
+  if (mode === 'custom') {
+    const c = clampPose(custom);
+    ang.spineBend = c.spineBend * blend;
+    ang.spineTwist = c.spineTwist * blend;
+    ang.headTurn = c.headTurn * blend;
+  }
+  if (mode === 'sit' || mode === 'walk' || mode === 'jacks' || mode === 'custom') {
     // keep the lowest ankle on the floor
     const M = boneMatrices(f, ang);
     let low = Infinity;
@@ -106,12 +189,17 @@ export function boneMatrices(f: BodyFrame, a: Angles): Float64Array {
   const out = new Float64Array(NBONES * 12);
   const root = T(0, a.rootY, 0);
   const put = (i: number, m: M34) => out.set(m, i * 12);
-  put(0, root);
+  put(PELVIS, root);
+  // spine: the chest bends forward and twists about a pivot on the lumbar spine at the waist
+  const bend = a.spineBend ?? 0, twist = a.spineTwist ?? 0, turn = a.headTurn ?? 0;
+  const chest = bend || twist ? mul(root, about([0, f.waistH, -0.45 * f.torsoAt(f.waistH).b], mul(rotAxis(0, 1, 0, twist), rotAxis(1, 0, 0, bend)))) : root;
+  put(CHEST, chest);
+  put(HEAD, turn ? mul(chest, about([0, f.neckH, 0], rotAxis(0, 1, 0, turn))) : chest);
   [1, -1].forEach((side, k) => {
     const S = a.s[k];
     const J = [side * f.shoulderJoint.x, f.shoulderJoint.y, 0];
     const sh = mul(rotAxis(0, 1, 0, -side * S.shHoriz), mul(rotAxis(0, 0, 1, side * S.shAbd), rotAxis(1, 0, 0, -S.shFlex)));
-    const upper = mul(root, about(J, sh));
+    const upper = mul(chest, about(J, sh));
     const ua = side * f.armAngle;
     const u = [Math.sin(ua), -Math.cos(ua), 0]; // rest arm direction
     const E = [J[0] + u[0] * f.upperArm, J[1] + u[1] * f.upperArm, 0];
@@ -147,9 +235,18 @@ export function invert(M: Float64Array): Float64Array {
   return out;
 }
 
-/** Joint positions for markers (posed). */
+/** Number of joint markers jointPoints returns, and what each one is. */
+export const JOINT_LABELS = [
+  'Neck',
+  'Left shoulder', 'Left elbow', 'Left wrist', 'Left hip', 'Left knee', 'Left ankle',
+  'Right shoulder', 'Right elbow', 'Right wrist', 'Right hip', 'Right knee', 'Right ankle',
+  'Waist', 'Head',
+];
+export const JOINT_COUNT = JOINT_LABELS.length;
+
+/** Joint positions for markers (posed): neck, then per side (+x first) shoulder, elbow, wrist, hip, knee, ankle, then waist and head. */
 export function jointPoints(f: BodyFrame, M: Float64Array): [number, number, number][] {
-  const pts: [number, number, number][] = [apply(M, 0, 0, f.neckH - 2, 0)];
+  const pts: [number, number, number][] = [apply(M, CHEST, 0, f.neckH - 2, 0)];
   [1, -1].forEach((side, k) => {
     const ua = side * f.armAngle, jx = side * f.shoulderJoint.x, jy = f.shoulderJoint.y;
     const along = (s: number): [number, number, number] => [jx + Math.sin(ua) * s, jy - Math.cos(ua) * s, 0];
@@ -157,5 +254,6 @@ export function jointPoints(f: BodyFrame, M: Float64Array): [number, number, num
     pts.push(apply(M, up, jx, jy, 0), apply(M, fo, ...along(f.upperArm)), apply(M, fo, ...along(f.armSeg)));
     pts.push(apply(M, th, side * f.legX, f.hipJointH, 0), apply(M, sh, side * f.legX, f.kneeH, 0), apply(M, sh, side * f.legX, f.ankleH, 0));
   });
+  pts.push(apply(M, PELVIS, 0, f.waistH, -0.45 * f.torsoAt(f.waistH).b), apply(M, HEAD, 0, f.headY + 0.5 * f.headH, f.headCz));
   return pts;
 }

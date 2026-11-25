@@ -21,7 +21,7 @@ const GROUPS: { title: string; side: 0 | 1; keys: (keyof SideAngles)[] }[] = [
 export default function PosePanel() {
   const { mode, set, customPose, setPoseAngle, resetPose, symmetricPose } = useStore();
   const limits = useMemo(poseLimits, []);
-  const posing = (mode as string) === 'custom';
+  const posing = mode === 'custom';
 
   const setAngle = (side: 0 | 1 | null, key: string, deg: number) => {
     const v = deg / D;
@@ -46,9 +46,8 @@ export default function PosePanel() {
         <div className="card-title">Movement</div>
         <div className="mode-grid" role="group" aria-label="Movement">
           {MODES.map((m) => (
-            <button key={m.id} className={mode === m.id ? 'on' : ''} aria-pressed={mode === m.id} onClick={() => set({ mode: m.id })}>{m.label}</button>
+            <button key={m.id} className={mode === m.id ? 'on' : ''} aria-pressed={mode === m.id} onClick={() => set({ mode: m.id })}>{m.id === 'custom' ? 'Pose' : m.label}</button>
           ))}
-          <button className={posing ? 'on' : ''} aria-pressed={posing} onClick={() => set({ mode: 'custom' as never })}>Pose</button>
         </div>
         {!posing && <p className="group-note" style={{ padding: '8px 0 0' }}>Move any slider below to pose the body yourself. The garment drapes to the pose.</p>}
       </div>

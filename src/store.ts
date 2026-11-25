@@ -407,7 +407,7 @@ export const useStore = create<State>((set, get) => {
         const p: CustomPose = { ...s.customPose, s: [{ ...s.customPose.s[0] }, { ...s.customPose.s[1] }] };
         if (side === null) (p as unknown as Record<string, number>)[key] = value;
         else (p.s[side] as unknown as Record<string, number>)[key] = value;
-        return { customPose: p, mode: 'custom' as never };
+        return { customPose: p, mode: 'custom' };
       }),
     resetPose: () => set({ customPose: ZERO_POSE }),
   };

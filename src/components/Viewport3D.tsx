@@ -88,9 +88,8 @@ export default function Viewport3D() {
         <span>Movement</span>
         <div className="seg">
           {MODES.map((m) => (
-            <button key={m.id} className={mode === m.id ? 'on' : ''} aria-pressed={mode === m.id} onClick={() => set({ mode: m.id })}>{m.label}</button>
+            <button key={m.id} className={mode === m.id ? 'on' : ''} aria-pressed={mode === m.id} onClick={() => set(m.id === 'custom' ? { mode: m.id, inspectorTab: 'pose' } : { mode: m.id })}>{m.id === 'custom' ? 'Pose' : m.label}</button>
           ))}
-          <button className={(mode as string) === 'custom' ? 'on' : ''} aria-pressed={(mode as string) === 'custom'} onClick={() => set({ mode: 'custom' as never, inspectorTab: 'pose' })}>Pose</button>
         </div>
       </div>
 

@@ -1,5 +1,6 @@
 // Run: npx tsx tests/accuracy.ts
-import { bodyFrame, perimeter, tapePerimeter, DEFAULT_BODY, type Body } from '../src/three/body';
+import { bodyFrame, perimeter, tapePerimeter, DEFAULT_BODY, FEMALE_BODY, MALE_BODY, type Body } from '../src/three/body';
+import { NBONES } from '../src/sim/pose';
 import { makePreset } from '../src/data/presets';
 import { draft, regradePoints, EASE, crownArc, derivedGirths, FITS, RIB, neckBase } from '../src/data/draft';
 import { CATALOG, migrateGarment, styleById } from '../src/data/catalog';
@@ -17,7 +18,10 @@ const bodies: Record<string, Body> = {
   slim: { height: 168, chest: 86, waist: 70, hips: 90, shoulder: 41, arm: 58, inseam: 76, neck: 35 },
   big: { height: 182, chest: 124, waist: 112, hips: 116, shoulder: 51, arm: 64, inseam: 81, neck: 45 },
   tall: { height: 198, chest: 104, waist: 86, hips: 102, shoulder: 49, arm: 70, inseam: 92, neck: 40 },
+  female: FEMALE_BODY,
+  'female curvy': { ...FEMALE_BODY, chest: 104, waist: 80, hips: 112, height: 170, inseam: 78, shoulder: 40, neck: 35 },
 };
+const meshes: Record<string, ReturnType<typeof meshField>> = {};
 
 let fails = 0;
 const check = (name: string, got: number, want: number, tol = 0.05) => {
@@ -42,6 +46,7 @@ for (const [name, b] of Object.entries(bodies)) {
   // the rendered body mesh, measured like a tape (convex hull of the slice around the torso)
   const field = calibratedField(b);
   const mesh = meshField(field);
+  meshes[name] = mesh;
   const d = derivedGirths(b);
   check('rendered head at hat band (tape)', field.girthAt(f.headBandH, 0, f.headCz, 16), d.head, 0.25);
   // slice the rendered mesh, link the cut segments into closed loops, take the loop around the torso centre
@@ -160,6 +165,39 @@ for (const [name, b] of Object.entries(bodies)) {
       const legTop = Math.max(...seat.rings.map((r) => r.y));
       check(`${g} leg pieces + waistband reach the waist`, legTop + E.waistband + (E.riseDrop ?? 0), f.waistH, 1.2);
     }
+  }
+}
+
+// female fit model: bust shape, mesh sanity, skin weights of the 11-bone rig
+console.log('\n== female body and rig ==');
+{
+  const b = FEMALE_BODY, f = bodyFrame(b), mesh = meshes.female;
+  const ok = (name: string, cond: boolean, info = '') => { if (!cond) fails++; console.log(`${cond ? 'ok  ' : 'FAIL'} ${name}${info ? '  ' + info : ''}`); };
+  const front = (h: number) => { const r = f.torsoRing(h); let z = -1e9; for (let i = 0; i < 720; i++) { const th = (i / 720) * Math.PI * 2; z = Math.max(z, r.b * r.shape(th) * Math.sin(th)); } return z; };
+  const under = f.chestH - 0.05 * f.H;
+  ok('bust apex forward of the underbust (rings)', front(f.chestH) - front(under) > 2.5, `${(front(f.chestH) - front(under)).toFixed(2)} cm`);
+  ok('bust apex forward of the upper chest (rings)', front(f.chestH) - front(f.chestH + 0.04 * f.H) > 1, `${(front(f.chestH) - front(f.chestH + 0.04 * f.H)).toFixed(2)} cm`);
+  // the same on the rendered mesh: most forward vertex near the bust line vs near the underbust
+  const P = mesh.positions;
+  const zMax = (h: number) => { let z = -1e9; for (let i = 0; i < P.length; i += 3) if (Math.abs(P[i + 1] - h) < 0.6 && Math.abs(P[i]) < 14) z = Math.max(z, P[i + 2]); return z; };
+  ok('rendered bust apex forward of the underbust', zMax(f.chestH) - zMax(under) > 2.5, `${(zMax(f.chestH) - zMax(under)).toFixed(2)} cm`);
+  let bad = 0; for (const v of P) if (!Number.isFinite(v)) bad++;
+  ok('female mesh has only finite vertices', bad === 0 && P.length > 3000);
+  const fM = bodyFrame(MALE_BODY);
+  const halfW = (fr: typeof f, h: number) => { const r = fr.torsoRing(h); return r.a * Math.max(r.shape(0), r.shape(Math.PI)); };
+  ok('female hips wider than her bust', halfW(f, f.hipH) > halfW(f, f.chestH));
+  ok('female waist to hip drop deeper than male', b.hips / b.waist > MALE_BODY.hips / MALE_BODY.waist && halfW(f, f.hipH) / halfW(f, f.waistH) > halfW(fM, fM.hipH) / halfW(fM, fM.waistH));
+  ok('female arms slimmer than male for the same chest', derivedGirths({ ...MALE_BODY, sex: 'female' }).bicep < derivedGirths(MALE_BODY).bicep);
+  const tops = CATALOG.filter((s) => s.family !== 'pants' && s.family !== 'bucket' && s.family !== 'cap');
+  ok(`every top drafts at least the bust at the bust line (${tops.length} styles)`, tops.every((s) => fitTable(s.id, makePreset(s.id, b), b).find((r) => r.label === 'Chest')!.garment >= b.chest + 4));
+  for (const [name, m] of Object.entries(meshes)) {
+    let worst = 0, range = true;
+    for (let v = 0; v < m.skinWeight.length / 4; v++) {
+      let sum = 0;
+      for (let q = 0; q < 4; q++) { sum += m.skinWeight[v * 4 + q]; if (m.skinIndex[v * 4 + q] >= NBONES) range = false; }
+      worst = Math.max(worst, Math.abs(sum - 1));
+    }
+    ok(`${name} skin weights sum to 1 on ${NBONES} bones`, worst < 1e-5 && range, `worst ${worst.toExponential(1)}`);
   }
 }
 

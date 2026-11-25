@@ -143,7 +143,9 @@ const FALLBACK_LIMITS: Limits = {
 
 /** POSE_LIMITS from src/sim/pose.ts when another agent has added it, otherwise sensible defaults. Always degrees. */
 export function poseLimits(): Limits {
-  const raw = (poseModule as unknown as Record<string, unknown>).POSE_LIMITS as Record<string, unknown> | undefined;
+  let raw = (poseModule as unknown as Record<string, unknown>).POSE_LIMITS as Record<string, unknown> | undefined;
+  // pose.ts exports an array of { key, range: [min, max] radians }
+  if (Array.isArray(raw)) raw = Object.fromEntries((raw as { key: string; range: [number, number] }[]).map((l) => [l.key, l.range]));
   const out: Limits = { ...FALLBACK_LIMITS };
   if (!raw || typeof raw !== 'object') return out;
   for (const k of Object.keys(FALLBACK_LIMITS)) {

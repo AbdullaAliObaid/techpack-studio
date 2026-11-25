@@ -24,11 +24,13 @@ export interface Body {
 
 /** Girths that can be typed in or estimated from the main measurements. */
 export function limbGirths(b: Body) {
+  const fem = b.sex === 'female';
   return {
     thigh: b.thigh ?? b.hips * 0.575,
     calf: b.calf ?? b.hips * 0.37,
-    bicep: b.bicep ?? b.chest * 0.31,
-    wrist: b.wrist ?? b.neck * 0.43,
+    // a woman's arm is slimmer for her bust (bust includes breast tissue); her wrist is larger for her neck
+    bicep: b.bicep ?? (fem ? b.chest * 0.29 : b.chest * 0.31),
+    wrist: b.wrist ?? (fem ? b.neck * 0.46 : b.neck * 0.43),
     ankle: b.ankle ?? b.hips * 0.225,
     head: b.head ?? 57 + 0.15 * (b.height - 175),
   };
@@ -245,22 +247,27 @@ export const HEAD_BAND_T = 0.645;
 
 export function bodyFrame(b: Body): BodyFrame {
   const H = b.height;
+  // female fit model: chest is the bust (taped over the apex), shaped with breasts, a defined waist and fuller hips
+  const fem = b.sex === 'female';
   const shoulderH = 0.815 * H;
   const neckH = shoulderH + 0.014 * H;
   const crotchH = Math.min(b.inseam, 0.5 * H);
   const hipH = Math.max(0.52 * H, crotchH + 7);
-  const waistH = Math.max(0.62 * H, hipH + 0.08 * H);
+  // a woman's natural waist sits a little higher, above a longer hip-to-waist curve
+  const waistH = fem ? Math.max(0.63 * H, hipH + 0.09 * H) : Math.max(0.62 * H, hipH + 0.08 * H);
   const chestH = Math.max(0.72 * H, waistH + 0.08 * H);
   const hipJointH = crotchH + 0.05 * H;
   const kneeH = Math.min(0.285 * H, crotchH - 15);
   const ankleH = 0.045 * H;
 
   // ---------------- torso ----------------
-  const chest = ellipseFromCirc(b.chest, 0.68);
-  const under = ellipseFromCirc(b.chest * 0.62 + b.waist * 0.38, 0.7);
+  const chest = fem ? ellipseFromCirc(b.chest, 0.54) : ellipseFromCirc(b.chest, 0.68);
+  const upperChest = ellipseFromCirc(b.chest * 0.25 + b.waist * 0.75 + (b.chest - b.waist) * 0.5, 0.58); // female only
+  // female: the underbust is the rib cage under the breasts, much smaller than the bust
+  const under = fem ? ellipseFromCirc(b.chest * 0.25 + b.waist * 0.75, 0.66) : ellipseFromCirc(b.chest * 0.62 + b.waist * 0.38, 0.7);
   const waist = ellipseFromCirc(b.waist, 0.72);
-  const hip = ellipseFromCirc(b.hips, 0.76);
-  const seat = ellipseFromCirc(b.hips * 0.97, 0.78);
+  const hip = fem ? ellipseFromCirc(b.hips, 0.72) : ellipseFromCirc(b.hips, 0.76);
+  const seat = fem ? ellipseFromCirc(b.hips * 0.985, 0.76) : ellipseFromCirc(b.hips * 0.97, 0.78);
   const crotch = ellipseFromCirc(b.hips * 0.86, 0.8);
   const neck = ellipseFromCirc(b.neck * 1.05, 0.92);
   const shA = b.shoulder / 2 - 4;
@@ -277,9 +284,10 @@ export function bodyFrame(b: Body): BodyFrame {
     { k: hipH, v: [hip.a, hip.b] },
     { k: hipH + (waistH - hipH) * 0.45, v: [hip.a * 0.55 + waist.a * 0.45, hip.b * 0.5 + waist.b * 0.5] },
     { k: waistH, v: [waist.a, waist.b] },
-    { k: chestH - 0.045 * H, v: [under.a, under.b] },
+    { k: chestH - (fem ? 0.05 : 0.045) * H, v: [under.a, under.b] },
     { k: chestH, v: [chest.a, chest.b] },
-    { k: shoulderH - 0.03 * H, v: [Math.max(shA + 1, chest.a * 1.0), chest.b * 0.9] },
+    ...(fem ? [{ k: chestH + 0.04 * H, v: [upperChest.a, upperChest.b] }] : []),
+    { k: shoulderH - 0.03 * H, v: fem ? [Math.max(shA + 1, upperChest.a), upperChest.b * 0.9] : [Math.max(shA + 1, chest.a * 1.0), chest.b * 0.9] },
     { k: shoulderH - 0.008 * H, v: [shA, chest.b * 0.74] },
     { k: shoulderH + 0.004 * H, v: [shA * 0.82, chest.b * 0.62] },
     { k: neckH - 0.002 * H, v: [neck.a * 1.35, neck.b * 1.18] },
@@ -292,7 +300,40 @@ export function bodyFrame(b: Body): BodyFrame {
 
   const pecAmp = 0.06 + 0.12 * Math.max(0, b.chest / b.waist - 1.08);
   const gluteAmp = 0.07 + 0.18 * Math.max(0, b.hips / b.waist - 1.08);
+  // breasts: two rounded mounds whose apex sits on the bust line; the lower pole ends at the underbust fold
+  const bustAmp = 0.4 + 1.2 * Math.max(0, Math.min(0.6, b.chest / (b.chest * 0.25 + b.waist * 0.75) - 1));
+  const bustAt = (h: number) => {
+    const d = h - chestH;
+    return Math.exp(-0.5 * (d / ((d < 0 ? 0.021 : 0.026) * H)) ** 2);
+  };
+  const femShape = (h: number, cloth: boolean): Shape => {
+    const wBust = bustAmp * bustAt(h);
+    const wScap = 0.035 * g(h, chestH + 0.025 * H, 0.032 * H);
+    const wSpine = 0.03 * g(h, waistH + 0.05 * H, 0.09 * H);
+    const wGlute = gluteAmp * g(h, (hipH + crotchH) / 2 - 0.002 * H, 0.036 * H);
+    const wHip = 0.04 * g(h, hipH + 0.005 * H, 0.04 * H); // trochanter width over the hips
+    const wCleft = 0.06 * g(h, crotchH + 0.025 * H, 0.03 * H);
+    const wBelly = 0.025 * g(h, (waistH + hipH) / 2, 0.04 * H); // soft lower belly
+    const wClav = 0.025 * g(h, shoulderH - 0.012 * H, 0.012 * H);
+    const wTrap = 0.03 * g(h, shoulderH + 0.002 * H, 0.008 * H);
+    return (th) => {
+      let m = 1;
+      m += wBust * (ga(th, F - 0.44, 0.27) + ga(th, F + 0.44, 0.27));
+      m += wScap * (ga(th, B - 0.62, 0.42) + ga(th, B + 0.62, 0.42));
+      m += wGlute * (ga(th, B - 0.5, 0.45) + ga(th, B + 0.5, 0.45));
+      m += wHip * (ga(th, 0, 0.45) + ga(th, Math.PI, 0.45));
+      m += wBelly * ga(th, F, 0.55);
+      m += wClav * (ga(th, F - 0.8, 0.35) + ga(th, F + 0.8, 0.35));
+      m += wTrap * ga(th, B, 0.9);
+      if (!cloth) {
+        m -= wSpine * ga(th, B, 0.12);
+        m -= wCleft * ga(th, B, 0.09);
+      }
+      return m;
+    };
+  };
   const torsoShape = (h: number, cloth = false): Shape => {
+    if (fem) return femShape(h, cloth);
     const wPec = pecAmp * g(h, chestH - 0.014 * H, 0.026 * H);
     const wStern = 0.02 * g(h, chestH - 0.01 * H, 0.04 * H);
     const wScap = 0.05 * g(h, chestH + 0.025 * H, 0.032 * H);
@@ -345,12 +386,13 @@ export function bodyFrame(b: Body): BodyFrame {
     const outer = side > 0 ? 0 : Math.PI;
     const inner = side > 0 ? Math.PI : 0;
     const calfDir = side > 0 ? (5 * Math.PI) / 4 : (7 * Math.PI) / 4;
-    const wQuad = 0.06 * g(h, thighMid + 0.03 * H, 0.08 * H);
-    const wOut = 0.03 * g(h, thighMid + 0.02 * H, 0.1 * H);
-    const wAdd = 0.05 * g(h, crotchH - 0.02 * H, 0.045 * H);
+    // female thigh: softer front, fuller outer and inner thigh
+    const wQuad = (fem ? 0.03 : 0.06) * g(h, thighMid + 0.03 * H, 0.08 * H);
+    const wOut = (fem ? 0.05 : 0.03) * g(h, thighMid + (fem ? 0.05 : 0.02) * H, 0.1 * H);
+    const wAdd = (fem ? 0.065 : 0.05) * g(h, crotchH - 0.02 * H, 0.045 * H);
     const wCap = 0.08 * g(h, kneeH + 0.004 * H, 0.016 * H);
     const wPop = 0.035 * g(h, kneeH, 0.02 * H);
-    const wCalf = 0.15 * g(h, kneeH - 0.065 * H, 0.045 * H);
+    const wCalf = (fem ? 0.11 : 0.15) * g(h, kneeH - 0.065 * H, 0.045 * H);
     const wShin = 0.03 * g(h, (kneeH + ankleH) / 2, 0.06 * H);
     const wMall = 0.08 * g(h, ankleH + 0.004 * H, 0.01 * H);
     const wAch = 0.05 * g(h, ankleH + 0.02 * H, 0.03 * H);
@@ -404,8 +446,8 @@ export function bodyFrame(b: Body): BodyFrame {
   const armShape = (s: number, side: number): Shape => {
     const outer = side > 0 ? 0 : Math.PI;
     const of = side > 0 ? Math.PI / 4 : (3 * Math.PI) / 4;
-    const wDelt = 0.13 * g(s, 0.05 * L, 0.08 * L);
-    const wBi = 0.08 * g(s, 0.3 * L, 0.09 * L);
+    const wDelt = (fem ? 0.08 : 0.13) * g(s, 0.05 * L, 0.08 * L);
+    const wBi = (fem ? 0.04 : 0.08) * g(s, 0.3 * L, 0.09 * L);
     const wTri = 0.07 * g(s, 0.24 * L, 0.11 * L);
     const wElb = 0.08 * g(s, upperArm, 0.022 * L);
     const wFore = 0.09 * g(s, upperArm + 0.1 * L, 0.07 * L);

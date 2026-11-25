@@ -1,12 +1,13 @@
-// Run: npx tsx tests/drape.ts   (every catalog style drapes on the default body)
+// Run: npx tsx tests/drape.ts   (every catalog style drapes on the default body; BODY=female for the female preset)
 // Checks: no NaN, seams closed, strain sane, the garment stays where it belongs (hats on the head, pants on the hips).
 import { makePreset } from '../src/data/presets';
 import { CATALOG } from '../src/data/catalog';
-import { DEFAULT_BODY, bodyFrame } from '../src/three/body';
+import { DEFAULT_BODY as MALE, FEMALE_BODY, bodyFrame } from '../src/three/body';
 import { assemble } from '../src/sim/setup';
 import { calibratedField } from '../src/three/bodyField';
 import { meshField, GridCollider } from '../src/three/mesher';
 
+const DEFAULT_BODY = process.env.BODY === 'female' ? FEMALE_BODY : MALE;
 const FF = calibratedField(DEFAULT_BODY);
 const f = bodyFrame(DEFAULT_BODY);
 const collider = new GridCollider(meshField(FF).grid, [FF.f.ankleH + 6, FF.f.crotchH + 1]);
