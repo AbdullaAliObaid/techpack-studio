@@ -8,7 +8,7 @@ import { styleById, type StyleId } from '../data/catalog';
 import { fabricById } from '../data/fabrics';
 import { BODY_FIELDS, limbGirths } from '../three/body';
 import { bbox, centroid, offsetInward, samplePoly } from './geometry';
-import { fitTable, garmentSpecs, pieceSpecs, seamReport } from './specs';
+import { attachmentReport, fitTable, garmentSpecs, pieceSpecs, placementMarks, pleatReport, seamReport } from './specs';
 import { toUnit, type Units } from './units';
 
 const W = 297, H = 210, M = 12;
@@ -90,15 +90,32 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
     doc.setDrawColor(INK).setLineWidth(0.25).line(c.x, c.y - pb.h * 0.25, c.x, c.y + pb.h * 0.25);
     doc.setFont('helvetica', 'bold').setFontSize(8).setTextColor(INK).text(pc.name, c.x + 1.5, c.y - 1);
     doc.setFont('helvetica', 'normal').setFontSize(6.5).setTextColor(MUTED).text(`Cut ${pc.cut}  ·  ${fabricById(pc.fabric.id).name}`, c.x + 1.5, c.y + 2.5);
+    // placement marks: attachment outlines with a centre cross, pleat fold lines and notches
+    const P = (q: { x: number; y: number }) => ({ x: (q.x + pc.offset.x) * s + ox, y: (q.y + pc.offset.y) * s + oy });
+    const marks = placementMarks(pc, p.pieces, p.edits);
+    doc.setDrawColor(ACCENT).setLineWidth(0.2).setLineDashPattern([0.8, 0.6], 0);
+    for (const m of marks.outlines) path(m.pts.map(P), 'S');
+    doc.setLineDashPattern([], 0);
+    for (const m of marks.outlines) {
+      const c = P(m.centre);
+      doc.line(c.x - 1, c.y, c.x + 1, c.y).line(c.x, c.y - 1, c.x, c.y + 1);
+      doc.setFont('helvetica', 'normal').setFontSize(5.5).setTextColor(ACCENT).text(m.name, c.x + 1.2, c.y - 1.2);
+    }
+    for (const { marks: pm } of marks.pleats) {
+      doc.setDrawColor(INK).setLineWidth(0.2).setLineDashPattern([0.4, 0.4], 0);
+      for (const [a, b] of pm.folds) { const A = P(a), B = P(b); doc.line(A.x, A.y, B.x, B.y); }
+      doc.setLineDashPattern([], 0).setLineWidth(0.3);
+      for (const q of pm.notches) { const A = P(q), B = P({ x: q.x - pm.n.x, y: q.y - pm.n.y }); doc.line(A.x, A.y, B.x, B.y); }
+    }
     // key measurements on the piece
     doc.setTextColor(ACCENT).setFontSize(6);
-    for (const m of pieceSpecs(pc).filter((q) => !q.vertical)) {
+    for (const m of pieceSpecs(pc, p.edits).filter((q) => !q.vertical)) {
       const a = { x: (m.a.x + pc.offset.x) * s + ox, y: (m.a.y + pc.offset.y) * s + oy }, b = { x: (m.b.x + pc.offset.x) * s + ox, y: (m.b.y + pc.offset.y) * s + oy };
       doc.setDrawColor(ACCENT).setLineWidth(0.15).line(a.x, a.y, b.x, b.y);
       doc.text(`${m.label} ${u(m.value)}`, (a.x + b.x) / 2, (a.y + b.y) / 2 - 0.8, { align: 'center' });
     }
   }
-  doc.setTextColor(MUTED).setFontSize(7.5).text(`Scale 1:${Math.round(1 / (s / 10))}. Dashed = sewing line (finished size), solid = cut line. Use the DXF export for full-size cutting.`, M, H - 11);
+  doc.setTextColor(MUTED).setFontSize(7.5).text(`Scale 1:${Math.round(1 / (s / 10))}. Dashed = sewing line (finished size), solid = cut line, blue dashed = placement, dotted = pleat fold. Use the DXF export for full-size cutting.`, M, H - 11);
 
   // ---- 3. spec sheet ----
   doc.addPage();
@@ -108,7 +125,7 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
   table(doc, M + 100, 26, [{ title: 'Fit check', w: 30 }, { title: 'Body', w: 18, align: 'right' }, { title: 'Garment', w: 20, align: 'right' }, { title: 'Ease', w: 18, align: 'right' }],
     fitTable(p.garment, p.pieces, p.body).map((r) => [r.label, r.body === null ? '' : u(r.body) + (r.estimated ? '*' : ''), u(r.garment), r.body === null ? '' : (r.garment - r.body > 0 ? '+' : '') + u(r.garment - r.body)]), 'Body vs garment');
   table(doc, M + 200, 26, [{ title: 'Seam', w: 40 }, { title: 'Edges', w: 26, align: 'right' }, { title: '', w: 10, align: 'right' }],
-    seamReport(p.garment, p.pieces).map((r) => [r.label.replace(' (front / back)', ''), `${u(r.a)}/${u(r.b)}`, r.ease !== undefined ? `${r.a - r.b >= 0 ? '+' : ''}${u(r.a - r.b)}` : Math.abs(r.a - r.b) < 0.1 ? 'OK' : 'CHECK']), 'Seam check');
+    seamReport(p.garment, p.pieces, p.edits).map((r) => [r.label.replace(' (front / back)', ''), `${u(r.a)}/${u(r.b)}`, r.ease !== undefined ? `${r.a - r.b >= 0 ? '+' : ''}${u(r.a - r.b)}` : Math.abs(r.a - r.b) < 0.1 ? 'OK' : 'CHECK']), 'Seam check');
 
   // ---- 4. construction + BOM ----
   doc.addPage();
@@ -127,7 +144,23 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
     ['Care label', 'Woven', '1'],
   ], 'Bill of materials');
   table(doc, M, y + 4, [{ title: 'Seam', w: 60 }, { title: 'Stitch', w: 70 }, { title: 'Allowance', w: 30, align: 'right' }],
-    seamReport(p.garment, p.pieces).map((r) => [r.label.replace(' (front / back)', ''), r.ease !== undefined ? 'Lockstitch 301, ease distributed' : 'Lockstitch 301 + overlock 504', u(1) + ' ' + U]), 'Construction');
+    seamReport(p.garment, p.pieces, p.edits).map((r) => [r.label.replace(' (front / back)', ''), r.attachment ? 'Lockstitch 301, edge stitched' : r.ease !== undefined ? 'Lockstitch 301, ease distributed' : 'Lockstitch 301 + overlock 504', r.attachment ? '' : u(1) + ' ' + U]), 'Construction');
+
+  // ---- 5. attachments and pleats ----
+  const atts = attachmentReport(p.pieces, p.edits), pls = pleatReport(p.pieces, p.edits);
+  if (atts.length || pls.length) {
+    doc.addPage();
+    frame(doc, p, 5, 'Attachments & pleats');
+    let ya = 26;
+    if (atts.length) {
+      ya = table(doc, M, ya, [{ title: 'Name', w: 40 }, { title: 'Kind', w: 18 }, { title: 'On piece', w: 32 }, { title: `Size ${U}`, w: 26, align: 'right' }, { title: `Centre x / y ${U}`, w: 30, align: 'right' }, { title: 'Rotation', w: 18, align: 'right' }, { title: 'Sewn', w: 34 }, { title: 'Artwork layers', w: 26, align: 'right' }, { title: 'Qty', w: 12, align: 'right' }],
+        atts.map((r) => [r.name, r.kind, r.host, `${u(r.w)} x ${u(r.h)}`, `${u(r.x)} / ${u(r.y)}`, `${Math.round(r.rotation)}°`, r.stitched, String(r.layers), String(r.copies)]), 'Attachments');
+    }
+    if (pls.length) {
+      table(doc, M, ya + 4, [{ title: 'Piece', w: 40 }, { title: 'Type', w: 22 }, { title: `Depth ${U}`, w: 22, align: 'right' }, { title: `Intake ${U}`, w: 22, align: 'right' }, { title: `Stitched ${U}`, w: 24, align: 'right' }, { title: 'Position', w: 50 }],
+        pls.map((r) => [r.piece, r.type, u(r.depth), u(r.intake), u(r.length), r.at]), 'Pleats');
+    }
+  }
 
   doc.save(`${p.name.replace(/[^a-z0-9]+/gi, '_')}_techpack.pdf`);
 }

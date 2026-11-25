@@ -3,7 +3,10 @@
 import { makePreset } from '../src/data/presets';
 import { CATALOG } from '../src/data/catalog';
 import { DEFAULT_BODY, bodyFrame } from '../src/three/body';
-import { assemble } from '../src/sim/setup';
+import { assemble, type Garment3D } from '../src/sim/setup';
+import type { Edits } from '../src/data/edits';
+import type { Piece } from '../src/data/presets';
+import type { StyleId } from '../src/data/catalog';
 import { calibratedField } from '../src/three/bodyField';
 import { meshField, GridCollider } from '../src/three/mesher';
 
@@ -14,12 +17,10 @@ const SP = Number(process.env.SP ?? 1.8);
 const only = process.argv[2];
 let fails = 0;
 
-for (const style of CATALOG) {
-  if (only && style.id !== only) continue;
-  const g = style.id;
-  const pieces = makePreset(g, DEFAULT_BODY);
+function drape(g: StyleId, pieces: Piece[], edits?: Edits, label: string = g): { ok: boolean; G: Garment3D } {
+  const style = CATALOG.find((s) => s.id === g)!;
   const t0 = performance.now();
-  const G = assemble(g, pieces, DEFAULT_BODY, SP, collider)!;
+  const G = assemble(g, pieces, DEFAULT_BODY, SP, collider, edits)!;
   const t1 = performance.now();
   const sim = G.sim;
   let frames = 0;
@@ -67,8 +68,100 @@ for (const style of CATALOG) {
   // strain: no runaway stretch anywhere, the bulk of the cloth relaxed; the crotch fork of woven trousers is the expected hot spot
   const ok = bad === 0 && avgGap < 0.6 && open / ns < 0.02 && p99 < 0.2 && p50 < 0.03 && r98 < 2.5 && placed;
   if (!ok) fails++;
-  console.log(`${ok ? 'ok  ' : 'FAIL'} ${g.padEnd(14)} ${sim.n} particles, ${ns} sew links | build ${(t1 - t0).toFixed(0)}ms | ${frames} frames ${((t3 - t2) / frames).toFixed(1)}ms/frame | NaN ${bad} | y ${minY.toFixed(1)}..${maxY.toFixed(1)} (${where}) | seam gap avg ${avgGap.toFixed(2)}cm, open ${open} | strain p50 ${(p50 * 100).toFixed(1)}% p99 ${(p99 * 100).toFixed(1)}%, p98 ${(r98 * 100).toFixed(0)}% of safe`);
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${label.padEnd(14)} ${sim.n} particles, ${ns} sew links | build ${(t1 - t0).toFixed(0)}ms | ${frames} frames ${((t3 - t2) / frames).toFixed(1)}ms/frame | NaN ${bad} | y ${minY.toFixed(1)}..${maxY.toFixed(1)} (${where}) | seam gap avg ${avgGap.toFixed(2)}cm, open ${open} | strain p50 ${(p50 * 100).toFixed(1)}% p99 ${(p99 * 100).toFixed(1)}%, p98 ${(r98 * 100).toFixed(0)}% of safe`);
   if (!ok || process.env.V) console.log(`     worst ${(st[wi] * 100).toFixed(0)}% on ${pan.piece.name}${pan.mirror ? ' (L)' : ''} at pattern (${uvw.x.toFixed(1)}, ${uvw.y.toFixed(1)}) world y ${sim.pos[wi * 3 + 1].toFixed(1)}`);
+  return { ok, G };
+}
+
+for (const style of CATALOG) {
+  if (only && style.id !== only) continue;
+  drape(style.id, makePreset(style.id, DEFAULT_BODY));
+}
+
+// ---- garment edits: attachments, detached seams, pleats ----
+const verdict = (ok: boolean, msg: string) => { if (!ok) fails++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); };
+const dist = (G: Garment3D, a: number, b: number) => Math.hypot(G.sim.pos[a * 3] - G.sim.pos[b * 3], G.sim.pos[a * 3 + 1] - G.sim.pos[b * 3 + 1], G.sim.pos[a * 3 + 2] - G.sim.pos[b * 3 + 2]);
+/** every attachment point stays on its host: close to the host cloth, never wandering off */
+function staysOn(G: Garment3D, id: string) {
+  const A = G.panels.filter((p) => p.attach?.id === id);
+  let worst = 0, sum = 0, n = 0;
+  for (const P of A) {
+    const H = G.panels[P.attach!.host];
+    for (let i = 0; i < P.mesh.uv.length; i++) {
+      let best = Infinity;
+      for (let j = 0; j < H.mesh.uv.length; j++) best = Math.min(best, dist(G, P.offset + i, H.offset + j));
+      worst = Math.max(worst, best); sum += best; n++;
+    }
+  }
+  return { copies: A.length, worst, avg: n ? sum / n : Infinity };
+}
+const E = (e: Partial<Edits>): Edits => ({ attachments: [], customSeams: [], detachedSeams: [], pleats: [], ...e });
+if (!only || only === 'edits') {
+  console.log('\n== edits ==');
+  {
+    const pieces = makePreset('jeans', DEFAULT_BODY);
+    const back = pieces.find((p) => p.role === 'back')!;
+    const edits = E({ attachments: [{ id: 'bp', kind: 'pocket', name: 'Back pocket', pieceId: back.id, x: 1, y: 13, rotation: 0, w: 14, h: 15, outline: 'pointed', layers: [] }] });
+    const { ok, G } = drape('jeans', pieces, edits, 'jeans+pocket');
+    const s = staysOn(G, 'bp');
+    verdict(ok && s.copies === 2 && s.worst < 2.5 && s.avg < 1.2, `jeans back pocket on both back legs (${s.copies}), stays on: avg ${s.avg.toFixed(2)}cm worst ${s.worst.toFixed(2)}cm from the back leg`);
+  }
+  {
+    const pieces = makePreset('basic-tee', DEFAULT_BODY);
+    const front = pieces.find((p) => p.role === 'front')!;
+    const edits = E({ attachments: [{ id: 'cp', kind: 'patch', name: 'Chest patch', pieceId: front.id, x: 11, y: 26, rotation: 10, w: 8, h: 8, outline: 'rounded', layers: [] }] });
+    const { ok, G } = drape('basic-tee', pieces, edits, 'tee+patch');
+    const s = staysOn(G, 'cp');
+    verdict(ok && s.copies === 1 && s.worst < 2 && s.avg < 1.2, `tee chest patch stays on: avg ${s.avg.toFixed(2)}cm worst ${s.worst.toFixed(2)}cm from the front`);
+  }
+  {
+    const pieces = makePreset('basic-tee', DEFAULT_BODY);
+    const ref = assemble('basic-tee', pieces, DEFAULT_BODY, SP, collider)!;
+    const links = ref.seamLinks['side-r'], other = ref.seamLinks['side-l'];
+    const { G } = drape('basic-tee', pieces, E({ detachedSeams: ['side-r'] }), 'tee-side-r');
+    const gap = (ls: [number, number][]) => ls.reduce((a, [i, j]) => a + dist(G, i, j), 0) / ls.length;
+    const max = Math.max(...links.map(([i, j]) => dist(G, i, j)));
+    verdict(gap(links) > 1 && max > 3 && gap(other) < 0.6, `detached right side seam opens: gap avg ${gap(links).toFixed(2)}cm max ${max.toFixed(1)}cm, left side stays shut ${gap(other).toFixed(2)}cm`);
+  }
+  {
+    const pieces = makePreset('jeans', DEFAULT_BODY);
+    const front = pieces.find((p) => p.role === 'front')!;
+    const w0 = front.points.find((q) => q.key === 'front.0')!;
+    // pleated trousers are drafted wider at the waist by the pleat intake, so the waistband still fits
+    front.points.find((q) => q.key === 'front.1')!.x += 3;
+    const edits = E({ pleats: [{ id: 'kp', pieceId: front.id, pointId: w0.id, t: 0.55, depth: 1.5, length: 7, type: 'knife', direction: 1 }] });
+    const { ok, G } = drape('jeans', pieces, edits, 'jeans+pleat');
+    const ls = G.seamLinks['pleat:kp'] ?? [];
+    const gap = ls.reduce((a, [i, j]) => a + dist(G, i, j), 0) / (ls.length || 1);
+    verdict(ok && ls.length === 2 && gap < 0.3, `knife pleat on both front legs: folded shut at the waist to ${gap.toFixed(2)}cm`);
+  }
+  {
+    // a belt loop on the jeans: sewn at both ends, the middle stands off as a loop
+    const pieces = makePreset('jeans', DEFAULT_BODY);
+    const back = pieces.find((p) => p.role === 'back')!;
+    const edits = E({ attachments: [{ id: 'bl', kind: 'strap', name: 'Belt loop', pieceId: back.id, x: 6, y: 3, rotation: 0, w: 1.2, h: 5, outline: 'rect', layers: [] }] });
+    const { ok, G } = drape('jeans', pieces, edits, 'jeans+loop');
+    const s = staysOn(G, 'bl');
+    verdict(ok && s.copies === 2 && s.worst < 3 && s.worst > s.avg, `belt loop on both back legs stays on and stands off: avg ${s.avg.toFixed(2)}cm, middle ${s.worst.toFixed(2)}cm off the leg`);
+  }
+  {
+    // user pieces: an elbow patch on both sleeves, and a hem extension sewn onto the front hem
+    const pieces = makePreset('basic-tee', DEFAULT_BODY);
+    const sleeve = pieces.find((p) => p.role === 'sleeve')!, front = pieces.find((p) => p.role === 'front')!;
+    const pt = (id: string, x: number, y: number) => ({ id, x, y, smooth: false, mirror: null });
+    const patch: Piece = { id: 'up1', name: 'Elbow patch', role: 'custom', cut: 1, offset: { x: 0, y: 0 }, symmetric: false, fabric: sleeve.fabric, specs: [],
+      points: [pt('a', 0, 0), pt('b', 6, 0), pt('c', 6, 5), pt('d', 0, 5)], placement: { mode: 'patch', hostPieceId: sleeve.id, x: 0, y: 12, rotation: 0 } };
+    const ext: Piece = { id: 'up2', name: 'Hem extension', role: 'custom', cut: 1, offset: { x: 0, y: 0 }, symmetric: false, fabric: front.fabric, specs: [],
+      points: [pt('e', 0, 0), pt('f', 27.5, 0), pt('g', 27.5, 6), pt('h', 0, 6)], placement: { mode: 'sewn' } };
+    const k = (key: string) => front.points.find((q) => q.key === key)!.id;
+    const edits = E({ customSeams: [{ id: 'ext', a: { pieceId: 'up2', fromId: 'e', toId: 'f' }, b: { pieceId: front.id, fromId: k('front.8'), toId: k('front.7') } }] });
+    const { ok, G } = drape('basic-tee', [...pieces, patch, ext], edits, 'tee+user');
+    const s = staysOn(G, 'up1');
+    const ls = G.seamLinks.ext ?? [];
+    const gap = ls.reduce((a, [i, j]) => a + dist(G, i, j), 0) / (ls.length || 1);
+    const E2 = G.panels.find((p) => p.piece.id === 'up2');
+    verdict(ok && s.copies === 2 && s.worst < 2 && !!E2 && ls.length > 10 && gap < 0.6, `user pieces: elbow patch on both sleeves (worst ${s.worst.toFixed(2)}cm off), hem extension sewn on (${ls.length} links, gap ${gap.toFixed(2)}cm)`);
+  }
 }
 console.log(fails ? `\n${fails} FAILED` : '\nall drape checks passed');
 process.exit(fails ? 1 : 0);

@@ -8,6 +8,7 @@ import { bodyFrame, type BodyFrame } from '../three/body';
 import { buildDetails, detailTransfers } from './details';
 import { migrateGarment, styleById } from '../data/catalog';
 import { boneMatrices, invert, poseAt, type Mode } from './pose';
+import type { Edits } from '../data/edits';
 
 let bodyKey = '';
 let collider: PosedCollider | null = null;
@@ -30,7 +31,8 @@ let G: Garment3D | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let gen = 0;
 
-type BuildMsg = { type: 'build'; garment: GarmentType; pieces: Piece[]; body: Body; warm: boolean; spacing: number } | { type: 'mode'; mode: Mode };
+/** build: edits (attachments, seam edits, pleats from src/data/edits.ts) are optional; without them the garment is the plain pattern */
+type BuildMsg = { type: 'build'; garment: GarmentType; pieces: Piece[]; body: Body; warm: boolean; spacing: number; edits?: Edits } | { type: 'mode'; mode: Mode };
 
 function loop(myGen: number) {
   if (!G || myGen !== gen) return;
@@ -107,7 +109,7 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
   modeStart = simTime + (m.warm ? 0 : 2.0);
   motionPeak = 0;
   motionPeakInfo = null;
-  const next = assemble(m.garment, m.pieces, m.body, m.spacing, collider!);
+  const next = assemble(m.garment, m.pieces, m.body, m.spacing, collider!, m.edits);
   if (!next) { G = null; return; }
   if (m.warm && G) warmStart(next, G);
   G = next;
@@ -129,10 +131,34 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
   });
   const pos = new Float32Array(G.sim.n * 3);
   G.sim.display(pos);
+  // ---- picking and prints: which pattern piece and pattern point every cloth vertex is ----
+  //   pieceIds[k]         id of entry k: a pattern piece id, or for a cloth attachment panel the attachment id
+  //                       (a user piece patched on keeps its own piece id)
+  //   vertexPiece[v]      index into pieceIds for cloth vertex v (Uint16Array, length n)
+  //   vertexPatternUv     Float32Array(n * 2): x, y of vertex v in cm in that piece's own local pattern coords
+  //                       (not mirrored for a left side copy; for an attachment, its own coords centred on 0,0
+  //                       before rotation). Barycentric interpolation of these over a raycast hit triangle
+  //                       gives the pattern point under the cursor, which is where a print or attachment goes.
+  //   panels[k]           per placed panel (same order as groups): vertex range start..start+count, pieceIndex,
+  //                       instance (placed copy of a piece cut more than once: 0 right / 1 left, crown 0..5), mirror
+  //   attachmentPanels    cloth attachment panels: attachment id, vertex range, kind, host piece id, host instance
+  const pieceIds: string[] = [];
+  const pieceIndex = (id: string) => { let k = pieceIds.indexOf(id); if (k < 0) { k = pieceIds.length; pieceIds.push(id); } return k; };
+  const vertexPiece = new Uint16Array(G.sim.n), vertexPatternUv = new Float32Array(G.sim.n * 2);
+  const panels = G.panels.map((p) => {
+    const k = pieceIndex(p.attach?.id ?? p.piece.id);
+    p.mesh.uv.forEach((q, i) => { vertexPiece[p.offset + i] = k; vertexPatternUv[(p.offset + i) * 2] = q.x; vertexPatternUv[(p.offset + i) * 2 + 1] = q.y; });
+    return { start: p.offset, count: p.mesh.uv.length, pieceIndex: k, instance: p.instance, mirror: p.mirror };
+  });
+  const attachmentPanels = G.panels.flatMap((p) => p.attach ? [{
+    attachmentId: p.attach.id, start: p.offset, count: p.mesh.uv.length, kind: p.attach.kind,
+    hostPieceId: G!.panels[p.attach.host].piece.id, hostInstance: G!.panels[p.attach.host].instance,
+  }] : []);
   (self as unknown as Worker).postMessage({
     type: 'built', n: G.sim.n, index: new Uint32Array(index), groups, uv, pos,
     fabrics: G.panels.map((p) => p.piece.fabric),
-  });
+    pieceIds, vertexPiece, vertexPatternUv, panels, attachmentPanels,
+  }, [vertexPiece.buffer, vertexPatternUv.buffer]);
   try {
     const det = buildDetails(G, styleById(migrateGarment(m.garment)).details);
     (self as unknown as Worker).postMessage(det, detailTransfers(det));

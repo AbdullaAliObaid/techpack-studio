@@ -53,6 +53,11 @@ export interface Attachment {
   layers: ShapeLayer[];
   /** fabric for cloth attachments; defaults to the host piece fabric */
   fabric?: { id: string; color: number };
+  /**
+   * which placed copy of a piece cut more than once gets the attachment (see instanceCount in
+   * src/sim/seams.ts: 0 = right side, 1 = left side; crown panels 0..5). Omitted: every copy.
+   */
+  instance?: number;
 }
 
 /** A run along a piece outline between two outline points (ids), taking the shorter way round. */
@@ -60,6 +65,11 @@ export interface EdgeRef {
   pieceId: string;
   fromId: string;
   toId: string;
+  /**
+   * placed copy of a piece cut more than once (0 = right side / first, 1 = left side; crown panels 0..5).
+   * Omitted on a custom seam: sewn on every copy, copy i to copy i (a mirrored pair stays mirrored).
+   */
+  instance?: number;
 }
 
 export interface CustomSeam {
