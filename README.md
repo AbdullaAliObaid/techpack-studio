@@ -18,6 +18,13 @@ Interactive tech pack builder: a CLO3D-style 2D pattern editor on the left, link
 4. Changing a measurement regrades the pattern and keeps your edits as offsets
 5. `npm test` checks all of this numerically on four body types
 
+## Cloth simulation (CLO style)
+1. Every pattern piece is triangulated into a cloth mesh whose rest lengths are the 2D pattern lengths
+2. Pieces are arranged around the avatar and sewn along their seams (shoulders, side seams, armholes, sleeves, inseam, outseam, rises)
+3. An XPBD solver in a Web Worker drapes them with gravity, fabric stretch and bending stiffness, strain limiting, body collision and friction
+4. The Stretch-Risk-O-Meter reads the real simulated strain against each fabric's safe stretch
+5. Pattern and fabric edits warm start from the current drape; `npm run test:drape` checks stability, seam closure and strain
+
 ## Run
 npm install
 npm run dev

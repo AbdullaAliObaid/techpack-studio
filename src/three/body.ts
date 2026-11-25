@@ -293,7 +293,7 @@ export function bodyFrame(b: Body): BodyFrame {
   // ---------------- arms ----------------
   const bicep = (b.chest * 0.31) / TAU;
   const R0 = bicep * 1.12;
-  const armAngle = (9 * Math.PI) / 180;
+  const armAngle = (20 * Math.PI) / 180; // relaxed A-pose, like a draping avatar
   const acromion = { x: b.shoulder / 2, y: shoulderH };
   const joint = { x: b.shoulder / 2 - 0.55 * R0, y: shoulderH - 0.6 * R0 };
   const u = { x: Math.sin(armAngle), y: -Math.cos(armAngle) }; // down the arm

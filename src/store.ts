@@ -33,6 +33,9 @@ interface State {
   showJoints: boolean;
   showGarment: boolean;
   showTape: boolean;
+  draping: boolean;
+  drapePeak: { ratio: number; strain: number; where: string };
+  redrapeToken: number;
   fabricScope: 'all' | 'piece';
   past: Piece[][];
   future: Piece[][];
@@ -90,6 +93,9 @@ export const useStore = create<State>((set, get) => {
     showJoints: false,
     showGarment: true,
     showTape: false,
+    draping: false,
+    drapePeak: { ratio: 0, strain: 0, where: '' },
+    redrapeToken: 0,
     fabricScope: 'all',
     past: [],
     future: [],

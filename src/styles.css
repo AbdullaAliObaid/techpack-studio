@@ -186,3 +186,8 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; }
 .tape-label { background: #2563eb; color: #fff; font: 600 11px/1 Inter, system-ui, sans-serif; padding: 4px 7px; border-radius: 6px; white-space: nowrap; pointer-events: none; box-shadow: 0 1px 3px rgba(0,0,0,0.2); font-variant-numeric: tabular-nums; }
 .link-row { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: #475569; line-height: 1.35; padding: 8px 10px; background: var(--accent-soft); border-radius: 8px; }
 .link-row input { margin-top: 2px; }
+
+.drape-bar { position: absolute; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.95); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px 6px 12px; box-shadow: var(--shadow); font-size: 12px; color: #475569; }
+.drape-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+.drape-dot.on { background: #f59e0b; animation: pulse 0.9s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
