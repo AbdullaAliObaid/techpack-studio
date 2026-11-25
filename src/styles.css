@@ -213,7 +213,7 @@ b { font-weight: 600; }
 .menu-wrap { position: relative; }
 .menu {
   position: absolute; top: calc(100% + 8px); left: 0; min-width: 200px; padding: 6px; z-index: 40;
-  background: var(--material); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+  background: color-mix(in srgb, var(--bg-elevated) 94%, transparent); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
   border: 0.5px solid var(--material-border); border-radius: 12px; box-shadow: var(--shadow); display: flex; flex-direction: column;
   animation: pop var(--ease);
 }
