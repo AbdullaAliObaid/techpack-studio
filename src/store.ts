@@ -18,8 +18,24 @@ export interface Project {
 }
 
 export type Tool = 'select' | 'add' | 'pan';
+export type ThemePref = 'system' | 'light' | 'dark';
+export type InspectorTab = 'library' | 'fabric' | 'specs';
+
+const THEME_KEY = 'tech-it-theme';
+export function readTheme(): ThemePref {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    if (v === 'light' || v === 'dark' || v === 'system') return v;
+  } catch { /* storage blocked */ }
+  return 'system';
+}
+export function writeTheme(t: ThemePref) {
+  try { localStorage.setItem(THEME_KEY, t); } catch { /* storage blocked */ }
+}
 
 interface State {
+  theme: ThemePref;
+  inspectorTab: InspectorTab;
   project: Project;
   units: Units;
   tool: Tool;
@@ -84,6 +100,8 @@ export const useStore = create<State>((set, get) => {
 
   return {
     project: freshProject('jacket', 'My first jacket'),
+    theme: readTheme(),
+    inspectorTab: 'fabric',
     units: 'cm',
     tool: 'select',
     symmetry: true,

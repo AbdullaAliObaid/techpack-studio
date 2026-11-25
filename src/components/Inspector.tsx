@@ -1,30 +1,41 @@
-import { useState } from 'react';
 import { useStore } from '../store';
 import { FABRICS, fabricById, stretchLabel } from '../data/fabrics';
 import { fabricDataUrl } from '../lib/textures';
 import { fitTable, garmentSpecs, pieceSpecs, seamReport } from '../lib/specs';
 import { FITS } from '../data/draft';
 import { fmt, toUnit } from '../lib/units';
+import Library from './Library';
+import type { InspectorTab } from '../store';
+
+const TABS: { id: InspectorTab; label: string }[] = [
+  { id: 'library', label: 'Library' },
+  { id: 'fabric', label: 'Fabric' },
+  { id: 'specs', label: 'Specs' },
+];
 
 export default function Inspector() {
-  const [tab, setTab] = useState<'fabric' | 'specs'>('fabric');
-  const { project, setFit } = useStore();
+  const { project, setFit, inspectorTab: tab, set } = useStore();
   const fit = project.fit ?? 'regular';
   return (
-    <aside className="inspector">
-      <div className="fit-bar">
-        <span>Fit</span>
-        <div className="seg full">
-          {FITS.map((f) => (
-            <button key={f} className={fit === f ? 'on' : ''} onClick={() => setFit(f)}>{f[0].toUpperCase() + f.slice(1)}</button>
+    <aside className="inspector" aria-label="Inspector">
+      <div className="inspector-head">
+        <div className="seg full" role="tablist" aria-label="Inspector sections">
+          {TABS.map((t) => (
+            <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'on' : ''} onClick={() => set({ inspectorTab: t.id })}>{t.label}</button>
           ))}
         </div>
+        {tab !== 'library' && (
+          <div className="fit-bar">
+            <span id="fit-label">Fit</span>
+            <div className="seg full" role="group" aria-labelledby="fit-label">
+              {FITS.map((f) => (
+                <button key={f} className={fit === f ? 'on' : ''} aria-pressed={fit === f} onClick={() => setFit(f)}>{f[0].toUpperCase() + f.slice(1)}</button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
-      <div className="tabs">
-        <button className={tab === 'fabric' ? 'on' : ''} onClick={() => setTab('fabric')}>Fabric</button>
-        <button className={tab === 'specs' ? 'on' : ''} onClick={() => setTab('specs')}>Specs</button>
-      </div>
-      <div className="inspector-body">{tab === 'fabric' ? <FabricTab /> : <SpecsTab />}</div>
+      <div className="inspector-body">{tab === 'library' ? <Library /> : tab === 'fabric' ? <FabricTab /> : <SpecsTab />}</div>
     </aside>
   );
 }
@@ -48,8 +59,8 @@ function FabricTab() {
           const active = current.id === f.id;
           return (
             <div key={f.id} className={`fabric ${active ? 'on' : ''}`}>
-              <button className="fabric-main" onClick={() => setFabric(f.id, active ? current.color : 0)}>
-                <img src={fabricDataUrl(f, f.colors[active ? current.color : 0].hex)} alt="" />
+              <button className="fabric-main" aria-pressed={active} onClick={() => setFabric(f.id, active ? current.color : 0)}>
+                <img src={fabricDataUrl(f, f.colors[active ? current.color : 0].hex)} alt="" width={44} height={44} />
                 <div>
                   <div className="fabric-name">{f.name}</div>
                   <div className="fabric-meta">
@@ -66,6 +77,8 @@ function FabricTab() {
                       <button
                         key={c.name}
                         title={c.name}
+                        aria-label={c.name}
+                        aria-pressed={current.color === i}
                         className={current.color === i ? 'on' : ''}
                         style={{ background: c.hex }}
                         onClick={() => setFabric(f.id, i)}

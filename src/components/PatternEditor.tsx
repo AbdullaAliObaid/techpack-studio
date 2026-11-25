@@ -17,7 +17,7 @@ type Drag =
   | { mode: 'pan'; startClient: Pt; startView: View }
   | { mode: 'pinch'; startDist: number; startMid: Pt; startView: View };
 
-const ACCENT = '#2563eb';
+const ACCENT = 'var(--measure)';
 export const SEAM_ALLOWANCE = 1; // cm
 
 export default function PatternEditor() {
@@ -203,11 +203,11 @@ export default function PatternEditor() {
   const grid = (
     <defs>
       <pattern id="g1" width="1" height="1" patternUnits="userSpaceOnUse">
-        <path d="M1 0H0V1" fill="none" stroke="#e7e9ee" strokeWidth={px(1)} />
+        <path d="M1 0H0V1" fill="none" stroke="var(--grid)" strokeWidth={px(1)} />
       </pattern>
       <pattern id="g10" width="10" height="10" patternUnits="userSpaceOnUse">
         {k > 2.2 && <rect width="10" height="10" fill="url(#g1)" />}
-        <path d="M10 0H0V10" fill="none" stroke="#d5d9e1" strokeWidth={px(1)} />
+        <path d="M10 0H0V10" fill="none" stroke="var(--grid-major)" strokeWidth={px(1)} />
       </pattern>
       {pieces.map((p) => {
         const f = fabricById(p.fabric.id);
@@ -219,7 +219,7 @@ export default function PatternEditor() {
         );
       })}
       <marker id="arr" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-        <path d="M0 1L10 5L0 9z" fill="#334155" />
+        <path d="M0 1L10 5L0 9z" fill="var(--dim-line)" />
       </marker>
     </defs>
   );
@@ -297,17 +297,17 @@ function PieceView(props: {
     <g transform={`translate(${p.offset.x},${p.offset.y})`}>
       {/* body */}
       <path d={geo.d} fill={`url(#fab-${p.id})`} data-kind="piece" data-piece={p.id} style={{ cursor: 'move' }} />
-      <path d={geo.d} fill="rgba(255,255,255,0.12)" pointerEvents="none" />
-      {showStitch && <path d={geo.cut} fill="none" stroke="#64748b" strokeOpacity={0.8} strokeWidth={px(1)} pointerEvents="none" />}
+      <path d={geo.d} fill="var(--piece-sheen)" pointerEvents="none" />
+      {showStitch && <path d={geo.cut} fill="none" stroke="var(--cut-line)" strokeWidth={px(1)} pointerEvents="none" />}
       {/* the editable outline is the sewing line (finished size); the outer line is the cut line with seam allowance */}
-      <path d={geo.d} fill="none" stroke={selected ? ACCENT : '#1e293b'} strokeWidth={px(selected ? 2 : 1.4)} strokeDasharray={showStitch ? `${px(6)} ${px(3)}` : undefined} pointerEvents="none" />
+      <path d={geo.d} fill="none" stroke={selected ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(selected ? 2 : 1.4)} strokeDasharray={showStitch ? `${px(6)} ${px(3)}` : undefined} pointerEvents="none" />
       {/* wide invisible stroke for picking edges */}
       <path d={geo.d} fill="none" stroke="transparent" strokeWidth={px(16)} data-kind="edge" data-piece={p.id} />
 
       {/* grainline + label */}
       <line
         x1={geo.c.x} x2={geo.c.x} y1={geo.c.y - geo.bb.h * 0.22} y2={geo.c.y + geo.bb.h * 0.22}
-        stroke="#334155" strokeWidth={px(1)} markerStart="url(#arr)" markerEnd="url(#arr)" pointerEvents="none" opacity={0.7}
+        stroke="var(--dim-line)" strokeWidth={px(1)} markerStart="url(#arr)" markerEnd="url(#arr)" pointerEvents="none" opacity={0.7}
       />
       <text x={geo.c.x + 1.2} y={geo.c.y - 1} className="piece-label" fontSize={Math.min(3, geo.bb.w / 9)} pointerEvents="none">
         {p.name}
@@ -318,7 +318,7 @@ function PieceView(props: {
 
       {/* symmetry axis */}
       {symmetry && p.symmetric && (
-        <line x1={0} x2={0} y1={geo.bb.minY - 4} y2={geo.bb.maxY + 4} stroke="#a855f7" strokeWidth={px(1.2)} strokeDasharray={`${px(6)} ${px(4)}`} pointerEvents="none" />
+        <line x1={0} x2={0} y1={geo.bb.minY - 4} y2={geo.bb.maxY + 4} stroke="var(--purple)" strokeWidth={px(1.2)} strokeDasharray={`${px(6)} ${px(4)}`} pointerEvents="none" />
       )}
 
       {/* measurements */}
@@ -344,7 +344,7 @@ function PieceView(props: {
                 </>
               )}
               <g transform={`translate(${mx},${my})${m.vertical ? ' rotate(-90)' : ''}`}>
-                <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={px(4)} fill="#fff" stroke={ACCENT} strokeWidth={px(1)} />
+                <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={px(4)} fill="var(--canvas)" stroke={ACCENT} strokeWidth={px(1)} />
                 <text className="dim-text" fontSize={px(fontPx)} textAnchor="middle" dominantBaseline="central">
                   {label}
                 </text>
@@ -374,8 +374,8 @@ function PieceView(props: {
           const isSel = q.id === selPoint;
           const isMirror = symmetry && sel && sel.mirror === q.id && sel.id !== q.id;
           const r = px(isSel ? 6 : selected ? 4.5 : 3.5);
-          const fill = isSel ? ACCENT : isMirror ? '#a855f7' : '#fff';
-          const stroke = isMirror ? '#a855f7' : selected ? ACCENT : '#475569';
+          const fill = isSel ? 'var(--accent)' : isMirror ? 'var(--purple)' : 'var(--point-fill)';
+          const stroke = isMirror ? 'var(--purple)' : selected ? 'var(--accent)' : 'var(--point-stroke)';
           return (
             <g key={q.id}>
               {q.smooth ? (
