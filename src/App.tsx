@@ -5,14 +5,17 @@ import PatternEditor from './components/PatternEditor';
 import Inspector from './components/Inspector';
 import Viewport3D from './components/Viewport3D';
 import { useStore } from './store';
+import { useApplyTheme } from './components/theme';
 
 export default function App() {
-  const [split, setSplit] = useState(58);
+  useApplyTheme();
+  const [split, setSplit] = useState(() => (window.innerWidth < 1300 ? 60 : 58));
   const dragging = useRef(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).tagName === 'INPUT') return;
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       const st = useStore.getState();
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === 'z') {
@@ -56,6 +59,9 @@ export default function App() {
         </section>
         <div
           className="divider"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize panes"
           onPointerDown={(e) => {
             dragging.current = true;
             (e.currentTarget.parentElement as HTMLElement).setPointerCapture(e.pointerId);
