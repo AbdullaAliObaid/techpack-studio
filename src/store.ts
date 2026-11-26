@@ -197,10 +197,17 @@ interface State {
   rename: (name: string) => void;
 }
 
+/** Garments with a collar store the collar position explicitly (folded down unless chosen), which turns on the
+ *  collar fold in the simulation. Projects saved before the option existed get 'down' when loaded. */
+function withCollar(p: Project): Project {
+  if (!p.pieces.some((q) => q.role === 'collar') || p.edits?.collar) return p;
+  return { ...p, edits: { ...(p.edits ?? EMPTY_EDITS), collar: 'down' } };
+}
+
 /** A new project for any catalog style, drafted on the given body in the style's default fabric. */
 export function freshProject(id: StyleId, name?: string, body: Body = DEFAULT_BODY): Project {
   const g = migrateGarment(id);
-  return { id: uid(), name: name ?? `Untitled ${GARMENT_LABEL[g].toLowerCase()}`, garment: g, pieces: makePreset(g, body), body: { ...body }, linkPattern: true, fit: 'regular', updatedAt: Date.now() };
+  return withCollar({ id: uid(), name: name ?? `Untitled ${GARMENT_LABEL[g].toLowerCase()}`, garment: g, pieces: makePreset(g, body), body: { ...body }, linkPattern: true, fit: 'regular', updatedAt: Date.now() });
 }
 
 /** Regrade every piece from one body to another, keeping the user's edits as offsets. */
@@ -431,7 +438,7 @@ export const useStore = create<State>((set, get) => {
 
     newProject: (id) => set((s) => ({ project: freshProject(id, undefined, s.project.body), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
     // older saves stored 'jacket' | 'shirt' | 'pants'; map them onto catalog styles
-    loadProject: (p) => set((s) => ({ project: { ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }, past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
+    loadProject: (p) => set((s) => ({ project: withCollar({ ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
     rename: (name) => set((s) => ({ project: { ...s.project, name, updatedAt: Date.now() } })),
 
     // ---- edits ----

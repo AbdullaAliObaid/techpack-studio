@@ -464,8 +464,14 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
       const flip = (info?.flip ?? false) !== (face === 'inside');
       const own = info?.attachId ?? (hasPanel.has(pid) ? pid : undefined);
       const mine = list.filter((a) => {
+        // an attachment's own panel: the worker's panelSign points at its show face (towards the body for an inside
+        // tag or patch), so its own artwork always goes on that panel's 'outside' layer; designs placed onto it use
+        // their face relative to the attachment
+        if (own) {
+          if ((a.id === own ? 'outside' : a.face ?? 'outside') !== face) return false;
+          return a.id === own || (a.pieceId === own && (a.kind === 'print' || a.kind === 'embroidery'));
+        }
         if ((a.face ?? 'outside') !== face) return false;
-        if (own) return a.id === own || (a.pieceId === own && (a.kind === 'print' || a.kind === 'embroidery'));
         if (a.pieceId !== pid) return false;
         if (a.instance !== undefined && a.instance !== instance) return false;
         if (a.kind === 'print' || a.kind === 'embroidery') return true;

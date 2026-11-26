@@ -41,7 +41,7 @@ export default function ConstructionPanel() {
   const edits = project.edits;
   const pieces = project.pieces;
   const refName = useRefName();
-  const seams = useMemo(() => builtinSeams(project.garment, pieces), [project.garment, pieces]);
+  const seams = useMemo(() => builtinSeams(project.garment, pieces, project.edits), [project.garment, pieces, project.edits]);
   const detached = new Set(edits?.detachedSeams ?? []);
   // seams that share a group (both halves of a sleeve cap) show as one row and toggle together
   const rows = useMemo(() => {

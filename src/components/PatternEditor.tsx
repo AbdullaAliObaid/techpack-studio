@@ -83,7 +83,7 @@ export default function PatternEditor() {
   const instOf = (e: Entry) => (e.both ? e.inst : undefined);
 
   // ---- seam runs to draw, grouped by piece ------------------------------
-  const seamList = useMemo(() => builtinSeams(project.garment, pieces), [project.garment, pieces]);
+  const seamList = useMemo(() => builtinSeams(project.garment, pieces, project.edits), [project.garment, pieces, project.edits]);
   const runsByPiece = useMemo(() => {
     const m = new Map<string, Run[]>();
     const add = (r: Run) => m.set(r.ref.pieceId, [...(m.get(r.ref.pieceId) ?? []), r]);
