@@ -328,23 +328,11 @@ export class BodyField {
 
   /** Smooth skin weights for a surface vertex: up to 3 bones, blended across the joints. */
   skin(x: number, y: number, z: number): [number[], number[]] {
-    const f = this.f;
-    const sm = (a: number, b: number, v: number) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
     const c = this.chainAt(x, y, z);
-    if (c === 0) {
-      // the spine bends over the lumbar region, the head turns over the upper neck
-      const chest = sm(f.waistH - 0.04 * f.H, f.waistH + 0.05 * f.H, y), head = sm(f.neckH + 0.004 * f.H, f.headY + 0.01 * f.H, y);
-      return [[0, 9, 10], [1 - chest, chest * (1 - head), chest * head]];
-    }
-    if (c <= 2) {
-      const side = c === 1 ? 1 : -1, up = side > 0 ? 1 : 3;
-      const s = this.armS(side, x, y, z);
-      const root = sm(-f.armDome - 1, 4, s), fore = sm(f.upperArm - 3, f.upperArm + 3, s);
-      return [[9, up, up + 1], [1 - root, root * (1 - fore), root * fore]];
-    }
-    const th = c === 3 ? 5 : 7;
-    const root = sm(f.hipJointH + 4, f.crotchH - 3, y), shin = sm(f.kneeH + 3, f.kneeH - 3, y);
-    return [[0, th, th + 1], [1 - root, root * (1 - shin), root * shin]];
+    const s = c === 1 || c === 2 ? this.armS(c === 1 ? 1 : -1, x, y, z) : 0;
+    const bones = [0, 0, 0], w = [0, 0, 0];
+    chainWeights(this.f, c, y, s, bones, w);
+    return [bones, w];
   }
 
   grad(x: number, y: number, z: number, out: Float64Array) {
@@ -376,6 +364,34 @@ export class BodyField {
     }
     return hullLength(pts);
   }
+}
+
+const smooth = (a: number, b: number, v: number) => { const t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+/**
+ * Skin weights of a point on a chain (0 torso, 1 / 2 arm +x / -x, 3 / 4 leg +x / -x): 3 bones and weights.
+ * y is the height, s the distance down the arm from the shoulder joint (arms only). Shared by the body mesh
+ * (BodyField.skin) and the posed collider, so the cloth collides with exactly the surface that is drawn.
+ */
+export function chainWeights(f: BodyFrame, c: number, y: number, s: number, bones: number[] | Uint8Array, w: number[] | Float64Array) {
+  const sm = smooth;
+  if (c === 0) {
+    // the spine bends over the lumbar region, the head turns over the upper neck
+    const chest = sm(f.waistH - 0.04 * f.H, f.waistH + 0.05 * f.H, y), head = sm(f.neckH + 0.004 * f.H, f.headY + 0.01 * f.H, y);
+    bones[0] = 0; bones[1] = 9; bones[2] = 10;
+    w[0] = 1 - chest; w[1] = chest * (1 - head); w[2] = chest * head;
+    return;
+  }
+  if (c <= 2) {
+    const up = c === 1 ? 1 : 3;
+    const root = sm(-f.armDome - 1, 4, s), fore = sm(f.upperArm - 3, f.upperArm + 3, s);
+    bones[0] = 9; bones[1] = up; bones[2] = up + 1;
+    w[0] = 1 - root; w[1] = root * (1 - fore); w[2] = root * fore;
+    return;
+  }
+  const th = c === 3 ? 5 : 7;
+  const root = sm(f.hipJointH + 4, f.crotchH - 3, y), shin = sm(f.kneeH + 3, f.kneeH - 3, y);
+  bones[0] = 0; bones[1] = th; bones[2] = th + 1;
+  w[0] = 1 - root; w[1] = root * (1 - shin); w[2] = root * shin;
 }
 
 /** Build a field whose surface tape-measures exactly to the body's girths. */

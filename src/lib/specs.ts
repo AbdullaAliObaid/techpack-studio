@@ -1,7 +1,10 @@
 import type { Piece, SpecDef, GarmentType } from '../data/presets';
 import { bbox, bezAt, bezTangent, dist, outlineLength, samplePoly, sliceSpan, toBeziers, type Pt } from './geometry';
 import type { Attachment, Edits, Pleat } from '../data/edits';
-import { outlinePolygon } from './shapes';
+import { attachmentPolygons, outlinePolygon, SHAPES } from './shapes';
+import { instanceLabel } from '../sim/seams';
+import { fabricById } from '../data/fabrics';
+import type { StyleId } from '../data/catalog';
 import { derivedGirths, EASE, RIB, frontOffset, neckBase } from '../data/draft';
 import { migrateGarment, styleById } from '../data/catalog';
 import { bodyFrame, type Body } from '../three/body';
@@ -308,8 +311,8 @@ export function seamReport(type: GarmentType, pieces: Piece[], edits?: Edits): S
       if (!pa || !pb) continue;
       out.push({ label: `Custom seam (${name(pa.id)} / ${name(pb.id)})`, a: sewnLength(pa, cs.a.fromId, cs.a.toId, edits), b: sewnLength(pb, cs.b.fromId, cs.b.toId, edits), seams: [cs.id] });
     }
-    for (const r of attachmentReport(pieces, edits)) {
-      if (r.kind === 'print') continue;
+    for (const r of attachmentReport(pieces, edits, migrateGarment(type))) {
+      if (r.kind === 'print' || r.sewnLength <= 0) continue;
       out.push({ label: `${r.name} on ${r.host} (${r.stitched})`, a: r.sewnLength, b: r.sewnLength, attachment: r.id });
     }
     return out;
@@ -333,32 +336,54 @@ export interface AttachmentRow {
   layers: number;
   /** how it is sewn on, in plain words */
   stitched: string;
-  /** stitched length (cm); 0 for a print */
+  /** stitched length (cm) per copy; 0 for a print, embroidery or hardware */
   sewnLength: number;
   /** copies on the garment: a piece cut twice carries it on both sides unless one side is chosen */
   copies: number;
+  /** which copy of the host it is on, in plain words: 'Right back leg', 'Both sleeves', 'Front' */
+  side: string;
+  /** cloth pieces cut per copy (an applique of text: one per letter); 0 when it adds no cloth */
+  cutPieces: number;
 }
 
 const perimeter = (pts: Pt[]) => pts.reduce((s, q, i) => s + dist(q, pts[(i + 1) % pts.length]), 0);
 
-/** Attachments (pockets, patches, straps, prints) and user pieces patched on, for the spec sheet. */
-export function attachmentReport(pieces: Piece[], edits?: Edits): AttachmentRow[] {
+/** copies of a host piece on the body (pieces cut twice are a pair; a crown has 6); without a style, from the cut count */
+function hostCopies(style: StyleId | undefined, host: Piece | undefined) {
+  if (!host) return 1;
+  if (style) return instanceLabel(style, host) === host.name ? 1 : host.role === 'crown' ? 6 : 2;
+  return host.cut;
+}
+function sideLabel(style: StyleId | undefined, host: Piece | undefined, instance: number | undefined) {
+  if (!host) return 'missing piece';
+  if (style) return instanceLabel(style, host, instance);
+  if (host.cut <= 1) return host.name;
+  return instance === undefined ? `${host.name}, every copy` : `${host.name}, ${instance === 1 ? 'left' : 'right'}`;
+}
+
+/** Attachments (pockets, patches, appliques, straps, embroidery, prints, hardware) and user pieces patched on, for the spec sheet. */
+export function attachmentReport(pieces: Piece[], edits?: Edits, style?: StyleId): AttachmentRow[] {
   const rows: AttachmentRow[] = [];
   for (const a of edits?.attachments ?? []) {
     const host = pieces.find((p) => p.id === a.pieceId);
-    const poly = outlinePolygon(a.outline, a.w, a.h, a.points);
-    const P = perimeter(poly);
+    const rings = attachmentPolygons(a);
+    const poly = rings[0] ?? outlinePolygon(a.outline, a.w, a.h, a.points);
+    const P = rings.reduce((sum, r) => sum + perimeter(r), 0);
     const top = poly.filter((q) => q.y < Math.min(...poly.map((r) => r.y)) + 0.05);
     const mouth = top.length >= 2 ? Math.max(...top.map((q) => q.x)) - Math.min(...top.map((q) => q.x)) : 0;
     const short = Math.min(a.w, a.h);
     const [stitched, sewn] = a.kind === 'pocket' ? ['3 sides, top open', P - mouth]
       : a.kind === 'strap' ? ['both ends', 2 * short]
       : a.kind === 'patch' ? ['all round', P]
+      : a.kind === 'applique' ? ['satin stitch all round', P]
+      : a.kind === 'embroidery' ? ['embroidered into the piece', 0]
+      : a.kind === 'hardware' ? [a.hardware?.type === 'zipper' ? 'zip sewn in' : 'set through the fabric', a.hardware?.type === 'zipper' ? 2 * a.h : 0]
       : ['printed', 0];
-    const cut = host?.cut ?? 1;
+    const cloth = a.kind === 'pocket' || a.kind === 'patch' || a.kind === 'applique' || a.kind === 'strap';
     rows.push({
       id: a.id, name: a.name, kind: a.kind, host: host?.name ?? 'missing piece', w: a.w, h: a.h, x: a.x, y: a.y, rotation: a.rotation,
-      layers: a.layers.length, stitched, sewnLength: sewn, copies: a.instance !== undefined ? 1 : cut,
+      layers: a.layers.length, stitched, sewnLength: sewn, copies: a.instance !== undefined ? 1 : hostCopies(style, host),
+      side: sideLabel(style, host, a.instance), cutPieces: cloth ? rings.length : 0,
     });
   }
   for (const p of pieces) {
@@ -368,8 +393,71 @@ export function attachmentReport(pieces: Piece[], edits?: Edits): AttachmentRow[
     const bb = bbox(p.points);
     rows.push({
       id: p.id, name: p.name, kind: 'patch', host: host?.name ?? 'missing piece', w: bb.w, h: bb.h, x: pl.x ?? 0, y: pl.y ?? 0, rotation: pl.rotation ?? 0,
-      layers: 0, stitched: 'all round', sewnLength: perimeter(samplePoly(p.points, 12)), copies: host?.cut ?? 1,
+      layers: 0, stitched: 'all round', sewnLength: perimeter(samplePoly(p.points, 12)), copies: pl.instance !== undefined ? 1 : hostCopies(style, host),
+      side: sideLabel(style, host, pl.instance), cutPieces: 1,
     });
+  }
+  return rows;
+}
+
+export interface TrimRow {
+  /** 'hardware' | 'embroidery' | 'applique' */
+  kind: string;
+  item: string;
+  detail: string;
+  /** piece and side, e.g. 'Right back leg' */
+  placement: string;
+  qty: number;
+}
+
+const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+const HW_NAME: Record<string, string> = { rivet: 'Rivet', eyelet: 'Eyelet', stud: 'Stud', button: 'Button', snap: 'Snap fastener', zipper: 'Zip' };
+
+/**
+ * Trims from the edits for the bill of materials: hardware by type, finish, size, count and placement;
+ * embroidery with thread colour and size; appliques with fabric, shape and size. Identical trims on the
+ * same placement are added up.
+ */
+export function trimsReport(pieces: Piece[], edits?: Edits, style?: StyleId): TrimRow[] {
+  const rows: TrimRow[] = [];
+  const push = (r: TrimRow) => {
+    const same = rows.find((q) => q.kind === r.kind && q.item === r.item && q.detail === r.detail && q.placement === r.placement);
+    if (same) same.qty += r.qty; else rows.push(r);
+  };
+  for (const a of edits?.attachments ?? []) {
+    const host = pieces.find((p) => p.id === a.pieceId);
+    const placement = sideLabel(style, host, a.instance);
+    const copies = a.instance !== undefined ? 1 : hostCopies(style, host);
+    if (a.kind === 'hardware' && a.hardware) {
+      const h = a.hardware;
+      if (h.type === 'zipper') {
+        push({ kind: 'hardware', item: 'Zip', detail: `${cap(h.finish)}, ${round1(a.h)} cm long, ${round1(h.size * 10)} mm tape, ${h.open ? 'open' : 'closed'}`, placement, qty: copies });
+      } else {
+        push({ kind: 'hardware', item: HW_NAME[h.type] ?? cap(h.type), detail: `${cap(h.finish)}, ${round1(h.size * 10)} mm`, placement, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
+      }
+    } else if (a.kind === 'embroidery') {
+      push({ kind: 'embroidery', item: 'Embroidery', detail: `Thread ${a.thread ?? 'colour matched'}, ${round1(a.w)} x ${round1(a.h)} cm${a.text ? `, "${a.text}"` : ''}`, placement, qty: copies });
+    } else if (a.kind === 'applique') {
+      const fab = fabricById((a.fabric ?? host?.fabric)?.id ?? 'cotton');
+      const shape = a.shape === 'text' ? `letters "${a.text ?? ''}"` : SHAPES[a.shape ?? 'rect']?.name.toLowerCase() ?? 'shape';
+      push({ kind: 'applique', item: 'Applique', detail: `${fab.name}, ${shape}, ${round1(a.w)} x ${round1(a.h)} cm${a.thread ? `, thread ${a.thread}` : ''}`, placement, qty: copies });
+    }
+  }
+  return rows;
+}
+const round1 = (v: number) => Math.round(v * 10) / 10;
+
+export interface CutRow { name: string; fabric: string; cut: number; note?: string }
+
+/** Cut list: every pattern piece with its cut count, then the cloth attachments (pockets, patches, straps, appliques). */
+export function cutList(pieces: Piece[], edits?: Edits, style?: StyleId): CutRow[] {
+  const rows: CutRow[] = pieces.filter((p) => !(p.role === 'custom' && p.placement?.mode === 'patch')).map((p) => ({ name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut }));
+  for (const r of attachmentReport(pieces, edits, style)) {
+    if (!r.cutPieces) continue;
+    const a = edits?.attachments.find((q) => q.id === r.id);
+    const up = pieces.find((p) => p.id === r.id);
+    const fab = fabricById((a?.fabric ?? up?.fabric ?? pieces.find((p) => p.name === r.host)?.fabric)?.id ?? 'cotton');
+    rows.push({ name: r.name, fabric: fab.name, cut: r.cutPieces * r.copies, note: `${cap(r.kind)} on ${r.side}${r.cutPieces > 1 ? `, ${r.cutPieces} letters each` : ''}` });
   }
   return rows;
 }
@@ -377,6 +465,8 @@ export function attachmentReport(pieces: Piece[], edits?: Edits): AttachmentRow[
 export interface PleatRow {
   id: string;
   piece: string;
+  /** which copy of the piece: 'Right front leg', 'Both front legs' */
+  side: string;
   type: Pleat['type'];
   depth: number;
   intake: number;
@@ -385,12 +475,12 @@ export interface PleatRow {
   at: string;
 }
 
-export function pleatReport(pieces: Piece[], edits?: Edits): PleatRow[] {
+export function pleatReport(pieces: Piece[], edits?: Edits, style?: StyleId): PleatRow[] {
   return (edits?.pleats ?? []).flatMap((pl) => {
     const p = pieces.find((q) => q.id === pl.pieceId);
     if (!p) return [];
     const i = p.points.findIndex((q) => q.id === pl.pointId);
-    return [{ id: pl.id, piece: p.name, type: pl.type, depth: pl.depth, intake: pleatIntake(pl), length: pl.length, at: `point ${i + 1}, ${Math.round(pl.t * 100)}% along` }];
+    return [{ id: pl.id, piece: p.name, side: sideLabel(style, p, pl.instance), type: pl.type, depth: pl.depth, intake: pleatIntake(pl), length: pl.length, at: `point ${i + 1}, ${Math.round(pl.t * 100)}% along` }];
   });
 }
 
@@ -471,6 +561,29 @@ export function attachmentOutline(a: Attachment, n = 48): Pt[] {
   return outlinePolygon(a.outline, a.w, a.h, a.points, n).map((q) => ({ x: a.x + q.x * c - q.y * s, y: a.y + q.x * s + q.y * c }));
 }
 
+/** Placement outlines of an attachment on its host (one per letter for a text applique), host local coords (cm). */
+export function attachmentOutlines(a: Attachment): Pt[][] {
+  const c = Math.cos((a.rotation * Math.PI) / 180), s = Math.sin((a.rotation * Math.PI) / 180);
+  return attachmentPolygons(a).map((r) => r.map((q) => ({ x: a.x + q.x * c - q.y * s, y: a.y + q.x * s + q.y * c })));
+}
+
+/**
+ * Hardware placement marks on a host piece (host local coords, cm): a point per trim (rivets, buttons ...)
+ * and a line for a zip.
+ */
+export function hardwareMarks(p: Piece, edits?: Edits): { name: string; type: string; points: { at: Pt; r: number }[]; line?: [Pt, Pt] }[] {
+  const out: { name: string; type: string; points: { at: Pt; r: number }[]; line?: [Pt, Pt] }[] = [];
+  for (const a of edits?.attachments ?? []) {
+    if (a.pieceId !== p.id || a.kind !== 'hardware' || !a.hardware) continue;
+    const h = a.hardware, c = Math.cos((a.rotation * Math.PI) / 180), s = Math.sin((a.rotation * Math.PI) / 180);
+    const T = (q: Pt): Pt => ({ x: a.x + q.x * c - q.y * s, y: a.y + q.x * s + q.y * c });
+    if (h.type === 'zipper') { out.push({ name: a.name, type: h.type, points: [], line: [T({ x: 0, y: -a.h / 2 }), T({ x: 0, y: a.h / 2 })] }); continue; }
+    const n = Math.max(1, Math.round(h.count ?? 1)), sp = h.spacing ?? Math.max(1.5, h.size * 2);
+    out.push({ name: a.name, type: h.type, points: Array.from({ length: n }, (_, k) => ({ at: T({ x: (k - (n - 1) / 2) * sp, y: 0 }), r: Math.max(0.1, h.size / 2) })) });
+  }
+  return out;
+}
+
 /** Placement outline of a user piece patched onto its host (host local pattern coords, cm), or null. */
 export function patchOutline(p: Piece): { host: string; pts: Pt[] } | null {
   const pl = p.placement;
@@ -483,7 +596,11 @@ export function patchOutline(p: Piece): { host: string; pts: Pt[] } | null {
 /** Everything the cutting room marks on a piece for the edits: placement outlines with a centre mark, pleat folds and notches. */
 export function placementMarks(p: Piece, pieces: Piece[], edits?: Edits) {
   const outlines: { name: string; kind: string; pts: Pt[]; centre: Pt }[] = [];
-  for (const a of edits?.attachments ?? []) if (a.pieceId === p.id) outlines.push({ name: a.name, kind: a.kind, pts: attachmentOutline(a), centre: { x: a.x, y: a.y } });
+  for (const a of edits?.attachments ?? []) {
+    if (a.pieceId !== p.id) continue;
+    if (a.kind === 'hardware') continue; // hardware is marked as points (hardwareMarks), not an outline
+    attachmentOutlines(a).forEach((pts, i) => outlines.push({ name: i ? '' : a.name, kind: a.kind, pts, centre: { x: a.x, y: a.y } }));
+  }
   for (const q of pieces) {
     const po = patchOutline(q);
     if (po && po.host === p.id) outlines.push({ name: q.name, kind: 'patch', pts: po.pts, centre: { x: q.placement!.x ?? 0, y: q.placement!.y ?? 0 } });

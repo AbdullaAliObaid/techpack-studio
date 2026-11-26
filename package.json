@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "tsx tests/accuracy.ts",
     "test:drape": "tsx tests/drape.ts",
-    "test:motion": "tsx tests/motion.ts"
+    "test:motion": "tsx tests/motion.ts",
+    "test:clip": "tsx tests/clip.ts"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",

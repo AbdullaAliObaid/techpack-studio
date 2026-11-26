@@ -8,7 +8,7 @@ import { styleById, type StyleId } from '../data/catalog';
 import { fabricById } from '../data/fabrics';
 import { BODY_FIELDS, limbGirths } from '../three/body';
 import { bbox, centroid, offsetInward, samplePoly } from './geometry';
-import { attachmentReport, fitTable, garmentSpecs, pieceSpecs, placementMarks, pleatReport, seamReport } from './specs';
+import { attachmentReport, cutList, fitTable, garmentSpecs, hardwareMarks, pieceSpecs, placementMarks, pleatReport, seamReport, trimsReport } from './specs';
 import { toUnit, type Units } from './units';
 
 const W = 297, H = 210, M = 12;
@@ -96,7 +96,12 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
     doc.setDrawColor(ACCENT).setLineWidth(0.2).setLineDashPattern([0.8, 0.6], 0);
     for (const m of marks.outlines) path(m.pts.map(P), 'S');
     doc.setLineDashPattern([], 0);
+    for (const h of hardwareMarks(pc, p.edits)) {
+      if (h.line) { const A = P(h.line[0]), B = P(h.line[1]); doc.setLineWidth(0.4).line(A.x, A.y, B.x, B.y).setLineWidth(0.2); continue; }
+      for (const { at, r } of h.points) { const c = P(at); doc.circle(c.x, c.y, Math.max(0.4, r * s), 'S'); }
+    }
     for (const m of marks.outlines) {
+      if (!m.name) continue;
       const c = P(m.centre);
       doc.line(c.x - 1, c.y, c.x + 1, c.y).line(c.x, c.y - 1, c.x, c.y + 1);
       doc.setFont('helvetica', 'normal').setFontSize(5.5).setTextColor(ACCENT).text(m.name, c.x + 1.2, c.y - 1.2);
@@ -141,25 +146,26 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
     ...fabrics.map((fb) => { const f = fabricById(fb.id); return [`Shell fabric: ${f.name}`, `${f.colors[fb.color]?.name ?? ''}, ${f.gsm} gsm, 150 cm wide`, `${metres.toFixed(2)} m`]; }),
     ['Thread', 'Polyester core-spun, colour matched', '1 cone'],
     ...trims(p.garment),
+    // trims the user added: hardware, embroidery, appliques, with where they go
+    ...trimsReport(p.pieces, p.edits, p.garment).map((t) => [t.item, `${t.detail}; ${t.placement}`, String(t.qty)]),
     ['Care label', 'Woven', '1'],
   ], 'Bill of materials');
   table(doc, M, y + 4, [{ title: 'Seam', w: 60 }, { title: 'Stitch', w: 70 }, { title: 'Allowance', w: 30, align: 'right' }],
     seamReport(p.garment, p.pieces, p.edits).map((r) => [r.label.replace(' (front / back)', ''), r.attachment ? 'Lockstitch 301, edge stitched' : r.ease !== undefined ? 'Lockstitch 301, ease distributed' : 'Lockstitch 301 + overlock 504', r.attachment ? '' : u(1) + ' ' + U]), 'Construction');
 
-  // ---- 5. attachments and pleats ----
-  const atts = attachmentReport(p.pieces, p.edits), pls = pleatReport(p.pieces, p.edits);
-  if (atts.length || pls.length) {
-    doc.addPage();
-    frame(doc, p, 5, 'Attachments & pleats');
-    let ya = 26;
-    if (atts.length) {
-      ya = table(doc, M, ya, [{ title: 'Name', w: 40 }, { title: 'Kind', w: 18 }, { title: 'On piece', w: 32 }, { title: `Size ${U}`, w: 26, align: 'right' }, { title: `Centre x / y ${U}`, w: 30, align: 'right' }, { title: 'Rotation', w: 18, align: 'right' }, { title: 'Sewn', w: 34 }, { title: 'Artwork layers', w: 26, align: 'right' }, { title: 'Qty', w: 12, align: 'right' }],
-        atts.map((r) => [r.name, r.kind, r.host, `${u(r.w)} x ${u(r.h)}`, `${u(r.x)} / ${u(r.y)}`, `${Math.round(r.rotation)}°`, r.stitched, String(r.layers), String(r.copies)]), 'Attachments');
-    }
-    if (pls.length) {
-      table(doc, M, ya + 4, [{ title: 'Piece', w: 40 }, { title: 'Type', w: 22 }, { title: `Depth ${U}`, w: 22, align: 'right' }, { title: `Intake ${U}`, w: 22, align: 'right' }, { title: `Stitched ${U}`, w: 24, align: 'right' }, { title: 'Position', w: 50 }],
-        pls.map((r) => [r.piece, r.type, u(r.depth), u(r.intake), u(r.length), r.at]), 'Pleats');
-    }
+  // ---- 5. cut list, attachments and pleats ----
+  const atts = attachmentReport(p.pieces, p.edits, p.garment), pls = pleatReport(p.pieces, p.edits, p.garment);
+  doc.addPage();
+  frame(doc, p, 5, 'Cut list, attachments & pleats');
+  let ya = table(doc, M, 26, [{ title: 'Piece', w: 50 }, { title: 'Fabric', w: 40 }, { title: 'Cut', w: 14, align: 'right' }, { title: 'Note', w: 90 }],
+    cutList(p.pieces, p.edits, p.garment).map((r) => [r.name, r.fabric, String(r.cut), r.note ?? '']), 'Cut list');
+  if (atts.length) {
+    ya = table(doc, M, ya + 4, [{ title: 'Name', w: 36 }, { title: 'Kind', w: 18 }, { title: 'Placement', w: 38 }, { title: `Size ${U}`, w: 24, align: 'right' }, { title: `Centre x / y ${U}`, w: 28, align: 'right' }, { title: 'Rotation', w: 16, align: 'right' }, { title: 'Sewn', w: 38 }, { title: 'Artwork layers', w: 24, align: 'right' }, { title: 'Qty', w: 12, align: 'right' }],
+      atts.map((r) => [r.name, r.kind, r.side, `${u(r.w)} x ${u(r.h)}`, `${u(r.x)} / ${u(r.y)}`, `${Math.round(r.rotation)}°`, r.stitched, String(r.layers), String(r.copies)]), 'Attachments');
+  }
+  if (pls.length) {
+    table(doc, M, ya + 4, [{ title: 'Piece', w: 40 }, { title: 'Side', w: 34 }, { title: 'Type', w: 22 }, { title: `Depth ${U}`, w: 22, align: 'right' }, { title: `Intake ${U}`, w: 22, align: 'right' }, { title: `Stitched ${U}`, w: 24, align: 'right' }, { title: 'Position', w: 50 }],
+      pls.map((r) => [r.piece, r.side, r.type, u(r.depth), u(r.intake), u(r.length), r.at]), 'Pleats');
   }
 
   doc.save(`${p.name.replace(/[^a-z0-9]+/gi, '_')}_techpack.pdf`);
