@@ -10,12 +10,14 @@
 // Units: millimetres. Each piece is placed where it sits in the editor; cloth attachments (pockets,
 // patches, straps, appliques: one piece per letter for text) are cut pieces of their own, laid out to the
 // right of the pattern. Placement on a left or right copy is written next to the mark.
+// Clothing tags (labels) are cut pieces too (a folded loop cut twice as long), except leather and rubber tags, which
+// are bought finished: those get only their placement mark, written as a bought trim.
 
 import type { Piece } from '../data/presets';
 import type { Edits } from '../data/edits';
 import type { StyleId } from '../data/catalog';
 import { bbox, centroid, offsetInward, samplePoly, type Pt } from './geometry';
-import { attachmentReport, hardwareMarks, placementMarks } from './specs';
+import { attachmentReport, hardwareMarks, labelReport, placementMarks } from './specs';
 import { attachmentPolygons } from './shapes';
 
 const MM = 10;
@@ -58,6 +60,7 @@ export function piecesToDxf(pieces: Piece[], meta: { project: string; size: stri
     const o = (q: Pt) => ({ x: q.x + p.offset.x, y: q.y + p.offset.y });
     const marks = placementMarks(p, pieces, edits);
     const rows = attachmentReport(pieces, edits, style);
+    const tagRows = labelReport(pieces, edits, style);
     for (const m of marks.outlines) {
       polyline(L, '8', m.pts.map(o), true);
       if (!m.name) continue; // further letters of a text applique: outline only
@@ -65,7 +68,8 @@ export function piecesToDxf(pieces: Piece[], meta: { project: string; size: stri
       polyline(L, '8', [{ x: c.x - 0.5, y: c.y }, { x: c.x + 0.5, y: c.y }], false);
       polyline(L, '8', [{ x: c.x, y: c.y - 0.5 }, { x: c.x, y: c.y + 0.5 }], false);
       const side = rows.find((r) => r.name === m.name && r.host === p.name)?.side;
-      text(L, { x: c.x + 0.8, y: c.y - 0.8 }, 0.8, `${m.name.toUpperCase()} PLACEMENT${side && side !== p.name ? ` (${side.toUpperCase()})` : ''}`);
+      const tag = m.kind === 'label' ? tagRows.find((t) => t.name === m.name) : undefined;
+      text(L, { x: c.x + 0.8, y: c.y - 0.8 }, 0.8, `${m.name.toUpperCase()} PLACEMENT${side && side !== p.name ? ` (${side.toUpperCase()})` : ''}${tag ? ` ${tag.placement.split(', ').pop()!.toUpperCase()}${tag.purchased ? ', BOUGHT TRIM' : ''}` : ''}`);
     }
     // hardware: drill / placement marks, and zip lines
     for (const h of hardwareMarks(p, edits)) {
@@ -96,6 +100,12 @@ export function piecesToDxf(pieces: Piece[], meta: { project: string; size: stri
   const pb = all.length ? bbox(all) : { minX: 0, minY: 0, maxX: 0, w: 0, h: 0 };
   let x = pb.minX + pb.w + 20;
   const rows = attachmentReport(pieces, edits, style);
+  for (const t of labelReport(pieces, edits, style)) {
+    if (t.purchased) continue;
+    const sew = [{ x: x, y: pb.minY }, { x: x + t.cutW, y: pb.minY }, { x: x + t.cutW, y: pb.minY + t.cutH }, { x: x, y: pb.minY + t.cutH }];
+    cutPiece(sew, `${t.name} label`, t.qty);
+    x += t.cutW + 12;
+  }
   for (const a of edits?.attachments ?? []) {
     if (a.kind !== 'pocket' && a.kind !== 'patch' && a.kind !== 'applique' && a.kind !== 'strap') continue;
     const row = rows.find((r) => r.id === a.id);

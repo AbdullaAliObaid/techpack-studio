@@ -20,6 +20,18 @@ function pleatedJeans(): [Piece[], Edits] {
     pleats: [{ id: 'kp', pieceId: fr.id, pointId: fr.points.find((q) => q.key === 'front.0')!.id, t: 0.55, depth: 1.5, length: 7, type: 'knife', direction: 1 }] }];
 }
 
+/** polo with the collar popped up */
+const poppedPolo = (): [Piece[], Edits] => [makePreset('polo', DEFAULT_BODY), { ...EMPTY_EDITS, collar: 'up' }];
+/** tee with a folded neck tag caught in the back neck seam and a patch on the inside of the front */
+function taggedTee(): [Piece[], Edits] {
+  const pieces = makePreset('basic-tee', DEFAULT_BODY);
+  const bk = pieces.find((p) => p.role === 'back')!, fr = pieces.find((p) => p.role === 'front')!;
+  return [pieces, { ...EMPTY_EDITS, attachments: [
+    { id: 'nt', kind: 'label', name: 'Neck tag', pieceId: bk.id, x: 0, y: 3.4, rotation: 0, w: 5, h: 2.5, outline: 'rect', layers: [], label: { type: 'woven', sewn: 'folded-loop', color: '#111' } },
+    { id: 'ip', kind: 'patch', name: 'Inside patch', pieceId: fr.id, x: 8, y: 25, rotation: 0, w: 8, h: 8, outline: 'rect', layers: [], face: 'inside' },
+  ] }];
+}
+
 const f = bodyFrame(DEFAULT_BODY);
 const field = calibratedField(DEFAULT_BODY);
 const mesh = meshField(field);
@@ -29,6 +41,7 @@ const cases: [StyleId, Mode, (() => [Piece[], Edits])?][] = [
   ['basic-tee', 'jacks'], ['polo', 'cross'], ['boxy-tee', 'hug'], ['sweatpants', 'walk'], ['baggy-jeans', 'sit'], ['shorts', 'walk'],
   ['bucket-hat', 'jacks'], ['cap', 'walk'],
   ['jeans', 'walk', pleatedJeans],
+  ['polo', 'jacks', poppedPolo], ['basic-tee', 'hug', taggedTee],
 ];
 for (const [g, mode, make] of process.env.CUSTOM_ONLY ? ([] as typeof cases) : cases) {
   const col = new PosedCollider(mesh.grid, [f.ankleH + 6, f.crotchH + 1], f);

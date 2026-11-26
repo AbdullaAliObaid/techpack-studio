@@ -5,7 +5,9 @@
 // bone matrices: linear blend skinning). Samples are cloth vertices, edge midpoints and triangle centroids,
 // because a triangle can cut through the body between its vertices.
 //
-// Part 2: cloth attachments (pocket, patch, applique) never sit on the wrong side of their host cloth.
+// Part 2: cloth attachments (pocket, patch, applique, tag) never sit on the wrong side of their host cloth (outside
+// for face 'outside', between the host and the body for face 'inside').
+// Part 3: collars arranged down and up (Edits.collar) stay out of the body too.
 //
 // Env: STYLE=jeans only that style, BODY=male|female, QUICK=1 stand only, V=1 per case worst spots.
 import { makePreset, type Piece } from '../src/data/presets';
@@ -85,7 +87,8 @@ function wrongSide(G: Garment3D, B: PosedBody, id: string) {
       }
       signOf.set(hi, vote >= 0 ? 1 : -1);
     }
-    const sg = signOf.get(hi)!;
+    // an attachment on the inside face belongs on the body side of its host
+    const sg = signOf.get(hi)! * (A.attach!.face === 'inside' ? -1 : 1);
     for (let i = 0; i < A.mesh.uv.length; i++) {
       const j = (A.offset + i) * 3, x = pos[j], y = pos[j + 1], z = pos[j + 2];
       let best = Infinity, bq = [0, 0, 0], bt = -1;
@@ -204,6 +207,8 @@ const attCases: { label: string; style: StyleId; id: string; edits: (p: Piece[])
   { label: 'tee chest patch', style: 'basic-tee', id: 'cp', edits: (p) => ({ ...EMPTY_EDITS, attachments: [att({ id: 'cp', kind: 'patch', pieceId: p.find((q) => q.role === 'front')!.id, x: 11, y: 26, rotation: 10, w: 8, h: 8, outline: 'rounded' })] }) },
   { label: 'jacket elbow patch', style: 'jacket', id: 'ep', edits: (p) => { const s = p.find((q) => q.role === 'sleeve')!; const ys = s.points.map((q) => q.y); return { ...EMPTY_EDITS, attachments: [att({ id: 'ep', kind: 'patch', pieceId: s.id, x: 0, y: Math.min(...ys) + 0.62 * (Math.max(...ys) - Math.min(...ys)), w: 9, h: 12, outline: 'rounded' })] }; } },
   { label: 'tee applique star (back)', style: 'basic-tee', id: 'as', edits: (p) => ({ ...EMPTY_EDITS, attachments: [att({ id: 'as', kind: 'applique', pieceId: p.find((q) => q.role === 'back')!.id, x: 0, y: 22, w: 14, h: 14, outline: 'shape', shape: 'star' })] }) },
+  { label: 'tee patch on the inside (back)', style: 'basic-tee', id: 'ip', edits: (p) => ({ ...EMPTY_EDITS, attachments: [att({ id: 'ip', kind: 'patch', pieceId: p.find((q) => q.role === 'back')!.id, x: 0, y: 24, w: 10, h: 8, face: 'inside' })] }) },
+  { label: 'tee leather tag (back)', style: 'basic-tee', id: 'lt', edits: (p) => ({ ...EMPTY_EDITS, attachments: [att({ id: 'lt', kind: 'label', pieceId: p.find((q) => q.role === 'back')!.id, x: 0, y: 40, w: 6, h: 4, face: 'outside', label: { type: 'leather', sewn: 'all-round', color: '#7a4b2a' } })] }) },
 ];
 for (const [bname, body] of BODIES.slice(0, 1)) {
   const w = world(bname, body);
@@ -217,6 +222,21 @@ for (const [bname, body] of BODIES.slice(0, 1)) {
     const ok = r0.n > 0 && r0.wrong === 0 && r1.wrong === 0;
     if (!ok) fails++;
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${c.label.padEnd(30)} wrong side: stand ${r0.wrong}/${r0.n}${process.env.QUICK ? '' : `, walk ${r1.wrong}/${r1.n}`}  worst ${(Math.max(r0.worst, r1.worst) * 10).toFixed(1)} mm`);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// collars arranged down and up
+// ---------------------------------------------------------------------------------------------
+console.log('\n== collars down and up ==');
+for (const [bname, body] of BODIES.slice(0, 1)) {
+  const w = world(bname, body);
+  for (const style of ['polo', 'button-up'] as StyleId[]) for (const collar of ['down', 'up'] as const) {
+    const { G, M0 } = standing(w, style, makePreset(style, body), { ...EMPTY_EDITS, collar });
+    const r = clipOf(G, posed(w, M0));
+    const ok = r.inside / r.samples < STAND_MAX / 100 && r.maxDepth <= STAND_DEPTH;
+    if (!ok) fails++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${bname.padEnd(6)} ${style.padEnd(11)} collar ${collar.padEnd(4)}  inside ${pct(r.inside, r.samples).padStart(6)} of ${r.samples} samples, max depth ${(r.maxDepth * 10).toFixed(1)} mm${r.inside && (process.env.V || !ok) ? `  (${r.worst})` : ''}`);
   }
 }
 

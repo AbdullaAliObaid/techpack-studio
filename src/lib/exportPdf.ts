@@ -8,7 +8,7 @@ import { styleById, type StyleId } from '../data/catalog';
 import { fabricById } from '../data/fabrics';
 import { BODY_FIELDS, limbGirths } from '../three/body';
 import { bbox, centroid, offsetInward, samplePoly } from './geometry';
-import { attachmentReport, cutList, fitTable, garmentSpecs, hardwareMarks, pieceSpecs, placementMarks, pleatReport, seamReport, trimsReport } from './specs';
+import { attachmentReport, cutList, fitTable, garmentSpecs, hardwareMarks, labelReport, pieceSpecs, placementMarks, pleatReport, seamReport, trimsReport } from './specs';
 import { toUnit, type Units } from './units';
 
 const W = 297, H = 210, M = 12;
@@ -60,7 +60,8 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
     return [f.label + (p.body[f.key] === undefined ? ' (est.)' : ''), u(v)];
   });
   let y = table(doc, M, 56, [{ title: 'Body / fit model', w: 55 }, { title: U, w: 25, align: 'right' }], bodyRows, 'Fit model measurements');
-  const fabrics = [...new Map(p.pieces.map((pc) => [pc.fabric.id + pc.fabric.color, pc.fabric])).values()];
+  // shell fabrics, plus any fabric used on an inside face (under collar, placket facing)
+  const fabrics = [...new Map([...p.pieces.map((pc) => pc.fabric), ...Object.values(p.edits?.insideFabric ?? {})].map((fb) => [fb.id + fb.color, fb])).values()];
   table(doc, M + 90, 56, [{ title: 'Fabric', w: 40 }, { title: 'Colour', w: 30 }, { title: 'gsm', w: 15, align: 'right' }], fabrics.map((fb) => {
     const f = fabricById(fb.id);
     return [f.name, f.colors[fb.color]?.name ?? '', String(f.gsm)];
@@ -154,14 +155,19 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
     seamReport(p.garment, p.pieces, p.edits).map((r) => [r.label.replace(' (front / back)', ''), r.attachment ? 'Lockstitch 301, edge stitched' : r.ease !== undefined ? 'Lockstitch 301, ease distributed' : 'Lockstitch 301 + overlock 504', r.attachment ? '' : u(1) + ' ' + U]), 'Construction');
 
   // ---- 5. cut list, attachments and pleats ----
-  const atts = attachmentReport(p.pieces, p.edits, p.garment), pls = pleatReport(p.pieces, p.edits, p.garment);
+  const atts = attachmentReport(p.pieces, p.edits, p.garment), pls = pleatReport(p.pieces, p.edits, p.garment), tags = labelReport(p.pieces, p.edits, p.garment);
   doc.addPage();
   frame(doc, p, 5, 'Cut list, attachments & pleats');
   let ya = table(doc, M, 26, [{ title: 'Piece', w: 50 }, { title: 'Fabric', w: 40 }, { title: 'Cut', w: 14, align: 'right' }, { title: 'Note', w: 90 }],
     cutList(p.pieces, p.edits, p.garment).map((r) => [r.name, r.fabric, String(r.cut), r.note ?? '']), 'Cut list');
   if (atts.length) {
     ya = table(doc, M, ya + 4, [{ title: 'Name', w: 36 }, { title: 'Kind', w: 18 }, { title: 'Placement', w: 38 }, { title: `Size ${U}`, w: 24, align: 'right' }, { title: `Centre x / y ${U}`, w: 28, align: 'right' }, { title: 'Rotation', w: 16, align: 'right' }, { title: 'Sewn', w: 38 }, { title: 'Artwork layers', w: 24, align: 'right' }, { title: 'Qty', w: 12, align: 'right' }],
-      atts.map((r) => [r.name, r.kind, r.side, `${u(r.w)} x ${u(r.h)}`, `${u(r.x)} / ${u(r.y)}`, `${Math.round(r.rotation)}°`, r.stitched, String(r.layers), String(r.copies)]), 'Attachments');
+      atts.map((r) => [r.name, r.kind, r.side + (r.face ? ', inside' : ''), `${u(r.w)} x ${u(r.h)}`, `${u(r.x)} / ${u(r.y)}`, `${Math.round(r.rotation)}°`, r.stitched, String(r.layers), String(r.copies)]), 'Attachments');
+  }
+  if (tags.length) {
+    // clothing tags: material, finished and cut size, how they are sewn on and where
+    ya = table(doc, M, ya + 4, [{ title: 'Label', w: 30 }, { title: 'Material', w: 34 }, { title: `Size ${U}`, w: 22, align: 'right' }, { title: `Cut ${U}`, w: 22, align: 'right' }, { title: 'Sewn', w: 62 }, { title: 'Placement', w: 50 }, { title: 'Colour / finish', w: 34 }, { title: 'Qty', w: 12, align: 'right' }],
+      tags.map((t) => [t.name, t.material, `${u(t.w)} x ${u(t.h)}`, t.purchased ? 'bought' : `${u(t.cutW)} x ${u(t.cutH)}`, t.sewn, t.placement, `${t.color}, ${t.sheen}`, String(t.qty)]), 'Labels');
   }
   if (pls.length) {
     table(doc, M, ya + 4, [{ title: 'Piece', w: 40 }, { title: 'Side', w: 34 }, { title: 'Type', w: 22 }, { title: `Depth ${U}`, w: 22, align: 'right' }, { title: `Intake ${U}`, w: 22, align: 'right' }, { title: `Stitched ${U}`, w: 24, align: 'right' }, { title: 'Position', w: 50 }],

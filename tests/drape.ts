@@ -3,8 +3,8 @@
 import { makePreset } from '../src/data/presets';
 import { CATALOG } from '../src/data/catalog';
 import { DEFAULT_BODY, DEFAULT_BODY as MALE, FEMALE_BODY, bodyFrame } from '../src/three/body';
-import { assemble, type Garment3D } from '../src/sim/setup';
-import type { Edits } from '../src/data/edits';
+import { assemble, locate, type Garment3D } from '../src/sim/setup';
+import type { Attachment, Edits } from '../src/data/edits';
 import type { Piece } from '../src/data/presets';
 import type { StyleId } from '../src/data/catalog';
 import { calibratedField } from '../src/three/bodyField';
@@ -184,5 +184,110 @@ if (!only || only === 'edits') {
     verdict(ok, 'rivets and a closed zip drape without trouble');
   }
 }
+// ---- collar up / down, inside face, tags, button-down collar ----
+if (!only || only === 'collar') {
+  console.log('\n== collar ==');
+  /** centre back of the collar: neckline seam, highest point (the roll when down) and outer edge, heights over the neck base */
+  const collarCB = (G: Garment3D) => {
+    const C = G.panels.find((p) => p.piece.role === 'collar' && !p.attach)!, P = G.sim.pos;
+    const cH = C.piece.points.find((q) => q.key === 'collar.3')!.y;
+    const pick = (lo: number, hi: number) => C.mesh.uv.map((q, i) => ({ q, i: C.offset + i })).filter((e) => Math.abs(e.q.x) <= 3 && e.q.y >= lo && e.q.y <= hi);
+    const avg = (vs: { i: number }[], k: number) => vs.reduce((a, e) => a + P[e.i * 3 + k], 0) / vs.length;
+    const r = (vs: { i: number }[]) => vs.reduce((a, e) => a + Math.hypot(P[e.i * 3], P[e.i * 3 + 2]), 0) / vs.length;
+    const seam = pick(0, 0.05), edge = pick(cH - 0.05, cH + 1), all = pick(-1, 99);
+    // round the neck: every collar point within 13 cm of the neck axis, between the shoulders and the ears
+    let around = true;
+    for (let i = C.offset; i < C.offset + C.mesh.uv.length; i++) if (Math.hypot(P[i * 3], P[i * 3 + 2]) > 13 || P[i * 3 + 1] < f.neckH - 14 || P[i * 3 + 1] > f.neckH + 14) around = false;
+    return { cH, seam: avg(seam, 1) - f.neckH, seamR: r(seam), edge: avg(edge, 1) - f.neckH, edgeR: r(edge), top: Math.max(...all.map((e) => P[e.i * 3 + 1])) - f.neckH, around };
+  };
+  for (const st of ['polo', 'button-up', 'collared-tee', 'jacket'] as StyleId[]) {
+    for (const cs of ['down', 'up'] as const) {
+      const { ok, G } = drape(st, makePreset(st, DEFAULT_BODY), E({ collar: cs }), `${st} ${cs}`);
+      const c = collarCB(G);
+      const shape = cs === 'up'
+        // popped: the outer edge stands well above the seam and the neck base
+        ? c.edge - c.seam > 0.6 * c.cH && c.edge > 6
+        // down: folded at the roll line, the fall outside the stand and down to the seam or past it
+        : c.top - c.seam > 1.2 && c.edge < c.seam + 0.5 && c.edgeR > c.seamR;
+      verdict(ok && c.around && shape, `${st} collar ${cs}: round the neck ${c.around}, CB seam +${c.seam.toFixed(1)} cm, ${cs === 'down' ? `roll +${c.top.toFixed(1)}, ` : ''}outer edge ${c.edge >= 0 ? '+' : ''}${c.edge.toFixed(1)} cm (${(c.edgeR - c.seamR).toFixed(1)} cm out from the seam), collar ${c.cH.toFixed(1)} cm`);
+    }
+  }
+  {
+    // attachments on the collar stay put up and down: a patch on the top collar fall at centre back, embroidery on the stand
+    const pieces = makePreset('polo', DEFAULT_BODY);
+    const collar = pieces.find((p) => p.role === 'collar')!;
+    for (const cs of ['down', 'up'] as const) {
+      const edits = E({ collar: cs, attachments: [
+        { id: 'cp', kind: 'patch', name: 'Collar patch', pieceId: collar.id, x: 0, y: 5.5, rotation: 0, w: 4, h: 2, outline: 'rounded', layers: [] },
+        { id: 'uc', kind: 'patch', name: 'Under collar patch', pieceId: collar.id, x: 8, y: 5.5, rotation: 0, w: 3, h: 2, outline: 'rect', layers: [], face: 'inside' },
+      ] });
+      const { ok, G } = drape('polo', pieces, edits, `polo patch ${cs}`);
+      const a = staysOn(G, 'cp'), b = staysOn(G, 'uc');
+      verdict(ok && a.copies === 1 && a.worst < 1.5 && b.worst < 1.5, `collar ${cs}: top collar patch stays on (worst ${a.worst.toFixed(2)} cm), under collar patch stays on (worst ${b.worst.toFixed(2)} cm)`);
+    }
+  }
+  {
+    // inside face: a patch on the inside of the tee back stays on and between the back and the body
+    const pieces = makePreset('basic-tee', DEFAULT_BODY);
+    const back = pieces.find((p) => p.role === 'back')!;
+    const edits = E({ attachments: [{ id: 'ip', kind: 'patch', name: 'Inside patch', pieceId: back.id, x: 0, y: 24, rotation: 0, w: 10, h: 8, outline: 'rect', layers: [], face: 'inside' }] });
+    const { ok, G } = drape('basic-tee', pieces, edits, 'tee+inside');
+    const s = staysOn(G, 'ip');
+    const A = G.panels.find((p) => p.attach?.id === 'ip')!, H = G.panels[A.attach!.host];
+    // the back faces -z: inside is the +z side of the back cloth near it
+    let inner = 0;
+    for (let i = 0; i < A.mesh.uv.length; i++) {
+      let bj = 0, bd = Infinity;
+      for (let j = 0; j < H.mesh.uv.length; j++) { const d = dist(G, A.offset + i, H.offset + j); if (d < bd) { bd = d; bj = j; } }
+      if (G.sim.pos[(A.offset + i) * 3 + 2] > G.sim.pos[(H.offset + bj) * 3 + 2]) inner++;
+    }
+    verdict(ok && s.worst < 2 && inner / A.mesh.uv.length > 0.9, `inside patch stays on the back (worst ${s.worst.toFixed(2)} cm) and under it: ${inner} of ${A.mesh.uv.length} points between the back and the body`);
+  }
+  {
+    // a woven neck tag folded into the back neck seam, and a leather tag sewn all round on the back
+    const pieces = makePreset('basic-tee', DEFAULT_BODY);
+    const back = pieces.find((p) => p.role === 'back')!;
+    const edits = E({ attachments: [
+      { id: 'nt', kind: 'label', name: 'Neck tag', pieceId: back.id, x: 0, y: 3.4, rotation: 0, w: 5, h: 2.5, outline: 'rect', layers: [], label: { type: 'woven', sewn: 'folded-loop', color: '#111' } },
+      { id: 'lt', kind: 'label', name: 'Leather tag', pieceId: back.id, x: 0, y: 50, rotation: 0, w: 6, h: 4, outline: 'rect', layers: [], face: 'outside', label: { type: 'leather', sewn: 'all-round', color: '#7a4b2a' } },
+    ] });
+    const { ok, G } = drape('basic-tee', pieces, edits, 'tee+tags');
+    const a = staysOn(G, 'nt'), b = staysOn(G, 'lt');
+    const nt = G.panels.find((p) => p.attach?.id === 'nt')!;
+    verdict(ok && a.copies === 1 && a.worst < 2.5 && b.worst < 1.5 && nt.attach!.face === 'inside', `neck tag inside the back neck stays on (worst ${a.worst.toFixed(2)} cm, the fold hangs free), leather tag stays on (worst ${b.worst.toFixed(2)} cm)`);
+  }
+  {
+    // button-down collar: a button on each collar point buttons onto a button on the shirt front under it
+    const pieces = makePreset('button-up', DEFAULT_BODY);
+    const collar = pieces.find((p) => p.role === 'collar')!, front = pieces.find((p) => p.role === 'front')!;
+    const c2 = collar.points.find((q) => q.key === 'collar.2')!;
+    const bx = c2.x - 2.6, by = c2.y - 1.4;
+    const btn = (id: string, pieceId: string, x: number, y: number): Attachment => ({ id, kind: 'hardware', name: id, pieceId, x, y, rotation: 0, w: 1, h: 1, outline: 'rect', layers: [], hardware: { type: 'button', finish: 'white', size: 1.1, holes: 4 } });
+    const tips = [btn('cbr', collar.id, bx, by), btn('cbl', collar.id, -bx, by)];
+    // where the collar points come to rest on their own: the front buttons go there
+    const { G: G0 } = drape('button-up', pieces, E({ collar: 'down', attachments: tips }), 'shirt tips');
+    const C0 = G0.panels.find((p) => p.piece.role === 'collar')!, F0 = G0.panels.find((p) => p.piece.role === 'front')!;
+    const at3 = (P: typeof C0, x: number, y: number) => { const L = locate(P.mesh, { x, y }); return [0, 1, 2].map((k) => L.v.reduce((s2, v, n) => s2 + G0.sim.pos[(P.offset + v) * 3 + k] * L.w[n], 0)); };
+    const under = (x: number, y: number) => {
+      const p = at3(C0, x, y);
+      let bj = 0, bd = Infinity;
+      F0.mesh.uv.forEach((_, j) => { const q = F0.offset + j; const d = Math.hypot(G0.sim.pos[q * 3] - p[0], G0.sim.pos[q * 3 + 1] - p[1], G0.sim.pos[q * 3 + 2] - p[2]); if (d < bd) { bd = d; bj = j; } });
+      return { uv: F0.mesh.uv[bj], d: bd };
+    };
+    const ur = under(bx, by), ul = under(-bx, by);
+    const all = [...tips, btn('fbr', front.id, ur.uv.x, ur.uv.y), btn('fbl', front.id, ul.uv.x, ul.uv.y)];
+    const { ok, G } = drape('button-up', pieces, E({ collar: 'down', attachments: all }), 'button-down');
+    const pairs = Object.entries(G.seamLinks).filter(([k]) => k.startsWith('fasten:'));
+    const gaps = pairs.map(([, ls]) => ls.map(([i, j]) => dist(G, i, j))[0] ?? Infinity);
+    // the collar points stay on the shirt front
+    const C = G.panels.find((p) => p.piece.role === 'collar')!, F = G.panels.find((p) => p.piece.role === 'front')!;
+    const tipOff = [bx, -bx].map((x) => { const L = locate(C.mesh, { x, y: by }); const v = C.offset + L.v[L.w.indexOf(Math.max(...L.w))]; let bd = Infinity; for (let j = 0; j < F.mesh.uv.length; j++) bd = Math.min(bd, dist(G, v, F.offset + j)); return bd; });
+    verdict(ok && pairs.length === 2 && gaps.every((g) => g < 0.8) && tipOff.every((d) => d < 1.5), `button-down collar: ${pairs.length} collar points buttoned (gaps ${gaps.map((g) => g.toFixed(2)).join(', ')} cm), points ${tipOff.map((d) => d.toFixed(2)).join(' / ')} cm off the front (rest on their own ${ur.d.toFixed(2)} / ${ul.d.toFixed(2)} cm)`);
+    // popped up, the points are far from the front buttons: nothing buttons
+    const Gu = assemble('button-up', pieces, DEFAULT_BODY, SP, collider, E({ collar: 'up', attachments: all }))!;
+    verdict(!Object.keys(Gu.seamLinks).some((k) => k.startsWith('fasten:')), 'collar up: the collar point buttons do not reach the front buttons');
+  }
+}
+
 console.log(fails ? `\n${fails} FAILED` : '\nall drape checks passed');
 process.exit(fails ? 1 : 0);

@@ -11,7 +11,7 @@
 import type { Piece } from '../data/presets';
 import { migrateGarment, styleById, type StyleId } from '../data/catalog';
 import { frontOffset } from '../data/draft';
-import type { EdgeRef } from '../data/edits';
+import type { Attachment, EdgeRef, Edits, Face } from '../data/edits';
 
 export interface BuiltinSeam {
   /** stable id, e.g. 'shoulder-r', 'side-l', 'inseam-r', 'waistband' */
@@ -54,7 +54,14 @@ export function instanceLabel(style: StyleId, piece: Piece, instance?: number): 
   return `${instance === 1 ? 'Right' : 'Left'} ${lower}`;
 }
 
-export function builtinSeams(style: StyleId, pieces: Piece[]): BuiltinSeam[] {
+/**
+ * Built-in seams of a style. edits: with Edits.collar set (the collar option chosen, 'down' or 'up'), the polo collar
+ * runs round the right neckline to the placket edge on that side. Without it (projects from before the option) the
+ * sewing stays exactly as it was, where the right half of a polo collar is sewn down the placket opening; kept only so
+ * old saves drape bit for bit the same (tests/fixtures/sew-baseline.json).
+ */
+export function builtinSeams(style: StyleId, pieces: Piece[], edits?: Pick<Edits, 'collar'>): BuiltinSeam[] {
+  const collarSet = edits?.collar !== undefined;
   const st = styleById(migrateGarment(style));
   const fam = st.family;
   const out: BuiltinSeam[] = [];
@@ -147,7 +154,8 @@ export function builtinSeams(style: StyleId, pieces: Piece[]): BuiltinSeam[] {
   }
   const collar = role('collar');
   if (collar) {
-    const neck = [E(fr, F(0), F(2)), E(bk, B(2, 'm'), B(0)), E(bk, B(0), B(2)), E(fr, F(2, 'm'), F(0))];
+    // the polo neckline ends at the placket edge on each side (front.2 / front.2m)
+    const neck = [E(fr, F(0), F(2)), E(bk, B(2, 'm'), B(0)), E(bk, B(0), B(2)), E(fr, F(2, 'm'), fo && collarSet ? F(0, 'm') : F(0))];
     // polo: the collar runs from the middle of the placket, round the neck, back to the middle of the placket
     if (placket) { neck.unshift(E(placket, 'placket.0', 'placket.1')); neck.push(E(placket, 'placket.1m', 'placket.0')); }
     M('collar', 'Collar', [E(collar, 'collar.1', 'collar.1m')], neck);
@@ -158,4 +166,60 @@ export function builtinSeams(style: StyleId, pieces: Piece[]): BuiltinSeam[] {
     for (const i of [0, 1]) M(`cuff-${sfx(i)}`, `${sideName(i)} cuff`, [E(cuff, 'cuff.1', 'cuff.1m', i)], [E(sleeve, 'sleeve.4', 'sleeve.4m', i)]);
   }
   return [...out, ...multi];
+}
+
+// ---- faces ----
+// Every pattern piece has two faces (Face in src/data/edits.ts): 'outside' is the right side of the fabric, the
+// side that shows on the finished garment; 'inside' is the side against the body (placket facing, lining side).
+//
+// A collar is one panel with a roll line across it (collarRoll): below it the stand rises from the neckline,
+// above it the fall. Its faces are named for the collar worn folded down:
+//   'outside' = top collar: on the stand it faces the neck, it rolls over the fold line and is the visible top
+//               of the fall when the collar is down.
+//   'inside'  = under collar: on the stand it faces away from the neck, on the fall it lies against the stand and
+//               the shoulders when the collar is down, and it is the face you see when the collar is popped up.
+// The 'built' message panelSign (src/sim/worker.ts) points at the 'outside' face of each panel with this meaning.
+
+/** Which host face an attachment sits on: its own face, or for a tag 'inside' (a neck tag is sewn on the inside). */
+export const faceOf = (a: Pick<Attachment, 'face' | 'kind'>): Face => a.face ?? (a.kind === 'label' ? 'inside' : 'outside');
+
+/** Collar worn down (default) or popped up. */
+export const collarState = (edits?: Pick<Edits, 'collar'>): 'down' | 'up' => (edits?.collar === 'up' ? 'up' : 'down');
+
+/**
+ * Height of the collar stand at centre back (cm from the neckline edge): the roll line, where a collar worn down
+ * folds over. Knit collars roll 2.5 cm up; woven collars about 42% of the collar height (2 to 3 cm).
+ */
+export function collarRoll(style: StyleId, piece: Piece): number {
+  const fam = styleById(migrateGarment(style)).family;
+  if (fam === 'polo') return 2.5;
+  const cb = piece.points.find((q) => q.key === 'collar.3')?.y ?? Math.max(...piece.points.map((q) => q.y));
+  return Math.min(3, Math.max(2, 0.42 * cb));
+}
+
+/**
+ * Which face of a piece shows on top (to someone looking at the wearer) with the collar down and up. Only a
+ * collar changes: down shows the top collar ('outside'), up shows the under collar ('inside'). Every other piece
+ * shows its 'outside' face either way.
+ */
+export function visibleFace(_style: StyleId, piece: Pick<Piece, 'role'>, _collar?: 'down' | 'up'): { up: Face; down: Face } {
+  return piece.role === 'collar' ? { up: 'inside', down: 'outside' } : { up: 'outside', down: 'outside' };
+}
+
+/**
+ * Plain language name of one face of a piece for the UI and the spec sheet: 'Top collar', 'Under collar',
+ * 'Placket facing', 'Lining side', 'Top of brim', 'Under brim', 'Outside', 'Inside'.
+ */
+export function faceLabel(style: StyleId, piece: Pick<Piece, 'role'>, face: Face, collar?: 'down' | 'up'): string {
+  const fam = styleById(migrateGarment(style)).family;
+  const out = face === 'outside';
+  if (piece.role === 'collar') {
+    void collar; // same names either way: visibleFace says which one shows
+    return out ? 'Top collar' : 'Under collar';
+  }
+  if (out) return piece.role === 'brim' ? 'Top of brim' : 'Outside';
+  if (piece.role === 'placket') return 'Placket facing';
+  if (piece.role === 'brim') return 'Under brim';
+  if (fam === 'jacket' || fam === 'cap' || fam === 'bucket') return 'Lining side';
+  return 'Inside';
 }
