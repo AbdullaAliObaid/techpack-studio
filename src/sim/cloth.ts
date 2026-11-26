@@ -39,6 +39,15 @@ export class ClothSim {
   uv: Float32Array | null = null; // 2D pattern coords, to skip neighbours on the same piece
   seamGroup: Int32Array | null = null; // vertices sewn together share a group
   nearSeam: Uint8Array | null = null; // within a few cm of a seam on its own piece
+  /** per particle: a panel it never self collides with (an attachment and its host lie flat on each other), -1 none */
+  skipPanel: Int32Array | null = null;
+  /**
+   * cloth layers (attachments on their host): particle a stays at least `gap` on the outer side of the host
+   * triangle h0 h1 h2 at barycentric w0 w1 w2. idx: a, h0, h1, h2 per entry; w: w0, w1, w2, gap, sign per entry
+   * (sign turns the triangle's winding normal outward).
+   */
+  layerIdx: Int32Array | null = null;
+  layerW: Float32Array | null = null;
   private hashStart = new Int32Array(0);
   private hashItems = new Int32Array(0);
   params: ClothParams;
@@ -148,6 +157,7 @@ export class ClothSim {
           }
         }
       }
+      if (this.layerIdx) this.layers(pos);
       for (let i = 0; i < n; i++) {
         const j = i * 3;
         vel[j] = ((pos[j] - prev[j]) / h) * damp;
@@ -192,6 +202,7 @@ export class ClothSim {
           if (d2 >= r2 || d2 < 1e-10) continue;
           if (seamGroup && seamGroup[i] === seamGroup[j]) continue;
           if (this.nearSeam && this.nearSeam[i] && this.nearSeam[j] && panelOf && panelOf[i] !== panelOf[j]) continue; // the two sides of a seam
+          if (this.skipPanel && panelOf && (this.skipPanel[i] === panelOf[j] || this.skipPanel[j] === panelOf[i])) continue; // attachment on its host
           if (panelOf && uv && panelOf[i] === panelOf[j]) {
             const du = uv[i * 2] - uv[j * 2], dv = uv[i * 2 + 1] - uv[j * 2 + 1];
             if (du * du + dv * dv < skip2) continue; // neighbours on the same piece
@@ -202,6 +213,27 @@ export class ClothSim {
           pos[j * 3] += ex * c * invMass[j]; pos[j * 3 + 1] += ey * c * invMass[j]; pos[j * 3 + 2] += ez * c * invMass[j];
         }
       }
+    }
+  }
+
+  /** Keep every attachment particle on the outer side of its host cloth (moves the attachment only). */
+  layers(pos: Float32Array) {
+    const I = this.layerIdx!, W = this.layerW!;
+    for (let e = 0, k = 0; e < I.length; e += 4, k += 5) {
+      const a = I[e] * 3, h0 = I[e + 1] * 3, h1 = I[e + 2] * 3, h2 = I[e + 3] * 3;
+      const ux = pos[h1] - pos[h0], uy = pos[h1 + 1] - pos[h0 + 1], uz = pos[h1 + 2] - pos[h0 + 2];
+      const vx = pos[h2] - pos[h0], vy = pos[h2 + 1] - pos[h0 + 1], vz = pos[h2 + 2] - pos[h0 + 2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (l < 1e-9) continue;
+      const sg = W[k + 4] / l;
+      nx *= sg; ny *= sg; nz *= sg;
+      const w0 = W[k], w1 = W[k + 1], w2 = W[k + 2];
+      const px = pos[h0] * w0 + pos[h1] * w1 + pos[h2] * w2, py = pos[h0 + 1] * w0 + pos[h1 + 1] * w1 + pos[h2 + 1] * w2, pz = pos[h0 + 2] * w0 + pos[h1 + 2] * w1 + pos[h2 + 2] * w2;
+      const d = (pos[a] - px) * nx + (pos[a + 1] - py) * ny + (pos[a + 2] - pz) * nz;
+      const c = W[k + 3] - d;
+      if (c <= 0) continue;
+      pos[a] += nx * c; pos[a + 1] += ny * c; pos[a + 2] += nz * c;
     }
   }
 

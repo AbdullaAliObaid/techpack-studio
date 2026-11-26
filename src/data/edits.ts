@@ -58,7 +58,11 @@ export interface Attachment {
   id: string;
   kind: AttachKind;
   name: string;
-  /** host pattern piece and the centre position in that piece's local pattern coords (cm) */
+  /**
+   * host pattern piece and the centre position in that piece's local pattern coords (cm). x, y and rotation are
+   * always in the stored piece's own frame, for every copy: on a mirrored copy (instance 1, the left side) the
+   * placement is the mirror image in 3D, but the attachment itself is not flipped (text still reads the right way).
+   */
   pieceId: string;
   x: number;
   y: number;
@@ -123,6 +127,8 @@ export interface Pleat {
   direction: 1 | -1;
   /** pattern width (cm) the store added beside the pleat so the edge still matches its seam after folding */
   spread?: number;
+  /** placed copy of a piece cut more than once that gets the pleat (0 = right side, 1 = left side). Omitted: every copy. */
+  instance?: number;
 }
 
 /** Edge length a pleat folds away: knife 2 x depth, box and inverted 4 x depth. */
@@ -136,6 +142,8 @@ export interface Placement {
   x?: number;
   y?: number;
   rotation?: number;
+  /** 'patch' on a host cut more than once: the host copy it goes on (0 = right side, 1 = left side). Omitted: every copy. */
+  instance?: number;
 }
 
 export interface SideAngles { shFlex: number; shAbd: number; shHoriz: number; elbow: number; hipFlex: number; hipAbd: number; knee: number }

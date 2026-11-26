@@ -163,6 +163,26 @@ if (!only || only === 'edits') {
     const E2 = G.panels.find((p) => p.piece.id === 'up2');
     verdict(ok && s.copies === 2 && s.worst < 2 && !!E2 && ls.length > 10 && gap < 0.6, `user pieces: elbow patch on both sleeves (worst ${s.worst.toFixed(2)}cm off), hem extension sewn on (${ls.length} links, gap ${gap.toFixed(2)}cm)`);
   }
+  {
+    // an applique cut as letters on the tee back: every letter stays on the back
+    const pieces = makePreset('basic-tee', DEFAULT_BODY);
+    const back = pieces.find((p) => p.role === 'back')!;
+    const edits = E({ attachments: [{ id: 'tx', kind: 'applique', name: 'Letters', pieceId: back.id, x: 0, y: 20, rotation: 0, w: 22, h: 6, outline: 'shape', shape: 'text', text: 'TECH', layers: [] }] });
+    const { ok, G } = drape('basic-tee', pieces, edits, 'tee+letters');
+    const s = staysOn(G, 'tx');
+    verdict(ok && s.copies === 4 && s.worst < 2 && s.avg < 1.2, `applique letters on the back: ${s.copies} pieces stay on, avg ${s.avg.toFixed(2)}cm worst ${s.worst.toFixed(2)}cm from the back`);
+  }
+  {
+    // hardware: rivets on both front legs, a closed zip down the right front: drapes calmly, stays on the hips
+    const pieces = makePreset('jeans', DEFAULT_BODY);
+    const front = pieces.find((p) => p.role === 'front')!;
+    const edits = E({ attachments: [
+      { id: 'rv', kind: 'hardware', name: 'Rivets', pieceId: front.id, x: 10, y: 4, rotation: 0, w: 1, h: 1, outline: 'rect', layers: [], hardware: { type: 'rivet', finish: 'copper', size: 0.9, count: 3, spacing: 1.5 } },
+      { id: 'zp', kind: 'hardware', name: 'Zip', pieceId: front.id, x: 6, y: 30, rotation: 0, w: 1, h: 18, outline: 'rect', layers: [], instance: 0, hardware: { type: 'zipper', finish: 'brass', size: 1 } },
+    ] });
+    const { ok } = drape('jeans', pieces, edits, 'jeans+trims');
+    verdict(ok, 'rivets and a closed zip drape without trouble');
+  }
 }
 console.log(fails ? `\n${fails} FAILED` : '\nall drape checks passed');
 process.exit(fails ? 1 : 0);

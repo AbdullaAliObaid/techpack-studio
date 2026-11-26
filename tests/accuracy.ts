@@ -4,7 +4,7 @@ import { NBONES } from '../src/sim/pose';
 import { makePreset } from '../src/data/presets';
 import { draft, regradePoints, EASE, crownArc, derivedGirths, FITS, RIB, neckBase } from '../src/data/draft';
 import { CATALOG, migrateGarment, styleById } from '../src/data/catalog';
-import { freshProject } from '../src/store';
+import { freshProject, useStore } from '../src/store';
 import { fitTable, seamReport } from '../src/lib/specs';
 import { calibratedField } from '../src/three/bodyField';
 import { meshField } from '../src/three/mesher';
@@ -13,8 +13,12 @@ import { buildGarment } from '../src/three/garment';
 import { samplePoly, sliceSpan } from '../src/lib/geometry';
 import { findTag, pieceSpecs } from '../src/lib/specs';
 import { readFileSync } from 'node:fs';
-import { builtinSeams } from '../src/sim/seams';
+import { builtinSeams, instanceLabel } from '../src/sim/seams';
+import { shapePolygon, attachmentPolygons, SHAPE_IDS } from '../src/lib/shapes';
+import { attachmentReport, cutList, pleatReport, trimsReport } from '../src/lib/specs';
+import type { Attachment } from '../src/data/edits';
 import { assemble } from '../src/sim/setup';
+import { meshPanel, seamPath } from '../src/sim/panels';
 import { EMPTY_EDITS, type Edits } from '../src/data/edits';
 import { NO_COLLIDER, sewSignature } from './sewSnapshot';
 
@@ -319,6 +323,100 @@ for (const [g, id] of [['basic-tee', 'side-r'], ['button-up', 'cuff-l'], ['jeans
   pass(JSON.stringify([...pairSet(G)]) === JSON.stringify([...pairSet(plain)]), 'attachments leave the garment seams alone (pinned, not sewn)');
   const sr = seamReport('jeans', pieces, edits);
   pass(sr.some((r) => r.attachment === 'pk' && /3 sides/.test(r.label)) && sr.some((r) => r.attachment === 'st') && !sr.some((r) => r.attachment === 'pr'), 'seam report lists the sewn attachments');
+}
+
+// ---- left / right copies, appliques, embroidery, hardware ----
+console.log('\n== left / right, appliques, hardware ==');
+{
+  const area = (r: { x: number; y: number }[]) => Math.abs(r.reduce((a, p, i) => { const q = r[(i + 1) % r.length]; return a + p.x * q.y - q.x * p.y; }, 0) / 2);
+  const rings = SHAPE_IDS.filter((s) => s !== 'text').map((s) => [s, shapePolygon(s, 10, 10)] as const);
+  pass(rings.every(([, r]) => r.length === 1 && r[0].length >= 3 && area(r[0]) > 10), `every shape cuts as one outer ring (${rings.map(([s, r]) => `${s} ${r[0]?.length}`).join(', ')})`);
+  check('circle cut area (holes ignored, ring = circle)', area(shapePolygon('ring', 10, 10)[0]), Math.PI * 25, 1.5);
+  const txt = shapePolygon('text', 30, 8, 'Hi 2!');
+  pass(txt.length === 3 && txt.every((r) => r.length >= 4) && txt[0][0].x < txt[2][0].x, `text applique: one piece per letter, in reading order (${txt.length} pieces for "Hi 2!")`);
+  pass(txt.every((r) => r.every((q) => Math.abs(q.x) <= 15 + 1e-6 && Math.abs(q.y) <= 4 + 1e-6)), 'text letters stay inside the applique box');
+}
+{
+  const pieces = makePreset('jeans', DEFAULT_BODY);
+  const fr = pieces.find((q) => q.role === 'front')!, bk = pieces.find((q) => q.role === 'back')!;
+  pass(instanceLabel('jeans', bk, 0) === 'Right back leg' && instanceLabel('jeans', bk, 1) === 'Left back leg' && instanceLabel('jeans', bk) === 'Both back legs'
+    && instanceLabel('cap', makePreset('cap', DEFAULT_BODY)[0], 2) === 'Crown panel 3' && instanceLabel('basic-tee', makePreset('basic-tee', DEFAULT_BODY)[0], 0) === 'Front',
+  `instanceLabel: ${instanceLabel('jeans', bk, 0)}, ${instanceLabel('jeans', bk, 1)}, ${instanceLabel('jeans', bk)}, ${instanceLabel('cap', makePreset('cap', DEFAULT_BODY)[0], 2)}`);
+  const base = { rotation: 0, layers: [], outline: 'rect' as const };
+  const A = (o: Partial<Attachment> & Pick<Attachment, 'id' | 'kind'>): Attachment => ({ ...base, name: o.id, pieceId: bk.id, x: 1, y: 13, w: 10, h: 6, ...o });
+  const edits: Edits = { ...EMPTY_EDITS, attachments: [
+    A({ id: 'ap', kind: 'applique', outline: 'shape', shape: 'text', text: 'AB', w: 10, h: 5 }),
+    A({ id: 'apR', kind: 'applique', outline: 'shape', shape: 'star', instance: 0, y: 25 }),
+    A({ id: 'em', kind: 'embroidery', thread: '#c00', y: 30 }),
+    A({ id: 'rv', kind: 'hardware', x: 8, y: 2, w: 1, h: 1, hardware: { type: 'rivet', finish: 'copper', size: 0.9, count: 2, spacing: 2 } }),
+  ], pleats: [{ id: 'kp', pieceId: fr.id, pointId: fr.points.find((q) => q.key === 'front.0')!.id, t: 0.55, depth: 1.5, length: 7, type: 'knife', direction: 1, instance: 1 }] };
+  const G = build('jeans', pieces, edits);
+  const plain = build('jeans', pieces, EMPTY_EDITS);
+  const at = (id: string) => G.panels.filter((q) => q.attach?.id === id);
+  pass(at('ap').length === 4 && at('apR').length === 1 && G.panels[at('apR')[0].attach!.host].instance === 0 && at('em').length === 0 && at('rv').length === 0,
+    `applique text: a piece per letter on both legs (${at('ap').length}), star only on the right leg, embroidery and rivets add no cloth`);
+  pass((G.seamLinks['pleat:kp'] ?? []).length === 1, 'pleat with instance 1 is folded on the left front leg only');
+  // rivets weigh the cloth under them: heavier host particles
+  const heavier = Array.from(G.sim.invMass).filter((v, i) => i < plain.sim.n && v < plain.sim.invMass[i] - 1e-6).length;
+  pass(heavier > 0 && heavier < 40, `rivets add weight to ${heavier} back leg particles`);
+  // left copy: placement mirrored, letters not flipped (A on the left leg sits where the mirror of B on the right leg is)
+  const ctr = (P: (typeof G.panels)[number]) => { const c = [0, 0, 0]; for (let i = 0; i < P.mesh.uv.length; i++) for (let k = 0; k < 3; k++) c[k] += G.sim.pos[(P.offset + i) * 3 + k] / P.mesh.uv.length; return c; };
+  const ap = at('ap'), onR = ap.filter((P) => G.panels[P.attach!.host].instance === 0), onL = ap.filter((P) => G.panels[P.attach!.host].instance === 1);
+  const a1 = ctr(onL[0]), b0 = ctr(onR[1]);
+  const off = Math.hypot(a1[0] + b0[0], a1[1] - b0[1], a1[2] - b0[2]);
+  pass(onR.length === 2 && onL.length === 2 && off < 1 && ap.every((P) => !P.mirror), `left leg applique is the mirror placement with letters reading the right way (A left vs mirrored B right: ${off.toFixed(2)} cm)`);
+  // specs: sides, trims, cut list
+  const rows = attachmentReport(pieces, edits, 'jeans');
+  pass(rows.find((r) => r.id === 'apR')?.side === 'Right back leg' && rows.find((r) => r.id === 'ap')?.side === 'Both back legs' && rows.find((r) => r.id === 'ap')?.cutPieces === 2, 'attachment report names the side and counts letter pieces');
+  const trims = trimsReport(pieces, edits, 'jeans');
+  const rv = trims.find((t) => t.item === 'Rivet'), em = trims.find((t) => t.item === 'Embroidery'), apT = trims.filter((t) => t.item === 'Applique');
+  pass(!!rv && rv.qty === 4 && /Copper, 9 mm/.test(rv.detail) && rv.placement === 'Both back legs' && !!em && /#c00/.test(em.detail) && apT.length === 2, `trims list: ${trims.map((t) => `${t.qty} x ${t.item} (${t.detail}; ${t.placement})`).join(' | ')}`);
+  const cl = cutList(pieces, edits, 'jeans');
+  pass(cl.some((r) => r.name === 'ap' && r.cut === 4) && cl.some((r) => r.name === 'apR' && r.cut === 1) && !cl.some((r) => r.name === 'em' || r.name === 'rv'), 'cut list includes the applique pieces (2 letters x 2 legs), not embroidery or rivets');
+  pass(pleatReport(pieces, edits, 'jeans')[0]?.side === 'Left front leg', 'pleat report names the side');
+  pass(seamReport('jeans', pieces, edits).every((r) => r.attachment !== 'em' && r.attachment !== 'rv'), 'embroidery and rivets are not seams');
+}
+{
+  // zips: a closed zip stiffens the cloth, an open zip on a seam leaves that stretch unsewn
+  const pieces = makePreset('jeans', DEFAULT_BODY);
+  const fr = pieces.find((q) => q.role === 'front')!;
+  // along the right outseam: two edge points of the meshed front leg, 3 and 10 edge steps below the waist
+  const m = meshPanel(fr.points, 2.2), path = seamPath(m, fr.points.find((q) => q.key === 'front.1')!.id, fr.points.find((q) => q.key === 'front.5')!.id);
+  const e0 = m.uv[path[3]], e1 = m.uv[path[10]];
+  const L = Math.hypot(e1.x - e0.x, e1.y - e0.y), ang = (Math.atan2(e1.y - e0.y, e1.x - e0.x) * 180) / Math.PI - 90;
+  const zip = (open: boolean): Edits => ({ ...EMPTY_EDITS, attachments: [{ id: 'z', kind: 'hardware', name: 'Side zip', pieceId: fr.id, x: (e0.x + e1.x) / 2, y: (e0.y + e1.y) / 2, rotation: ang, w: 1, h: L, outline: 'rect', layers: [], instance: 0, hardware: { type: 'zipper', finish: 'silver', size: 1, open } }] });
+  const plain = build('jeans', pieces, EMPTY_EDITS), closed = build('jeans', pieces, zip(false)), opened = build('jeans', pieces, zip(true));
+  const n = (G: typeof plain, id: string) => (G.seamLinks[id] ?? []).length;
+  pass(n(closed, 'outseam-r') === n(plain, 'outseam-r') && closed.sim.ca.length > plain.sim.ca.length, `closed zip keeps the seam and stiffens the cloth (+${closed.sim.ca.length - plain.sim.ca.length} links)`);
+  pass(n(opened, 'outseam-r') < n(plain, 'outseam-r') - 4 && n(opened, 'outseam-l') === n(plain, 'outseam-l'), `open zip on the right outseam opens it (${n(plain, 'outseam-r')} -> ${n(opened, 'outseam-r')} links), left outseam untouched`);
+}
+{
+  // user patch piece cut twice with a chosen side, and a sewn user piece cut twice (copy i on host copy i)
+  const pieces = makePreset('basic-tee', DEFAULT_BODY);
+  const sleeve = pieces.find((p) => p.role === 'sleeve')!;
+  const pt = (id: string, x: number, y: number) => ({ id, x, y, smooth: false, mirror: null });
+  const patch = { id: 'up1', name: 'Elbow patch', role: 'custom' as const, cut: 2, offset: { x: 0, y: 0 }, symmetric: false, fabric: sleeve.fabric, specs: [],
+    points: [pt('a', 0, 0), pt('b', 6, 0), pt('c', 6, 5), pt('d', 0, 5)], placement: { mode: 'patch' as const, hostPieceId: sleeve.id, x: 0, y: 12, rotation: 0, instance: 1 } };
+  const G = build('basic-tee', [...pieces, patch], EMPTY_EDITS);
+  const on = G.panels.filter((p) => p.attach?.id === 'up1');
+  pass(on.length === 1 && G.panels[on[0].attach!.host].instance === 1, 'user patch with placement instance 1 goes on the left sleeve only');
+  const hem = { id: 'up2', name: 'Cuff band', role: 'custom' as const, cut: 2, offset: { x: 0, y: 0 }, symmetric: false, fabric: sleeve.fabric, specs: [],
+    points: [pt('e', 0, 0), pt('f', 20, 0), pt('g', 20, 4), pt('h', 0, 4)], placement: { mode: 'sewn' as const } };
+  const t3 = sleeve.points.find((q) => q.key === 'sleeve.4')!.id, t4 = sleeve.points.find((q) => q.key === 'sleeve.4m')!.id;
+  const G2 = build('basic-tee', [...pieces, hem], { ...EMPTY_EDITS, customSeams: [{ id: 'cb', a: { pieceId: 'up2', fromId: 'e', toId: 'f' }, b: { pieceId: sleeve.id, fromId: t3, toId: t4 } }] });
+  const copies = G2.panels.filter((p) => p.piece.id === 'up2');
+  pass(copies.length === 2 && copies[1].mirror && copies[1].instance === 1, `sewn user piece cut twice: ${copies.length} copies, the second mirrored on the left sleeve`);
+}
+{
+  // store: a new attachment on a piece cut twice goes on the right side unless chosen; old saves keep "every copy"
+  const st = useStore.getState();
+  st.newProject?.('jeans' as never);
+  const bk = useStore.getState().project.pieces.find((p) => p.role === 'back');
+  if (bk) {
+    const id = useStore.getState().addAttachment({ kind: 'patch', name: 'p', pieceId: bk.id, x: 0, y: 10, rotation: 0, w: 5, h: 5, outline: 'rect', layers: [] } as never);
+    const a = useStore.getState().project.edits?.attachments.find((q) => q.id === id);
+    pass(a?.instance === 0, 'store: new attachment on a piece cut twice defaults to the right side (instance 0)');
+  } else pass(false, 'store: jeans project has a back leg');
 }
 
 // regrade keeps user edits

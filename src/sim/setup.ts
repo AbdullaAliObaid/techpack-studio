@@ -7,8 +7,8 @@ import { fabricById } from '../data/fabrics';
 import { migrateGarment, styleById, type Style } from '../data/catalog';
 import { frontOffset, RIB } from '../data/draft';
 import { bezAt, bbox, pointInPoly, samplePoly, sliceSpan, toBeziers, type PPoint, type Pt } from '../lib/geometry';
-import { outlinePolygon } from '../lib/shapes';
-import { EMPTY_EDITS, type AttachKind, type EdgeRef, type Edits, type Pleat } from '../data/edits';
+import { attachmentPolygons } from '../lib/shapes';
+import { EMPTY_EDITS, type EdgeRef, type Edits, type Hardware, type Pleat } from '../data/edits';
 import { builtinSeams } from './seams';
 import { pleatIntake } from '../lib/specs';
 import { bodyFrame, ellipseCirc, ellipseFromCirc, hullAt, type Body, type BodyFrame } from '../three/body';
@@ -28,7 +28,26 @@ export interface PanelInst {
    * user piece id), how it is sewn on, and the index of the host panel it is pinned to.
    * mesh.uv of an attachment is in the attachment's own coords (cm, centred, before rotation).
    */
-  attach?: { id: string; kind: Exclude<AttachKind, 'print'>; host: number };
+  attach?: { id: string; kind: ClothKind; host: number };
+}
+
+/** attachments that are cloth of their own (embroidery, prints and hardware add no cloth) */
+export type ClothKind = 'pocket' | 'patch' | 'applique' | 'strap';
+const CLOTH_KINDS = new Set<string>(['pocket', 'patch', 'applique', 'strap']);
+/** gap kept between an attachment and the outer face of its host cloth (cm): about two fabric thicknesses */
+export const LAYER_GAP = 0.2;
+
+/** grams per trim (at the reference size, cm), for the weight hardware adds to the cloth under it */
+const TRIM_GRAMS: Record<Exclude<Hardware['type'], 'zipper'>, [number, number]> = {
+  rivet: [1.0, 0.9], eyelet: [0.4, 1.0], stud: [1.2, 1.2], button: [1.5, 1.8], snap: [1.6, 1.5],
+};
+/** a closed metal or coil zip, tape included (grams per cm of length) */
+const ZIP_GRAMS_PER_CM = 0.3;
+
+/** Centres of the trims of a hardware attachment, in its own coords (cm): count in a row along w, spacing apart. */
+export function hardwarePoints(h: Hardware): Pt[] {
+  const n = Math.max(1, Math.round(h.count ?? 1)), sp = h.spacing ?? Math.max(1.5, h.size * 2);
+  return Array.from({ length: n }, (_, k) => ({ x: (k - (n - 1) / 2) * sp, y: 0 }));
 }
 
 export interface Garment3D {
@@ -37,7 +56,28 @@ export interface Garment3D {
   limits: Float32Array; // safe stretch per particle
   /** sew links (particle pairs) each seam added, by seam id: built-in ids, custom seam ids, 'pleat:<id>' */
   seamLinks: Record<string, [number, number][]>;
+  /** body collider and per particle contact mode (0 normal, 1 none, 2 crease, 3 elastic), for the display check */
+  body?: BodyLike;
+  contact?: Uint8Array;
+  /**
+   * display check of cloth layers: per attachment particle, the host triangles near it (corner particle
+   * triples) and the sign that turns each triangle's winding normal outward
+   */
+  layerNear?: { a: number; tris: Int32Array; sign: Int8Array }[];
 }
+
+type Hit = { nx: number; ny: number; nz: number; depth: number; vx?: number; vy?: number; vz?: number };
+/** what setup needs of a body collider (BodyCollider, GridCollider, PosedCollider) */
+type BodyLike = {
+  project(p: Float32Array, i: number, out: Hit): boolean; thickness: number; flat?: [number, number]; useCaps?: boolean; skinning?: boolean;
+  escape?(p: Float32Array, i: number, bone: number, dx: number, dy: number, dz: number, margin: number): boolean;
+};
+/** displayed cloth keeps at least this far off the drawn skin (cm); the solver keeps BodyLike.thickness */
+export const DISPLAY_MARGIN = 0.25;
+/** edge midpoints and triangle centres of the displayed cloth keep this far off the skin (cm) */
+const CHORD_MARGIN = 0.1;
+/** cloth points closer than this to the skin get their edges and triangles checked for display (cm) */
+const NEAR = 1.0;
 
 const TAU = Math.PI * 2;
 const SUB = 10;
@@ -553,10 +593,9 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     if (dot3(n, out) < 0) n = scale3(n, -1);
     return { p: [p[0] + n[0] * lift, p[1] + n[1] * lift, p[2] + n[2] * lift], n };
   };
-  // cloth layers on top of each other keep the self collision distance apart (set below from the fabrics)
-  let layer = 0.6;
 
-  // user pieces sewn into an open area: start flat next to the edge they are sewn to, then the seam pulls them in
+  // user pieces sewn into an open area: start flat next to the edge they are sewn to, then the seam pulls them in.
+  // A user piece cut twice is placed twice, copy i sewn to host copy i (the second one mirrored, like a left sleeve).
   for (const up of pieces.filter((q) => q.role === 'custom' && q.placement?.mode === 'sewn')) {
     let hostRef: EdgeRef | null = null, mine: EdgeRef | null = null, flip = false;
     for (const cs of edits.customSeams) {
@@ -564,58 +603,74 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
       if (cs.b.pieceId === up.id && cs.a.pieceId !== up.id && instOf(cs.a.pieceId, cs.a.instance ?? 0)) { mine = cs.b; hostRef = cs.a; flip = !!cs.flip; break; }
     }
     if (!hostRef || !mine) continue; // nothing holds it on the garment
-    const H = instOf(hostRef.pieceId, hostRef.instance ?? 0)!;
-    const path = seamPath(H.mesh, hostRef.fromId, hostRef.toId);
-    const Fp = up.points.find((q) => q.id === mine!.fromId), Tp = up.points.find((q) => q.id === mine!.toId);
-    if (path.length < 2 || !Fp || !Tp) continue;
-    const uvH = H.mesh.uv;
-    let E0 = H.place(uvH[path[0]].x, uvH[path[0]].y), E1 = H.place(uvH[path[path.length - 1]].x, uvH[path[path.length - 1]].y);
-    if (flip) [E0, E1] = [E1, E0];
-    const mid = uvH[path[path.length >> 1]];
-    // across the edge, away from the host: continue the host surface past its edge
-    const inner = H.mesh.uv.reduce((bi, q, i) => (H.mesh.boundary.includes(i) ? bi : bi < 0 || (q.x - mid.x) ** 2 + (q.y - mid.y) ** 2 < (uvH[bi].x - mid.x) ** 2 + (uvH[bi].y - mid.y) ** 2 ? i : bi), -1);
-    const ex3 = scale3(sub3(E1, E0), 1 / (len3(sub3(E1, E0)) || 1));
-    const { p: m3, n: nOut } = onHost(H, mid, 0);
-    let d3 = inner >= 0 ? sub3(m3, H.place(uvH[inner].x, uvH[inner].y)) : nOut;
-    d3 = sub3(d3, scale3(ex3, dot3(d3, ex3)));
-    d3 = scale3(d3, 1 / (len3(d3) || 1));
-    const L2 = Math.hypot(Tp.x - Fp.x, Tp.y - Fp.y) || 1;
-    const ex2 = { x: (Tp.x - Fp.x) / L2, y: (Tp.y - Fp.y) / L2 };
-    let ey2 = { x: -ex2.y, y: ex2.x };
-    const c2 = bbox(up.points);
-    if ((c2.minX + c2.w / 2 - Fp.x) * ey2.x + (c2.minY + c2.h / 2 - Fp.y) * ey2.y < 0) ey2 = { x: -ey2.x, y: -ey2.y };
-    const along = len3(sub3(E1, E0)) / L2;
-    add(up, false, (u, v) => {
-      const a = ((u - Fp.x) * ex2.x + (v - Fp.y) * ex2.y) * along, b = (u - Fp.x) * ey2.x + (v - Fp.y) * ey2.y;
-      return [0, 1, 2].map((k) => E0[k] + ex3[k] * a + d3[k] * b + nOut[k] * 1.0) as V3;
-    });
+    const nCopies = up.cut > 1 && hostRef.instance === undefined && mine.instance === undefined ? Math.min(up.cut, copiesOf(hostRef.pieceId).length) : 1;
+    for (let ci = 0; ci < nCopies; ci++) {
+      const H = instOf(hostRef.pieceId, nCopies > 1 ? ci : hostRef.instance ?? 0)!;
+      const path = seamPath(H.mesh, hostRef.fromId, hostRef.toId);
+      const Fp = up.points.find((q) => q.id === mine!.fromId), Tp = up.points.find((q) => q.id === mine!.toId);
+      if (path.length < 2 || !Fp || !Tp) break;
+      const uvH = H.mesh.uv;
+      let E0 = H.place(uvH[path[0]].x, uvH[path[0]].y), E1 = H.place(uvH[path[path.length - 1]].x, uvH[path[path.length - 1]].y);
+      if (flip) [E0, E1] = [E1, E0];
+      const mid = uvH[path[path.length >> 1]];
+      // across the edge, away from the host: continue the host surface past its edge
+      const inner = H.mesh.uv.reduce((bi, q, i) => (H.mesh.boundary.includes(i) ? bi : bi < 0 || (q.x - mid.x) ** 2 + (q.y - mid.y) ** 2 < (uvH[bi].x - mid.x) ** 2 + (uvH[bi].y - mid.y) ** 2 ? i : bi), -1);
+      const ex3 = scale3(sub3(E1, E0), 1 / (len3(sub3(E1, E0)) || 1));
+      const { p: m3, n: nOut } = onHost(H, mid, 0);
+      let d3 = inner >= 0 ? sub3(m3, H.place(uvH[inner].x, uvH[inner].y)) : nOut;
+      d3 = sub3(d3, scale3(ex3, dot3(d3, ex3)));
+      d3 = scale3(d3, 1 / (len3(d3) || 1));
+      const L2 = Math.hypot(Tp.x - Fp.x, Tp.y - Fp.y) || 1;
+      const ex2 = { x: (Tp.x - Fp.x) / L2, y: (Tp.y - Fp.y) / L2 };
+      let ey2 = { x: -ex2.y, y: ex2.x };
+      const c2 = bbox(up.points);
+      if ((c2.minX + c2.w / 2 - Fp.x) * ey2.x + (c2.minY + c2.h / 2 - Fp.y) * ey2.y < 0) ey2 = { x: -ey2.x, y: -ey2.y };
+      const along = len3(sub3(E1, E0)) / L2;
+      // the start frame follows the host copy, so on a mirrored copy the piece is placed mirrored too
+      add(up, H.mirror, (u, v) => {
+        const a = ((u - Fp.x) * ex2.x + (v - Fp.y) * ex2.y) * along, b = (u - Fp.x) * ey2.x + (v - Fp.y) * ey2.y;
+        return [0, 1, 2].map((k) => E0[k] + ex3[k] * a + d3[k] * b + nOut[k] * 1.0) as V3;
+      });
+    }
   }
 
-  // cloth attachments (pockets, patches, straps) and user pieces patched on: their own panel, pinned to the host
+  // cloth attachments (pockets, patches, appliques, straps) and user pieces patched on: their own panel, pinned to the host.
+  // Placement x, y, rotation are in the host piece's own pattern coords for every copy; on a mirrored copy (left side)
+  // the placement is the mirror image in 3D but the attachment itself is not flipped (letters still read the right way),
+  // so its own coords are mirrored into the host's before placing.
   interface Pin { v: number; hp: Pt } // attachment vertex and the host pattern point it is sewn to
-  const pins: { A: PanelInst; H: PanelInst; pins: Pin[] }[] = [];
+  const pins: { A: PanelInst; H: PanelInst; pins: Pin[]; layer: { v: number; hp: Pt }[] }[] = [];
   const toHost = (x: number, y: number, rot: number) => {
     const c = Math.cos((rot * Math.PI) / 180), s = Math.sin((rot * Math.PI) / 180);
     return (q: Pt): Pt => ({ x: x + q.x * c - q.y * s, y: y + q.x * s + q.y * c });
   };
-  const attachSpecs: { id: string; kind: Exclude<AttachKind, 'print'>; piece: Piece; local: Pt; host: string; instance?: number; xf: (q: Pt) => Pt; w: number; h: number }[] = [];
+  /** host copies an edit goes on: the chosen copy, or every copy when none is chosen */
+  const hostsOf = (pieceId: string, instance?: number) => instance !== undefined ? [instOf(pieceId, instance)].filter((q): q is (typeof insts)[number] => !!q) : copiesOf(pieceId);
+  const mirrorLocal = (H: PanelInst, q: Pt): Pt => (H.mirror ? { x: -q.x, y: q.y } : q);
+  const attachSpecs: { id: string; kind: ClothKind; piece: Piece; local: Pt; host: string; instance?: number; xf: (q: Pt) => Pt; w: number; h: number }[] = [];
   for (const a of edits.attachments) {
-    if (a.kind === 'print' || !(a.w > 0 && a.h > 0)) continue;
+    if (!CLOTH_KINDS.has(a.kind) || !(a.w > 0 && a.h > 0)) continue;
     const host = pieces.find((q) => q.id === a.pieceId);
     if (!host) continue;
-    const poly = outlinePolygon(a.outline, a.w, a.h, a.points);
-    const pts: PPoint[] = poly.map((q, i) => ({ id: `${a.id}:${i}`, x: q.x, y: q.y, smooth: false, mirror: null }));
-    const piece: Piece = { id: a.id, name: a.name, role: 'custom', cut: 1, offset: { x: 0, y: 0 }, symmetric: false, points: pts, fabric: a.fabric ?? host.fabric, specs: [] };
-    attachSpecs.push({ id: a.id, kind: a.kind, piece, local: { x: 0, y: 0 }, host: host.id, instance: a.instance, xf: toHost(a.x, a.y, a.rotation), w: a.w, h: a.h });
+    // an applique cut from a shape: one piece per letter for text, all in the attachment's own coords
+    const rings = attachmentPolygons(a);
+    rings.forEach((poly, ri) => {
+      const pts: PPoint[] = poly.map((q, i) => ({ id: `${a.id}:${ri ? `${ri}:` : ''}${i}`, x: q.x, y: q.y, smooth: false, mirror: null }));
+      const bb = bbox(poly);
+      const piece: Piece = { id: a.id, name: a.name, role: 'custom', cut: 1, offset: { x: 0, y: 0 }, symmetric: false, points: pts, fabric: a.fabric ?? host.fabric, specs: [] };
+      // a letter's size for meshing is its own box; its position stays in the attachment's coords
+      attachSpecs.push({ id: a.id, kind: a.kind as ClothKind, piece, local: { x: 0, y: 0 }, host: host.id, instance: a.instance, xf: toHost(a.x, a.y, a.rotation), w: rings.length > 1 ? bb.w : a.w, h: rings.length > 1 ? bb.h : a.h });
+    });
   }
   for (const up of pieces.filter((q) => q.role === 'custom' && q.placement?.mode === 'patch' && q.placement.hostPieceId)) {
     const pl = up.placement!, bb = bbox(up.points);
-    attachSpecs.push({ id: up.id, kind: 'patch', piece: up, local: { x: bb.minX + bb.w / 2, y: bb.minY + bb.h / 2 }, host: pl.hostPieceId!, xf: toHost(pl.x ?? 0, pl.y ?? 0, pl.rotation ?? 0), w: bb.w, h: bb.h });
+    attachSpecs.push({ id: up.id, kind: 'patch', piece: up, local: { x: bb.minX + bb.w / 2, y: bb.minY + bb.h / 2 }, host: pl.hostPieceId!, instance: pl.instance, xf: toHost(pl.x ?? 0, pl.y ?? 0, pl.rotation ?? 0), w: bb.w, h: bb.h });
   }
   for (const at of attachSpecs) {
-    const hosts = at.instance !== undefined ? [instOf(at.host, at.instance)].filter((q): q is (typeof insts)[number] => !!q) : copiesOf(at.host);
+    const hosts = hostsOf(at.host, at.instance);
     if (!hosts.length) continue;
-    const mesh = meshPanel(at.piece.points, Math.min(spacing, Math.max(0.6, Math.min(at.w, at.h) / 4)));
+    const mesh = meshPanel(at.piece.points, Math.min(spacing, Math.max(at.kind === 'applique' ? 0.45 : 0.6, Math.min(at.w, at.h) / 4)));
+    if (mesh.tris.length < 3) continue;
     const ys = mesh.boundary.map((i) => mesh.uv[i].y - at.local.y), xs = mesh.boundary.map((i) => mesh.uv[i].x - at.local.x);
     const minY = Math.min(...ys), maxX = Math.max(...xs), minX = Math.min(...xs), maxY = Math.max(...ys);
     const long = at.w >= at.h ? 'x' : 'y', Lh = (long === 'x' ? maxX - minX : maxY - Math.min(...ys)) / 2;
@@ -642,18 +697,57 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     };
     for (const H of hosts) {
       const hostIdx = insts.indexOf(H);
+      const hpOf = (q: Pt) => at.xf(mirrorLocal(H, lp(q)));
       const A = add(at.piece, false, (u, v) => {
-        const q = lp({ x: u, y: v });
         let bump = 0;
         if (at.kind === 'strap') {
           const t = (long === 'x' ? u - at.local.x : v - at.local.y) / (Lh || 1); // -1..1 along the strap
           bump = 0.19 * 2 * Lh * SLACK * Math.cos((Math.max(-1, Math.min(1, t)) * Math.PI) / 2);
         }
-        return onHost(H, at.xf(q), layer + bump).p;
+        return onHost(H, hpOf({ x: u, y: v }), LAYER_GAP + 0.3 + bump).p;
       }, mesh);
       A.attach = { id: at.id, kind: at.kind, host: hostIdx };
-      pins.push({ A, H, pins: sewnIdx.map((v) => ({ v, hp: at.xf(lp(mesh.uv[v])) })) });
+      pins.push({ A, H, pins: sewnIdx.map((v) => ({ v, hp: hpOf(mesh.uv[v]) })), layer: mesh.uv.map((q, v) => ({ v, hp: hpOf(q) })) });
     }
+  }
+
+  // hardware: rivets, buttons, studs, snaps and eyelets weigh the cloth down under them; a zip stiffens the
+  // cloth along its line (and an open zip on a seam leaves that stretch of the seam unsewn)
+  const trimGrams: { H: PanelInst; at: Pt; r: number; g: number }[] = [];
+  const zips: { H: PanelInst; a: Pt; b: Pt; half: number; open: boolean }[] = [];
+  for (const a of edits.attachments) {
+    if (a.kind !== 'hardware' || !a.hardware) continue;
+    const hw = a.hardware, xf = toHost(a.x, a.y, a.rotation);
+    for (const H of hostsOf(a.pieceId, a.instance)) {
+      if (hw.type === 'zipper') {
+        const L = a.h > 0 ? a.h : 10;
+        zips.push({ H, a: xf(mirrorLocal(H, { x: 0, y: -L / 2 })), b: xf(mirrorLocal(H, { x: 0, y: L / 2 })), half: Math.max(0.3, (hw.size || 1) / 2), open: !!hw.open });
+        continue;
+      }
+      const [g0, s0] = TRIM_GRAMS[hw.type] ?? [1, 1];
+      const g = g0 * Math.min(4, Math.max(0.25, ((hw.size || s0) / s0) ** 2));
+      for (const q of hardwarePoints(hw)) trimGrams.push({ H, at: xf(mirrorLocal(H, q)), r: Math.max((hw.size || s0) / 2, 0.75 * spacing), g });
+    }
+  }
+  /** host vertices within d of a pattern segment */
+  const nearLine = (H: PanelInst, a: Pt, b: Pt, d: number, boundaryOnly = false) => {
+    const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1;
+    const list = boundaryOnly ? H.mesh.boundary : H.mesh.uv.map((_, i) => i);
+    return list.filter((i) => {
+      const q = H.mesh.uv[i], t = Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.y - a.y) * dy) / L2));
+      return Math.hypot(q.x - a.x - t * dx, q.y - a.y - t * dy) <= d;
+    });
+  };
+  /** host particles an open zip leaves unsewn */
+  const unsewn = new Set<number>();
+  for (const z of zips) {
+    if (!z.open) continue;
+    const L = Math.hypot(z.b.x - z.a.x, z.b.y - z.a.y);
+    const onEdge = nearLine(z.H, z.a, z.b, z.half + 0.6 * spacing, true);
+    // the zip lies on the piece edge when edge points run along most of its length
+    const ex = (z.b.x - z.a.x) / (L || 1), ey = (z.b.y - z.a.y) / (L || 1);
+    const ts = onEdge.map((i) => (z.H.mesh.uv[i].x - z.a.x) * ex + (z.H.mesh.uv[i].y - z.a.y) * ey);
+    if (onEdge.length >= 2 && Math.max(...ts) - Math.min(...ts) >= 0.5 * L) for (const i of onEdge) unsewn.add(z.H.offset + i);
   }
 
   // pleats: the intake is folded and stitched shut at the edge for the pleat length
@@ -664,7 +758,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   /** pleat folds per panel: A = first fold point, te = along the edge, n = into the piece, L = intake, folds 1 (knife) or 2 */
   const foldsOf = new Map<PanelInst, { A: Pt; te: Pt; n: Pt; L: number; folds: number; length: number }[]>();
   for (const pl of edits.pleats) {
-    for (const P of copiesOf(pl.pieceId)) {
+    for (const P of hostsOf(pl.pieceId, pl.instance)) {
       const g = pleatGeometry(P.mesh, P.piece.points, pl, spacing);
       if (!g) continue;
       pleatSew.push({ id: `pleat:${pl.id}`, links: g.pairs.map(([a, b]) => [P.offset + a, P.offset + b]) });
@@ -706,11 +800,6 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
         return [p[0] + n[0] * sign * H * k, p[1] + n[1] * sign * H * k, p[2] + n[2] * sign * H * k];
       };
     }
-  }
-  {
-    let heavy = 0;
-    for (const P of insts) heavy = Math.max(heavy, fabricById(P.piece.fabric.id).gsm);
-    layer = Math.min(spacing * 0.45, 0.5 + heavy / 1500) * 1.1;
   }
 
   // ---- initial placement ----
@@ -779,14 +868,58 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   }
 
   // attachments: every stitched outline point is tied to the three corners of the host triangle under it
-  // (barycentric pin), at its flat pattern distance plus the layer gap, so it rides on the host cloth
-  for (const { A, H, pins: list } of pins) {
+  // (barycentric pin), at its flat pattern distance plus the layer gap, so it rides on the host cloth; and every
+  // attachment point keeps the layer gap on the host's outer side (the pins alone could flip it underneath)
+  const layerIdx: number[] = [], layerW: number[] = [];
+  const layerNear: NonNullable<Garment3D['layerNear']> = [];
+  const skipPanel = pins.length ? new Int32Array(count).fill(-1) : null;
+  for (const { A, H, pins: list, layer: lay } of pins) {
     for (const { v, hp } of list) {
       const L = locate(H.mesh, hp);
       L.v.forEach((c) => {
         const q = H.mesh.uv[c];
-        bend.push([A.offset + v, H.offset + c, Math.hypot(hp.x - q.x, hp.y - q.y, layer), 0]);
+        bend.push([A.offset + v, H.offset + c, Math.hypot(hp.x - q.x, hp.y - q.y, LAYER_GAP), 0]);
       });
+    }
+    const hostIdx = insts.indexOf(H as (typeof insts)[number]);
+    skipPanel!.fill(hostIdx, A.offset, A.offset + A.mesh.uv.length);
+    const Hp = H as (typeof insts)[number];
+    const HT = H.mesh.tris, Huv = H.mesh.uv;
+    const cH = centreOf(Hp);
+    const triSign = (t: number) => {
+      const P = [HT[t], HT[t + 1], HT[t + 2]].map((c) => [init[(H.offset + c) * 3], init[(H.offset + c) * 3 + 1], init[(H.offset + c) * 3 + 2]] as V3);
+      const mid: V3 = [(P[0][0] + P[1][0] + P[2][0]) / 3, (P[0][1] + P[1][1] + P[2][1]) / 3, (P[0][2] + P[1][2] + P[2][2]) / 3];
+      return dot3(cross(sub3(P[1], P[0]), sub3(P[2], P[0])), sub3(mid, cH)) >= 0 ? 1 : -1;
+    };
+    const signs = new Map<number, number>();
+    const tc = new Float32Array((HT.length / 3) * 2);
+    for (let t = 0; t < HT.length; t += 3) { tc[(t / 3) * 2] = (Huv[HT[t]].x + Huv[HT[t + 1]].x + Huv[HT[t + 2]].x) / 3; tc[(t / 3) * 2 + 1] = (Huv[HT[t]].y + Huv[HT[t + 1]].y + Huv[HT[t + 2]].y) / 3; }
+    const R2 = (1.6 * spacing) ** 2;
+    for (const { v, hp } of lay) {
+      const L = locate(H.mesh, hp);
+      const P = L.v.map((c) => [init[(H.offset + c) * 3], init[(H.offset + c) * 3 + 1], init[(H.offset + c) * 3 + 2]] as V3);
+      const nw = cross(sub3(P[1], P[0]), sub3(P[2], P[0]));
+      const out = onHost(Hp, hp, 0).n;
+      layerIdx.push(A.offset + v, H.offset + L.v[0], H.offset + L.v[1], H.offset + L.v[2]);
+      layerW.push(L.w[0], L.w[1], L.w[2], LAYER_GAP, dot3(nw, out) >= 0 ? 1 : -1);
+      const tris: number[] = [], sg: number[] = [];
+      for (let t = 0; t < HT.length; t += 3) {
+        const cx = tc[(t / 3) * 2] - hp.x, cy = tc[(t / 3) * 2 + 1] - hp.y;
+        if (cx * cx + cy * cy > R2) continue;
+        if (!signs.has(t)) signs.set(t, triSign(t));
+        tris.push(H.offset + HT[t], H.offset + HT[t + 1], H.offset + HT[t + 2]); sg.push(signs.get(t)!);
+      }
+      layerNear.push({ a: A.offset + v, tris: Int32Array.from(tris), sign: Int8Array.from(sg) });
+    }
+  }
+
+  // a zip: long links along its line hold the cloth there straight and stiff, like the zip tape
+  for (const z of zips) {
+    const vs = nearLine(z.H, z.a, z.b, z.half + 0.35 * spacing);
+    const uv = z.H.mesh.uv, o = z.H.offset;
+    for (let i = 0; i < vs.length; i++) for (let j = i + 1; j < vs.length; j++) {
+      const d = Math.hypot(uv[vs[i]].x - uv[vs[j]].x, uv[vs[i]].y - uv[vs[j]].y);
+      if (d > 1.2 * spacing && d < 3.4 * spacing) bend.push([o + vs[i], o + vs[j], d, 0]);
     }
   }
 
@@ -833,7 +966,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   };
   const link = (i: number, j: number, out: [number, number][]) => {
     const k = `${i},${j}`;
-    if (i === j || seen.has(k)) return;
+    if (i === j || seen.has(k) || (unsewn.size && (unsewn.has(i) || unsewn.has(j)))) return;
     seen.add(k);
     sew.push([i, j]);
     out.push([i, j]);
@@ -902,7 +1035,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   }
   // 3: rubber elastic grips the skin much harder than fabric (the solver's friction scales with contact depth)
   if (band) for (const P of insts) if (P.piece === band) contact.fill(3, P.offset, P.offset + P.mesh.uv.length);
-  const body3d = (collider ?? new BodyCollider(body)) as NonNullable<ClothSim['collider']> & { thickness: number };
+  const body3d = (collider ?? new BodyCollider(body)) as BodyLike;
   sim.collider = contact.some((v) => v)
     ? {
       project: (p, j, out) => {
@@ -937,6 +1070,41 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   for (const [P, set] of creased) { let first = -1; for (const v of set) { if (first < 0) first = P.offset + v; else group[find(P.offset + v)] = find(first); } }
   for (let i = 0; i < count; i++) group[i] = find(i);
   sim.panelOf = panelOf; sim.uv = uvs; sim.seamGroup = group;
+  if (layerIdx.length) { sim.layerIdx = Int32Array.from(layerIdx); sim.layerW = Float32Array.from(layerW); sim.skipPanel = skipPanel; }
+  // hardware weight: grams onto the host particles under each trim (spread over the cloth it is fixed through)
+  if (trimGrams.length || zips.length) {
+    const areaOf = new Map<PanelInst, Float32Array>(); // cloth area each particle stands for (cm2)
+    const area = (P: PanelInst) => {
+      let A = areaOf.get(P);
+      if (!A) {
+        A = new Float32Array(P.mesh.uv.length);
+        const { uv, tris } = P.mesh;
+        for (let t = 0; t < tris.length; t += 3) {
+          const a = uv[tris[t]], b = uv[tris[t + 1]], c = uv[tris[t + 2]];
+          const ar = Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 6;
+          A[tris[t]] += ar; A[tris[t + 1]] += ar; A[tris[t + 2]] += ar;
+        }
+        areaOf.set(P, A);
+      }
+      return A;
+    };
+    const addGrams = (P: PanelInst, vs: number[], g: number) => {
+      if (!vs.length) return;
+      const A = area(P);
+      for (const v of vs) {
+        const i = P.offset + v, m0 = 1 / sim.invMass[i];
+        // mass 1 stands for 250 g/m2 of fabric over the particle's area
+        const gramsPerUnit = Math.max(1e-4, (250 * A[v]) / 1e4);
+        sim.invMass[i] = 1 / Math.min(6 * m0, m0 + g / vs.length / gramsPerUnit); // capped: very heavy points upset the solver
+      }
+    };
+    for (const t of trimGrams) {
+      let vs = nearLine(t.H, t.at, t.at, t.r);
+      if (!vs.length) vs = [locate(t.H.mesh, t.at).v[0]];
+      addGrams(t.H, vs, t.g);
+    }
+    for (const z of zips) addGrams(z.H, nearLine(z.H, z.a, z.b, z.half + 0.35 * spacing), ZIP_GRAMS_PER_CM * Math.hypot(z.b.x - z.a.x, z.b.y - z.a.y));
+  }
   const nearSeam = new Uint8Array(count);
   const sewn = new Set<number>();
   for (const [a, b] of sew) { sewn.add(a); sewn.add(b); }
@@ -950,5 +1118,133 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   for (let i = 0; i < count; i++) if (contact[i] === 2) nearSeam[i] = 1;
   sim.nearSeam = nearSeam;
   sim.selfRadius = Math.min(spacing * 0.45, 0.5 + heaviest / 1500); // thicker cloth keeps layers further apart
-  return { sim, panels: insts.map(({ place: _p, shape: _s, ...rest }) => rest), limits, seamLinks };
+  return { sim, panels: insts.map(({ place: _p, shape: _s, ...rest }) => rest), limits, seamLinks, body: body3d, contact, ...(layerNear.length ? { layerNear } : {}) };
+}
+
+/**
+ * Cloth positions as the user sees them: seams closed exactly, then every point that ended up in the drawn
+ * skin (seam averaging, the crease between the thighs, a fast limb) is lifted back out to DISPLAY_MARGIN.
+ * Display only: strain (the Stretch-Risk-O-Meter) is always read from sim.pos, never from these.
+ */
+export function displayPositions(G: Garment3D, out: Float32Array) {
+  G.sim.display(out);
+  const B = G.body, contact = G.contact;
+  if (B && B.thickness > 0) liftOffSkin(G, B, contact, out);
+  // attachments last: always on the outer face of their host as drawn
+  if (G.sim.layerIdx) G.sim.layers(out);
+  if (G.layerNear) for (const L of G.layerNear) liftOffHost(out, L);
+}
+
+/** Display: an attachment point keeps LAYER_GAP over the nearest of the host triangles around it. */
+function liftOffHost(out: Float32Array, L: { a: number; tris: Int32Array; sign: Int8Array }) {
+  const a = L.a * 3, x = out[a], y = out[a + 1], z = out[a + 2];
+  let best = Infinity, bt = -1, bq: V3 = [0, 0, 0];
+  for (let t = 0; t < L.tris.length; t += 3) {
+    const q = closestOnTri(out, L.tris[t] * 3, L.tris[t + 1] * 3, L.tris[t + 2] * 3, x, y, z);
+    const d2 = (q[0] - x) ** 2 + (q[1] - y) ** 2 + (q[2] - z) ** 2;
+    if (d2 < best) { best = d2; bt = t; bq = q; }
+  }
+  if (bt < 0) return;
+  const i0 = L.tris[bt] * 3, i1 = L.tris[bt + 1] * 3, i2 = L.tris[bt + 2] * 3;
+  const n = cross([out[i1] - out[i0], out[i1 + 1] - out[i0 + 1], out[i1 + 2] - out[i0 + 2]], [out[i2] - out[i0], out[i2 + 1] - out[i0 + 1], out[i2 + 2] - out[i0 + 2]]);
+  const l = len3(n);
+  if (l < 1e-9) return;
+  const k = L.sign[bt / 3] / l;
+  const d = (x - bq[0]) * n[0] * k + (y - bq[1]) * n[1] * k + (z - bq[2]) * n[2] * k;
+  if (d >= LAYER_GAP) return;
+  const c = (LAYER_GAP - d) * k;
+  out[a] += n[0] * c; out[a + 1] += n[1] * c; out[a + 2] += n[2] * c;
+}
+
+/** closest point on triangle a b c (particle offsets into P) to (px, py, pz) */
+function closestOnTri(P: Float32Array, a: number, b: number, c: number, px: number, py: number, pz: number): V3 {
+  const A: V3 = [P[a], P[a + 1], P[a + 2]], B: V3 = [P[b], P[b + 1], P[b + 2]], C: V3 = [P[c], P[c + 1], P[c + 2]], X: V3 = [px, py, pz];
+  const ab = sub3(B, A), ac = sub3(C, A), ap = sub3(X, A);
+  const d1 = dot3(ab, ap), d2 = dot3(ac, ap);
+  if (d1 <= 0 && d2 <= 0) return A;
+  const bp = sub3(X, B), d3 = dot3(ab, bp), d4 = dot3(ac, bp);
+  if (d3 >= 0 && d4 <= d3) return B;
+  const vc = d1 * d4 - d3 * d2;
+  if (vc <= 0 && d1 >= 0 && d3 <= 0) { const v = d1 / (d1 - d3); return [A[0] + ab[0] * v, A[1] + ab[1] * v, A[2] + ab[2] * v]; }
+  const cp = sub3(X, C), d5 = dot3(ab, cp), d6 = dot3(ac, cp);
+  if (d6 >= 0 && d5 <= d6) return C;
+  const vb = d5 * d2 - d1 * d6;
+  if (vb <= 0 && d2 >= 0 && d6 <= 0) { const w = d2 / (d2 - d6); return [A[0] + ac[0] * w, A[1] + ac[1] * w, A[2] + ac[2] * w]; }
+  const va = d3 * d6 - d5 * d4;
+  if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) { const w = (d4 - d3) / (d4 - d3 + (d5 - d6)); return [B[0] + (C[0] - B[0]) * w, B[1] + (C[1] - B[1]) * w, B[2] + (C[2] - B[2]) * w]; }
+  const den = 1 / (va + vb + vc), v = vb * den, w = vc * den;
+  return [A[0] + ab[0] * v + ac[0] * w, A[1] + ab[1] * v + ac[1] * w, A[2] + ab[2] * v + ac[2] * w];
+}
+
+function liftOffSkin(G: Garment3D, B: BodyLike, contact: Uint8Array | undefined, out: Float32Array) {
+  const t = B.thickness, fl = B.flat, caps = B.useCaps, skin = B.skinning;
+  B.thickness = DISPLAY_MARGIN;
+  if (fl) B.flat = [-1, -1];
+  if (caps !== undefined) B.useCaps = false;
+  if (skin !== undefined) B.skinning = true; // the drawn body is skinned: check against exactly that surface
+  const hit: Hit = { nx: 0, ny: 0, nz: 0, depth: 0 };
+  try {
+    // cloth in the crease between the thighs leaves it forward (front legs) or backward (back legs) in the thigh's frame
+    if (B.escape && contact) for (const P of G.panels) {
+      const dir = P.attach ? 0 : P.piece.role === 'front' ? 1 : P.piece.role === 'back' ? -1 : 0;
+      if (!dir) continue;
+      const bone = P.mirror ? 7 : 5;
+      for (let v = P.offset; v < P.offset + P.mesh.uv.length; v++) if (contact[v] === 2) B.escape(out, v * 3, bone, 0, 0, dir, DISPLAY_MARGIN);
+    }
+    // distance off the skin per point (cm, up to NEAR; NEAR means further) and the skin normal under it
+    const n = G.sim.n, dist = new Float32Array(n).fill(NEAR), nrm = new Float32Array(n * 3), tmp = new Float32Array(3);
+    B.thickness = NEAR;
+    for (let i = 0; i < n; i++) {
+      if (contact && contact[i] === 1) continue;
+      const j = i * 3;
+      tmp[0] = out[j]; tmp[1] = out[j + 1]; tmp[2] = out[j + 2];
+      if (!B.project(tmp, 0, hit)) continue;
+      const dx = tmp[0] - out[j], dy = tmp[1] - out[j + 1], dz = tmp[2] - out[j + 2], mv = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (mv < 1e-9) continue;
+      nrm[j] = dx / mv; nrm[j + 1] = dy / mv; nrm[j + 2] = dz / mv;
+      const d = NEAR - mv;
+      if (d >= DISPLAY_MARGIN) { dist[i] = d; continue; }
+      // lift to the margin along the way out
+      const k = (DISPLAY_MARGIN - d) / mv;
+      out[j] += dx * k; out[j + 1] += dy * k; out[j + 2] += dz * k;
+      dist[i] = DISPLAY_MARGIN;
+      if (contact && contact[i] === 2) {
+        // the blended field is shallow where limbs meet (between the thighs): a few more steps reach the drawn surface
+        B.thickness = DISPLAY_MARGIN;
+        for (let it = 0; it < 8; it++) if (!B.project(out, j, hit)) break;
+        B.thickness = NEAR;
+      }
+    }
+    // a flat triangle cuts through a tightly curved body (wrist, heel) between its corners. Over a curve the
+    // straight edge dips below its ends by about half its length times tan(a / 4), a = angle between the skin
+    // normals at the ends (a circle through both); the centre of a triangle dips about a third more. Where that
+    // would bring an edge or centre closer than CHORD_MARGIN, the corners are lifted along their normals.
+    const dip = (u: number, v: number) => {
+      const c = Math.max(-1, Math.min(1, nrm[u * 3] * nrm[v * 3] + nrm[u * 3 + 1] * nrm[v * 3 + 1] + nrm[u * 3 + 2] * nrm[v * 3 + 2]));
+      const L = Math.hypot(out[u * 3] - out[v * 3], out[u * 3 + 1] - out[v * 3 + 1], out[u * 3 + 2] - out[v * 3 + 2]);
+      return 1.3 * 0.5 * L * Math.tan(Math.acos(c) / 4); // 30% spare: skin is not a perfect circle
+    };
+    const raise = (vs: number[], by: number) => {
+      for (const v of vs) {
+        const j = v * 3;
+        out[j] += nrm[j] * by; out[j + 1] += nrm[j + 1] * by; out[j + 2] += nrm[j + 2] * by;
+      }
+      for (const v of vs) dist[v] += by;
+    };
+    for (const P of G.panels) {
+      const T = P.mesh.tris, o = P.offset;
+      for (let t = 0; t < T.length; t += 3) {
+        const a = o + T[t], b = o + T[t + 1], c = o + T[t + 2];
+        if (dist[a] >= NEAR || dist[b] >= NEAR || dist[c] >= NEAR) continue; // a corner well off the skin
+        const sab = dip(a, b), sbc = dip(b, c), sca = dip(c, a);
+        const need = CHORD_MARGIN - Math.min((dist[a] + dist[b]) / 2 - sab, (dist[b] + dist[c]) / 2 - sbc, (dist[c] + dist[a]) / 2 - sca, (dist[a] + dist[b] + dist[c]) / 3 - 1.35 * Math.max(sab, sbc, sca));
+        if (need > 0) raise([a, b, c], need);
+      }
+    }
+  } finally {
+    B.thickness = t;
+    if (fl) B.flat = fl;
+    if (caps !== undefined) B.useCaps = caps;
+    if (skin !== undefined) B.skinning = skin;
+  }
 }

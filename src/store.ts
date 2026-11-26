@@ -404,7 +404,11 @@ export const useStore = create<State>((set, get) => {
     addAttachment: (a) => {
       const id = uid();
       get().commit();
-      setEdits((e) => ({ ...e, attachments: [...e.attachments, { ...a, id }] }));
+      // on a piece cut more than once (sleeves, pant legs) a new attachment goes on one side: the right one unless
+      // chosen. Saved attachments without an instance keep meaning "every copy".
+      const host = get().project.pieces.find((p) => p.id === a.pieceId);
+      const inst = a.instance === undefined && host && host.cut > 1 ? { instance: 0 } : {};
+      setEdits((e) => ({ ...e, attachments: [...e.attachments, { ...a, ...inst, id }] }));
       set({ selAttachment: id });
       return id;
     },

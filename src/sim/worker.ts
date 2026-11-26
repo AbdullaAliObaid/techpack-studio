@@ -1,5 +1,5 @@
 // Cloth simulation runs here, off the main thread, so the editor stays smooth while fabric drapes.
-import { assemble, warmStart, type Garment3D } from './setup';
+import { assemble, displayPositions, warmStart, type Garment3D } from './setup';
 import type { GarmentType, Piece } from '../data/presets';
 import type { Body } from '../three/body';
 import { calibratedField } from '../three/bodyField';
@@ -87,7 +87,7 @@ function loop(myGen: number) {
   G.sim.step();
   simTime += 1 / 60;
   const pos = new Float32Array(G.sim.n * 3);
-  G.sim.display(pos);
+  displayPositions(G, pos);
   let strain: Float32Array | undefined;
   let peak: { ratio: number; strain: number; y: number; over: number } | undefined;
   if (G.sim.frames % 6 === 0 || G.sim.sleeping) {
@@ -185,7 +185,7 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
     groups.push({ start, count: index.length - start, panel: k });
   });
   const pos = new Float32Array(G.sim.n * 3);
-  G.sim.display(pos);
+  displayPositions(G, pos);
   // ---- picking and prints: which pattern piece and pattern point every cloth vertex is ----
   //   pieceIds[k]         id of entry k: a pattern piece id, or for a cloth attachment panel the attachment id
   //                       (a user piece patched on keeps its own piece id)
@@ -195,7 +195,9 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
   //                       before rotation). Barycentric interpolation of these over a raycast hit triangle
   //                       gives the pattern point under the cursor, which is where a print or attachment goes.
   //   panels[k]           per placed panel (same order as groups): vertex range start..start+count, pieceIndex,
-  //                       instance (placed copy of a piece cut more than once: 0 right / 1 left, crown 0..5), mirror
+  //                       instance (placed copy of a piece cut more than once: 0 right / 1 left, crown 0..5), mirror,
+  //                       and for an attachment panel hostInstance (the host copy it sits on). A text applique has
+  //                       one panel per letter, all with the attachment id. Labels: instanceLabel in src/sim/seams.ts
   //   attachmentPanels    cloth attachment panels: attachment id, vertex range, kind, host piece id, host instance
   const pieceIds: string[] = [];
   const pieceIndex = (id: string) => { let k = pieceIds.indexOf(id); if (k < 0) { k = pieceIds.length; pieceIds.push(id); } return k; };
@@ -203,7 +205,8 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
   const panels = G.panels.map((p) => {
     const k = pieceIndex(p.attach?.id ?? p.piece.id);
     p.mesh.uv.forEach((q, i) => { vertexPiece[p.offset + i] = k; vertexPatternUv[(p.offset + i) * 2] = q.x; vertexPatternUv[(p.offset + i) * 2 + 1] = q.y; });
-    return { start: p.offset, count: p.mesh.uv.length, pieceIndex: k, instance: p.instance, mirror: p.mirror };
+    // an attachment panel also says which copy of its host it sits on (0 right, 1 left)
+    return { start: p.offset, count: p.mesh.uv.length, pieceIndex: k, instance: p.instance, mirror: p.mirror, ...(p.attach ? { hostInstance: G!.panels[p.attach.host].instance } : {}) };
   });
   const attachmentPanels = G.panels.flatMap((p) => p.attach ? [{
     attachmentId: p.attach.id, start: p.offset, count: p.mesh.uv.length, kind: p.attach.kind,

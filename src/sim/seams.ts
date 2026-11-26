@@ -32,7 +32,26 @@ export function instanceCount(style: StyleId, p: Piece): number {
   if (p.role === 'sleeve') return 2;
   if (p.role === 'cuff') return fam === 'shirt' || fam === 'pants' ? 2 : 1;
   if (fam === 'pants' && (p.role === 'front' || p.role === 'back')) return 2;
+  if (p.role === 'custom') return p.cut > 1 ? 2 : 1; // a user piece cut twice is placed as a pair
   return 1;
+}
+
+/**
+ * Plain language name of one placed copy of a piece, for the UI, specs, PDF and DXF:
+ * 'Right front leg', 'Left sleeve', 'Crown panel 3'. A piece placed once keeps its name. Without an
+ * instance (an edit on every copy): 'Both front legs', 'All 6 crown panels'.
+ */
+export function instanceLabel(style: StyleId, piece: Piece, instance?: number): string {
+  const n = instanceCount(style, piece);
+  const name = piece.name || 'Piece';
+  if (n <= 1) return name;
+  const lower = name.charAt(0).toLowerCase() + name.slice(1);
+  if (instance === undefined) {
+    const plural = /s$/i.test(lower) ? lower : `${lower}s`;
+    return n === 2 ? `Both ${plural}` : `All ${n} ${plural}`;
+  }
+  if (piece.role === 'crown') return `${name} ${Math.max(0, Math.min(n - 1, instance)) + 1}`;
+  return `${instance === 1 ? 'Left' : 'Right'} ${lower}`;
 }
 
 export function builtinSeams(style: StyleId, pieces: Piece[]): BuiltinSeam[] {
