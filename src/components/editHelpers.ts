@@ -71,16 +71,20 @@ export type AttachTemplate = Omit<Attachment, 'id' | 'pieceId' | 'x' | 'y'>;
 export const KINDS: { id: AttachKind; label: string }[] = [
   { id: 'pocket', label: 'Pocket' },
   { id: 'patch', label: 'Patch' },
+  { id: 'applique', label: 'Applique' },
   { id: 'strap', label: 'Strap' },
+  { id: 'embroidery', label: 'Embroidery' },
   { id: 'print', label: 'Print' },
+  { id: 'hardware', label: 'Hardware' },
 ];
-export const KIND_LABEL: Record<AttachKind, string> = { pocket: 'Pocket', patch: 'Patch', applique: 'Applique', strap: 'Strap', embroidery: 'Embroidery', print: 'Print', hardware: 'Hardware' };
+export const KIND_ICON: Record<AttachKind, string> = { pocket: 'pocket', patch: 'patch', applique: 'applique', strap: 'strap', embroidery: 'embroidery', print: 'print', hardware: 'hardware' };
+export const KIND_LABEL: Record<AttachKind, string> = { pocket: 'Pocket', patch: 'Patch', applique: 'Appliqué', strap: 'Strap', embroidery: 'Embroidery', print: 'Print', hardware: 'Hardware' };
 export const KIND_BLURB: Record<AttachKind, string> = {
   pocket: 'Cloth sewn on three sides, top open.',
   patch: 'Cloth sewn on all round.',
   strap: 'A strip sewn at both ends, like a belt loop.',
   print: 'No extra cloth. Ink printed onto the piece.',
-  applique: 'A shape or letter cut from fabric and stitched down all round.',
+  applique: 'A shape or letters cut from fabric and stitched down all round.',
   embroidery: 'Thread stitched into the piece.',
   hardware: 'Metal trim fixed through the fabric.',
 };
@@ -104,35 +108,6 @@ export function stripeLayers(w: number, h: number, count = 3): ShapeLayer[] {
   const bh = h / (count * 2 + 1);
   return Array.from({ length: count }, (_, i) => layer('stripe', { x: 0, y: -h / 2 + bh * (1.5 + i * 2), w, h: bh, color: i % 2 ? PALETTE[0] : PALETTE[2] }));
 }
-export function starFieldLayers(w: number, h: number): ShapeLayer[] {
-  const spots: [number, number, number][] = [[-0.28, -0.22, 0.22], [0.25, -0.28, 0.16], [0, 0.02, 0.26], [-0.25, 0.28, 0.15], [0.28, 0.25, 0.2]];
-  const m = Math.min(w, h);
-  return spots.map(([fx, fy, s], i) => layer(i % 2 ? 'star4' : 'star', { x: fx * w, y: fy * h, w: s * m * 1.6, h: s * m * 1.6, rotation: i * 14, color: i % 2 ? PALETTE[0] : PALETTE[1] }));
-}
-
-export interface TemplateDef { key: string; label: string; outline: Outline; make: () => AttachTemplate }
-
-export function templatesFor(kind: AttachKind): TemplateDef[] {
-  const base = (name: string, outline: Outline, w: number, h: number, layers: () => ShapeLayer[] = () => []): AttachTemplate => ({ kind, name, rotation: 0, w, h, outline, layers: layers() });
-  if (kind === 'print') {
-    return [
-      { key: 'stripes', label: 'Stripes', outline: 'rect', make: () => base('Stripes', 'rect', 24, 9, () => stripeLayers(24, 9)) },
-      { key: 'stars', label: 'Star field', outline: 'rect', make: () => base('Star field', 'rect', 18, 14, () => starFieldLayers(18, 14)) },
-      { key: 'emblem', label: 'Emblem', outline: 'circle', make: () => base('Emblem', 'circle', 10, 10, () => [layer('ring', { w: 10, h: 10, color: PALETTE[0] }), layer('star', { w: 5.5, h: 5.5, color: PALETTE[1] })]) },
-      { key: 'text', label: 'Name text', outline: 'rect', make: () => base('Name text', 'rect', 16, 4, () => [layer('text', { w: 14, h: 3, text: 'NAME', color: PALETTE[0] })]) },
-    ];
-  }
-  const size: Record<AttachKind, [number, number]> = { pocket: [14, 16], patch: [9, 9], applique: [8, 8], strap: [2.5, 8], embroidery: [8, 8], print: [10, 10], hardware: [1, 1] };
-  const [w, h] = size[kind];
-  const outlines = kind === 'strap' ? OUTLINE_LIST.slice(0, 3) : OUTLINE_LIST;
-  return outlines.map((o) => ({
-    key: o.id,
-    label: o.label,
-    outline: o.id,
-    make: () => base(`${KIND_LABEL[kind]}, ${o.label.toLowerCase()}`, o.id, o.id === 'circle' && kind !== 'strap' ? Math.min(w, h) : w, o.id === 'circle' && kind !== 'strap' ? Math.min(w, h) : h, () => (kind === 'patch' ? [layer('star', { w: Math.min(w, h) * 0.55, h: Math.min(w, h) * 0.55 })] : [])),
-  }));
-}
-
 /* ---------- pose limits ---------- */
 
 export interface JointDef { key: string; side: 0 | 1 | null; label: string }

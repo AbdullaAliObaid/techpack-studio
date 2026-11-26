@@ -4,18 +4,18 @@ import { useStore } from '../store';
 import { MODES } from '../sim/pose';
 import type { SideAngles } from '../data/edits';
 import { JOINT_LABEL, poseLimits } from './editHelpers';
-import { Row, Switch } from './controls';
+import { Disclosure, Row, Switch } from './controls';
 import Icon from './Icon';
 
 const D = 180 / Math.PI;
 const ARM: (keyof SideAngles)[] = ['shFlex', 'shAbd', 'shHoriz', 'elbow'];
 const LEG: (keyof SideAngles)[] = ['hipFlex', 'hipAbd', 'knee'];
 // s[0] is the +x side, which is the body's left when it faces the viewer
-const GROUPS: { title: string; side: 0 | 1; keys: (keyof SideAngles)[] }[] = [
-  { title: 'Left arm', side: 0, keys: ARM },
-  { title: 'Right arm', side: 1, keys: ARM },
-  { title: 'Left leg', side: 0, keys: LEG },
-  { title: 'Right leg', side: 1, keys: LEG },
+const GROUPS: { title: string; icon: string; side: 0 | 1; keys: (keyof SideAngles)[] }[] = [
+  { title: 'Left arm', icon: 'pose', side: 0, keys: ARM },
+  { title: 'Right arm', icon: 'pose', side: 1, keys: ARM },
+  { title: 'Left leg', icon: 'pose', side: 0, keys: LEG },
+  { title: 'Right leg', icon: 'pose', side: 1, keys: LEG },
 ];
 
 export default function PosePanel() {
@@ -42,38 +42,34 @@ export default function PosePanel() {
 
   return (
     <>
-      <div className="card">
-        <div className="card-title">Movement</div>
+      <Disclosure id="body-move" title="Movement" icon="pose">
         <div className="mode-grid" role="group" aria-label="Movement">
           {MODES.map((m) => (
             <button key={m.id} className={mode === m.id ? 'on' : ''} aria-pressed={mode === m.id} onClick={() => set({ mode: m.id })}>{m.id === 'custom' ? 'Pose' : m.label}</button>
           ))}
         </div>
-        {!posing && <p className="group-note" style={{ padding: '8px 0 0' }}>Move any slider below to pose the body yourself. The garment drapes to the pose.</p>}
-      </div>
+        {!posing && <p className="group-note">Choose Pose, or move any slider below, to pose the body yourself. The garment drapes to the pose.</p>}
+      </Disclosure>
 
-      <div className="card">
-        <div className="card-title">Joints</div>
+      <Disclosure id="body-joints" title="Pose by hand" icon="joints" defaultOpen={false}>
         <Row label="Mirror left and right"><Switch label="Mirror left and right" on={symmetricPose} onChange={(v) => {
           set({ symmetricPose: v });
           if (v) for (const k of [...ARM, ...LEG]) setPoseAngle(1, k, customPose.s[0][k]); // copy the left side over
         }} /></Row>
         <button className="btn block" style={{ marginTop: 8 }} onClick={resetPose}><Icon name="refresh" size={16} /> Reset pose</button>
-      </div>
+      </Disclosure>
 
       {GROUPS.map((g) => (
-        <div className="card" key={g.title}>
-          <div className="card-title">{g.title}</div>
+        <Disclosure key={g.title} id={`body-${g.title.replace(' ', '-').toLowerCase()}`} title={g.title} icon={g.icon} defaultOpen={false}>
           {g.keys.map((k) => slider(g.side, k, customPose.s[g.side][k], g.title.replace(' ', '-')))}
-        </div>
+        </Disclosure>
       ))}
 
-      <div className="card">
-        <div className="card-title">Body</div>
+      <Disclosure id="body-trunk" title="Body and head" icon="body" defaultOpen={false}>
         {slider(null, 'spineBend', customPose.spineBend, 'body')}
         {slider(null, 'spineTwist', customPose.spineTwist, 'body')}
         {slider(null, 'headTurn', customPose.headTurn, 'body')}
-      </div>
+      </Disclosure>
     </>
   );
 }

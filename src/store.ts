@@ -28,7 +28,38 @@ export interface Project {
 
 export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen';
 export type ThemePref = 'system' | 'light' | 'dark';
-export type InspectorTab = 'library' | 'fabric' | 'patchwork' | 'seams' | 'pose' | 'specs';
+export type InspectorTab = 'garment' | 'design' | 'construction' | 'body' | 'specs';
+
+/** State of the step by step "New piece" sheet (Shape, Details, Attach). Null when closed. */
+export interface PieceFlow {
+  step: 1 | 2 | 3;
+  /** outline in pattern space (cm) from a template or the pen; null until chosen */
+  shape: PenPoint[] | null;
+  source: 'template' | 'pen';
+  template: string;
+  tw: number;
+  th: number;
+  /** the pen tool is active for this flow (the sheet steps aside) */
+  drawing: boolean;
+  name: string;
+  fabricMode: 'same' | 'pick';
+  fabric: { id: string; color: number };
+  cut: 1 | 2;
+  attach: 'patch' | 'sewn';
+  host: string;
+  /** copy of the host the piece goes on (0 right, 1 left); null when the host is cut once */
+  side: number | null;
+  /** index of the new piece's edge that gets sewn (the edge starting at that outline point) */
+  ownEdge: number;
+  hostEdge: EdgeRef | null;
+  /** waiting for a click on an edge of the chart */
+  picking: boolean;
+}
+
+const SECTION_KEY = 'tech-it-sections';
+export function readSections(): Record<string, boolean> {
+  try { return JSON.parse(localStorage.getItem(SECTION_KEY) ?? '{}') as Record<string, boolean>; } catch { return {}; }
+}
 
 /** Seam being joined by hand: a range on one piece, then a range on another (point ids on the outline). */
 export interface SeamDraft { a: Partial<EdgeRef> | null; b: Partial<EdgeRef> | null; flip: boolean }
@@ -86,6 +117,17 @@ interface State {
   /** hint shown after placing a sewn piece */
   seamHint: string | null;
   symmetricPose: boolean;
+  /** pieces cut twice are shown as two labelled patterns, right and left */
+  showBothSides: boolean;
+  /** which copy of a piece cut twice was last clicked on the chart (0 right, 1 left) */
+  selInstance: number | null;
+  pieceFlow: PieceFlow | null;
+  setFlow: (patch: Partial<PieceFlow>) => void;
+  /** open or closed state of inspector sections, remembered on this device */
+  sections: Record<string, boolean>;
+  setSection: (id: string, open: boolean) => void;
+  /** inspector as a slide over drawer on narrow screens */
+  drawer: boolean;
   /** drop every half-finished tool action and go back to Select */
   cancelTools: () => void;
 
@@ -175,7 +217,7 @@ export const useStore = create<State>((set, get) => {
   return {
     project: freshProject('jacket', 'My first jacket'),
     theme: readTheme(),
-    inspectorTab: 'fabric',
+    inspectorTab: 'garment',
     units: 'cm',
     tool: 'select',
     symmetry: true,
@@ -207,7 +249,18 @@ export const useStore = create<State>((set, get) => {
     penSheet: null,
     seamHint: null,
     symmetricPose: true,
-    cancelTools: () => set({ tool: 'select', seamDraft: EMPTY_SEAM_DRAFT, penDraft: [], penSheet: null, seamHint: null, selLayer: null, selPleat: null, hoverSeam: null }),
+    cancelTools: () => set({ tool: 'select', seamDraft: EMPTY_SEAM_DRAFT, penDraft: [], penSheet: null, pieceFlow: null, seamHint: null, selLayer: null, selPleat: null, hoverSeam: null }),
+    showBothSides: true,
+    selInstance: null,
+    pieceFlow: null,
+    setFlow: (patch) => set((s) => (s.pieceFlow ? { pieceFlow: { ...s.pieceFlow, ...patch } } : {})),
+    sections: readSections(),
+    setSection: (id, open) => set((s) => {
+      const sections = { ...s.sections, [id]: open };
+      try { localStorage.setItem(SECTION_KEY, JSON.stringify(sections)); } catch { /* storage blocked */ }
+      return { sections };
+    }),
+    drawer: false,
 
     set: (s) => set(s),
 
@@ -227,7 +280,7 @@ export const useStore = create<State>((set, get) => {
       restore(future[0]);
     },
 
-    select: (piece, point = null) => set({ selPiece: piece, selPoint: point }),
+    select: (piece, point = null) => set({ selPiece: piece, selPoint: point, ...(piece === null ? { selInstance: null } : {}) }),
 
     movePoint: (pieceId, pointId, x, y) => {
       const { symmetry, project } = get();

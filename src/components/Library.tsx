@@ -137,7 +137,7 @@ export function Sketch({ id }: { id: StyleId }) {
 }
 
 export default function Library() {
-  const { project, newProject, set } = useStore();
+  const { project, newProject, setSection } = useStore();
   const [cat, setCat] = useState<Category>(() => CATALOG.find((s) => s.id === migrateGarment(project.garment))?.category ?? 'tops');
   const [err, setErr] = useState<string | null>(null);
   const current = migrateGarment(project.garment);
@@ -147,7 +147,7 @@ export default function Library() {
     setErr(null);
     try {
       newProject(id as Parameters<typeof newProject>[0]);
-      set({ inspectorTab: 'fabric' });
+      setSection('gar-style', false);
     } catch {
       setErr('That style is not available yet.');
     }

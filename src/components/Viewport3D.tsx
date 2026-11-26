@@ -6,10 +6,18 @@ import { MODES } from '../sim/pose';
 import { fabricById } from '../data/fabrics';
 import ClothView from '../three/ClothView';
 import StudioLight from '../three/StudioLight';
-import BodyPanel from './BodyPanel';
+import BodyCard from './BodyPanel';
 import MeasureOverlay from '../three/MeasureOverlay';
 import { useCssVars } from './theme';
 import Icon from './Icon';
+import { PaneTitle } from './controls';
+import { CATALOG, migrateGarment } from '../data/catalog';
+
+const Tgl = ({ on, icon, label, onChange }: { on: boolean; icon: string; label: string; onChange: (v: boolean) => void }) => (
+  <button className={`tgl ${on ? 'on' : ''}`} aria-pressed={on} title={`${on ? 'Hide' : 'Show'} ${label.toLowerCase()}`} onClick={() => onChange(!on)}>
+    <Icon name={icon} size={16} /><span>{label}</span>
+  </button>
+);
 
 export default function Viewport3D() {
   const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode } = useStore();
@@ -20,7 +28,15 @@ export default function Viewport3D() {
   const peak = drapePeak;
   const peakFabric = fabricById(pieces.find((p) => p.role === 'front')?.fabric.id ?? 'canvas');
 
+  const style = CATALOG.find((x) => x.id === migrateGarment(garment))?.name ?? 'Garment';
   return (
+    <section className="pane view3d" aria-label="3D view">
+    <PaneTitle icon="cube" title="3D view" meta={style}>
+      <div className="seg" role="group" aria-label="3D view mode">
+        <button className={!stretch ? 'on' : ''} aria-pressed={!stretch} onClick={() => set({ view3d: 'fabric' })}>Fabric</button>
+        <button className={stretch ? 'on' : ''} aria-pressed={stretch} onClick={() => set({ view3d: 'stretch' })}>Stretch-Risk-O-Meter</button>
+      </div>
+    </PaneTitle>
     <div className="viewport">
       <Canvas shadows dpr={[1, 2]} gl={{ preserveDrawingBuffer: true }} camera={{ position: [-H * 0.18, H * 0.6, H * 2.3], fov: 32, near: 1, far: 5000 }}>
         <color attach="background" args={[tv['--viewport'] || '#f2f2f7']} />
@@ -42,66 +58,57 @@ export default function Viewport3D() {
       </Canvas>
 
       <div className="vp-top">
-        <div className="seg material" role="group" aria-label="3D view">
-          <button className={!stretch ? 'on' : ''} aria-pressed={!stretch} onClick={() => set({ view3d: 'fabric' })}>Fabric</button>
-          <button className={stretch ? 'on' : ''} aria-pressed={stretch} onClick={() => set({ view3d: 'stretch' })}>Stretch-Risk-O-Meter</button>
+        <div className="vp-toolbar material" role="toolbar" aria-label="Show in 3D view">
+          <Tgl on={showBody} icon="body" label="Body" onChange={(v) => set({ showBody: v })} />
+          <Tgl on={showGarment} icon="garment" label="Garment" onChange={(v) => set({ showGarment: v })} />
+          <Tgl on={showJoints} icon="joints" label="Joints" onChange={(v) => set({ showJoints: v })} />
+          <Tgl on={showTape} icon="tape" label="Tape" onChange={(v) => set({ showTape: v })} />
         </div>
-        <label className="chk material">
-          <input type="checkbox" checked={showBody} onChange={(e) => set({ showBody: e.target.checked })} /> Body
-        </label>
-        <label className="chk material">
-          <input type="checkbox" checked={showGarment} onChange={(e) => set({ showGarment: e.target.checked })} /> Garment
-        </label>
-        <label className="chk material">
-          <input type="checkbox" checked={showJoints} onChange={(e) => set({ showJoints: e.target.checked })} /> Joints
-        </label>
-        <label className="chk material">
-          <input type="checkbox" checked={showTape} onChange={(e) => set({ showTape: e.target.checked })} /> Tape measure
-        </label>
       </div>
 
       <div className="vp-bottom">
-      {stretch && (
-        <div className="legend material">
-          <div className="legend-bar" />
-          <div className="legend-row">
-            <span>Relaxed</span>
-            <span>At limit</span>
-            <span>Rip risk</span>
+        {stretch && (
+          <div className="legend material">
+            <div className="legend-bar" />
+            <div className="legend-row">
+              <span>Relaxed</span>
+              <span>At limit</span>
+              <span>Rip risk</span>
+            </div>
+            <div className="legend-peak">
+              {peak.ratio < 0.15 ? (
+                <>Everything has room. Loose fit, no strain.</>
+              ) : (
+                <>
+                  {mode !== 'stand' ? 'Worst moment while ' + MODES.find((m) => m.id === mode)!.label.toLowerCase() + ': ' : ''}Tightest at the <b>{peak.where}</b>: stretching {(peak.strain * 100).toFixed(1)}%
+                  {' '}({Math.round(peak.ratio * 100)}% of what {peakFabric.name.toLowerCase()} can safely take)
+                  {peak.over !== undefined && peak.over > 0.005 && <>. {(peak.over * 100).toFixed(0)}% of the garment is past its safe stretch.</>}
+                </>
+              )}
+            </div>
+            <div className="legend-note">Measured from the simulated cloth{mode === 'stand' ? ', standing. Pick a movement to stress test it.' : ' through the movement.'}</div>
           </div>
-          <div className="legend-peak">
-            {peak.ratio < 0.15 ? (
-              <>Everything has room. Loose fit, no strain.</>
-            ) : (
-              <>
-                {mode !== 'stand' ? 'Worst moment while ' + MODES.find((m) => m.id === mode)!.label.toLowerCase() + ': ' : ''}Tightest at the <b>{peak.where}</b>: stretching {(peak.strain * 100).toFixed(1)}%
-                {' '}({Math.round(peak.ratio * 100)}% of what {peakFabric.name.toLowerCase()} can safely take)
-                {peak.over !== undefined && peak.over > 0.005 && <>. {(peak.over * 100).toFixed(0)}% of the garment is past its safe stretch.</>}
-              </>
-            )}
+        )}
+
+        <div className="vp-bar material">
+          <div className="vp-bar-group" role="group" aria-label="Movement">
+            <span className="vp-bar-label"><Icon name="pose" size={16} /> Movement</span>
+            <div className="move-grid">
+              {MODES.map((m) => (
+                <button key={m.id} className={mode === m.id ? 'on' : ''} aria-pressed={mode === m.id} onClick={() => set(m.id === 'custom' ? { mode: m.id, inspectorTab: 'body', ...(window.innerWidth <= 960 ? { drawer: true } : {}) } : { mode: m.id })}>{m.id === 'custom' ? 'Pose' : m.label}</button>
+              ))}
+            </div>
           </div>
-          <div className="legend-note">Measured from the simulated cloth{mode === 'stand' ? ', standing. Pick a movement to stress test it.' : ' through the movement.'}</div>
-        </div>
-      )}
-
-      <div className="motion-bar material" role="group" aria-label="Movement">
-        <span>Movement</span>
-        <div className="seg">
-          {MODES.map((m) => (
-            <button key={m.id} className={mode === m.id ? 'on' : ''} aria-pressed={mode === m.id} onClick={() => set(m.id === 'custom' ? { mode: m.id, inspectorTab: 'pose' } : { mode: m.id })}>{m.id === 'custom' ? 'Pose' : m.label}</button>
-          ))}
+          <div className="vp-bar-group status" role="status">
+            <span className={`drape-dot ${draping ? 'on' : ''}`} aria-hidden="true" />
+            <span className="drape-text">{draping ? simStatus || 'Simulating fabric…' : 'Draped'}</span>
+            <button className="btn small" onClick={() => set({ redrapeToken: redrapeToken + 1 })}><Icon name="refresh" size={14} /> Re-drape</button>
+          </div>
         </div>
       </div>
 
-      <div className="drape-bar material" role="status">
-        <span className={`drape-dot ${draping ? 'on' : ''}`} aria-hidden="true" />
-        {draping ? simStatus || 'Simulating fabric…' : 'Draped'}
-        <button className="btn small" onClick={() => set({ redrapeToken: redrapeToken + 1 })}><Icon name="refresh" size={14} /> Re-drape</button>
-      </div>
-
-      </div>
-
-      <BodyPanel />
+      <BodyCard />
     </div>
+    </section>
   );
 }

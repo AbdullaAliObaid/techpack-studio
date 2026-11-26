@@ -11,17 +11,21 @@ import { fmt } from '../lib/units';
 import { pointInPoly } from '../lib/geometry';
 import { builtinSeams } from '../sim/seams';
 import type { Attachment, EdgeRef, Pleat } from '../data/edits';
-import { ArtworkGroup, outlineD } from './Artwork';
+import { ArtworkGroup, isCloth, outlineD } from './Artwork';
 import { pleatMarks, runD, runIndices, runMid } from './editHelpers';
-import { pickSeamPoint } from './SeamsTab';
+import { pickSeamPoint } from './ConstructionPanel';
+import { ATTACHMENT_MIME, isAttachment } from './designLibrary';
+import { frameOn, instanceFor, layoutEntries, onCopy, toSource, toWorldPt, type Entry } from './sides';
+import { openPieceFlow } from './flow';
+import Icon from './Icon';
 
 type View = { x: number; y: number; k: number };
 
 type Drag =
-  | { mode: 'point'; pieceId: string; pointId: string; start: Pt; committed: boolean }
+  | { mode: 'point'; pieceId: string; pointId: string; key: string; start: Pt; committed: boolean }
   | { mode: 'piece'; pieceId: string; start: Pt; startOffset: Pt; committed: boolean }
-  | { mode: 'attach'; id: string; grab: Pt; start: Pt; committed: boolean }
-  | { mode: 'ghost'; pieceId: string; grab: Pt; start: Pt; committed: boolean }
+  | { mode: 'attach'; id: string; key: string; grab: Pt; start: Pt; committed: boolean }
+  | { mode: 'ghost'; pieceId: string; key: string; grab: Pt; start: Pt; committed: boolean }
   | { mode: 'pen'; startClient: Pt; smoothed: boolean }
   | { mode: 'pan'; startClient: Pt; startView: View }
   | { mode: 'pinch'; startDist: number; startMid: Pt; startView: View };
@@ -32,7 +36,8 @@ const GRID_SNAP = 0.5; // cm
 
 /** A highlighted run along a piece outline: built in seams, custom seams and the join in progress. */
 type RunStyle = 'attached' | 'detached' | 'custom' | 'hover' | 'draftA' | 'draftB';
-interface Run { key: string; ref: EdgeRef; style: RunStyle; label?: string }
+interface Run { key: string; ref: EdgeRef; style: RunStyle; label?: string; /** drawn on every copy of the piece */ all?: boolean }
+const runOn = (r: Run, e: Entry) => r.all || e.copies !== 2 || (r.ref.instance ?? 0) === e.inst;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -46,11 +51,33 @@ export default function PatternEditor() {
   const lastTap = useRef<{ t: number; key: string }>({ t: 0, key: '' });
 
   const s = useStore();
-  const { project, tool, symmetry, showMeasure, showStitch, selPiece, selPoint, units, fitToken, selAttachment, selPleat, hoverSeam, seamDraft, penDraft, penSnap } = s;
+  const { project, tool, symmetry, showMeasure, showStitch, selPiece, selPoint, selInstance, units, fitToken, selAttachment, selPleat, hoverSeam, seamDraft, penDraft, penSnap, showBothSides, pieceFlow } = s;
   const pieces = project.pieces;
   const edits = project.edits;
   const [penHover, setPenHover] = useState<Pt | null>(null);
   useEffect(() => { if (tool !== 'pen') setPenHover(null); }, [tool]);
+  const picking = !!pieceFlow?.picking;
+  const [pickHover, setPickHover] = useState<{ key: string; seg: number } | null>(null);
+  const [dropKey, setDropKey] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => { if (!picking) setPickHover(null); }, [picking]);
+
+  // ---- what is drawn: pieces cut twice show as a right and a left pattern ----
+  const entries = useMemo(() => layoutEntries(project.garment, pieces, showBothSides), [project.garment, pieces, showBothSides]);
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+  const findEntry = (pieceId: string, inst = 0) => entriesRef.current.find((e) => e.src.id === pieceId && e.inst === inst) ?? entriesRef.current.find((e) => e.src.id === pieceId);
+  /** the copy under a world point (topmost first) */
+  const entryAt = (w: Pt, skipCustom = false): Entry | null => {
+    const es = entriesRef.current;
+    for (let i = es.length - 1; i >= 0; i--) {
+      const e = es[i];
+      if (skipCustom && e.src.role === 'custom') continue;
+      if (pointInPoly(samplePoly(e.piece.points, 8), { x: w.x - e.offset.x, y: w.y - e.offset.y })) return e;
+    }
+    return null;
+  };
+  const instOf = (e: Entry) => (e.both ? e.inst : undefined);
 
   // ---- seam runs to draw, grouped by piece ------------------------------
   const seamList = useMemo(() => builtinSeams(project.garment, pieces), [project.garment, pieces]);
@@ -66,21 +93,22 @@ export default function PatternEditor() {
     }
     (edits?.customSeams ?? []).forEach((c, i) => {
       const hot = hoverSeam === c.id;
-      add({ key: c.id + 'a', ref: c.a, style: hot ? 'hover' : 'custom', label: `S${i + 1}` });
-      add({ key: c.id + 'b', ref: c.b, style: hot ? 'hover' : 'custom', label: `S${i + 1}` });
+      add({ key: c.id + 'a', ref: c.a, style: hot ? 'hover' : 'custom', label: `S${i + 1}`, all: c.a.instance === undefined });
+      add({ key: c.id + 'b', ref: c.b, style: hot ? 'hover' : 'custom', label: `S${i + 1}`, all: c.b.instance === undefined });
     });
     if (tool === 'seams') {
       const { a, b } = seamDraft;
       if (a?.pieceId && a.fromId && a.toId) add({ key: 'dA', ref: a as EdgeRef, style: 'draftA', label: 'A' });
       if (b?.pieceId && b.fromId && b.toId) add({ key: 'dB', ref: b as EdgeRef, style: 'draftB', label: 'B' });
     }
+    if (pieceFlow?.picking && pieceFlow.hostEdge) add({ key: 'flow-host', ref: pieceFlow.hostEdge, style: 'draftA', label: 'A' });
     return m;
-  }, [seamList, edits?.detachedSeams, edits?.customSeams, hoverSeam, tool, seamDraft]);
+  }, [seamList, edits?.detachedSeams, edits?.customSeams, hoverSeam, tool, seamDraft, pieceFlow?.picking, pieceFlow?.hostEdge]);
   const draftStarts = useMemo(() => {
-    const m = new Map<string, { id: string; tag: string }[]>();
+    const m = new Map<string, { id: string; tag: string; inst?: number }[]>();
     if (tool !== 'seams') return m;
     for (const [tag, r] of [['A', seamDraft.a], ['B', seamDraft.b]] as const) {
-      if (r?.pieceId && r.fromId && !r.toId) m.set(r.pieceId, [...(m.get(r.pieceId) ?? []), { id: r.fromId, tag }]);
+      if (r?.pieceId && r.fromId && !r.toId) m.set(r.pieceId, [...(m.get(r.pieceId) ?? []), { id: r.fromId, tag, inst: r.instance }]);
     }
     return m;
   }, [tool, seamDraft]);
@@ -90,7 +118,7 @@ export default function PatternEditor() {
     const el = svgRef.current;
     if (!el) return;
     const all: Pt[] = [];
-    for (const p of useStore.getState().project.pieces) for (const q of p.points) all.push({ x: q.x + p.offset.x, y: q.y + p.offset.y });
+    for (const e of entriesRef.current) for (const q of e.piece.points) all.push({ x: q.x + e.offset.x, y: q.y + e.offset.y });
     if (!all.length) return;
     const bb = bbox(all);
     const r = el.getBoundingClientRect();
@@ -101,7 +129,7 @@ export default function PatternEditor() {
   useEffect(() => {
     const id = requestAnimationFrame(fit);
     return () => cancelAnimationFrame(id);
-  }, [fitToken]);
+  }, [fitToken, showBothSides]);
   useEffect(() => {
     const onFit = () => fit();
     window.addEventListener('tps-fit', onFit);
@@ -116,17 +144,6 @@ export default function PatternEditor() {
   };
 
   const snap = (w: Pt): Pt => (useStore.getState().penSnap ? { x: Math.round(w.x / GRID_SNAP) * GRID_SNAP, y: Math.round(w.y / GRID_SNAP) * GRID_SNAP } : w);
-
-  /** the piece under a world point (topmost first), or the fallback */
-  const hostAt = (w: Pt, fallback: string, skipCustom = true): string => {
-    const ps = useStore.getState().project.pieces;
-    for (let i = ps.length - 1; i >= 0; i--) {
-      const p = ps[i];
-      if (skipCustom && p.role === 'custom') continue;
-      if (pointInPoly(samplePoly(p.points, 8), { x: w.x - p.offset.x, y: w.y - p.offset.y })) return p.id;
-    }
-    return fallback;
-  };
 
   const zoomAt = (cx: number, cy: number, factor: number) => {
     const r = svgRef.current!.getBoundingClientRect();
@@ -176,16 +193,34 @@ export default function PatternEditor() {
     const target = (e.target as Element).closest('[data-kind]') as HTMLElement | null;
     const kind = target?.dataset.kind;
     const pieceId = target?.dataset.piece;
+    const ent = pieceId ? findEntry(pieceId, Number(target?.dataset.inst ?? 0)) : undefined;
+    /** remember which copy the user is working on */
+    const pick = (en?: Entry) => st.set({ selInstance: en?.both ? en.inst : null });
     const w = toWorld(e.clientX, e.clientY);
     const panNow = () => (drag.current = { mode: 'pan', startClient: { x: e.clientX, y: e.clientY }, startView: viewRef.current });
 
     if (st.tool === 'pan' || e.button === 1 || (e.button === 0 && e.altKey)) return panNow();
 
+    // ---- new piece, sewing it into an edge: click the edge of the garment it joins
+    if (st.pieceFlow?.picking) {
+      const en = ent ?? entryAt(w);
+      if (en) {
+        const near = nearestOnOutline(en.piece.points, { x: w.x - en.offset.x, y: w.y - en.offset.y });
+        if (near.d < 22 / viewRef.current.k) {
+          const pts = en.src.points;
+          st.setFlow({ hostEdge: { pieceId: en.src.id, fromId: pts[near.seg].id, toId: pts[(near.seg + 1) % pts.length].id, ...(en.both ? { instance: en.inst } : {}) } });
+          drag.current = null;
+          return;
+        }
+      }
+      return panNow();
+    }
+
     // ---- pen: click to add a corner, drag to make it smooth, click the first point to close
     if (st.tool === 'pen') {
       const d = st.penDraft;
       if (d.length >= 3 && Math.hypot(w.x - d[0].x, w.y - d[0].y) * viewRef.current.k < 14) {
-        st.set({ penSheet: d, penDraft: [] });
+        openPieceFlow(d);
         drag.current = null;
         return;
       }
@@ -195,10 +230,10 @@ export default function PatternEditor() {
       return;
     }
 
-    // ---- seams: points pick the ends of a range
+    // ---- seams: points pick the ends of a range, on the copy that was clicked
     if (st.tool === 'seams') {
       if (kind === 'point' && pieceId) {
-        pickSeamPoint(pieceId, target!.dataset.point!);
+        pickSeamPoint(pieceId, target!.dataset.point!, ent ? instOf(ent) : undefined);
         drag.current = null;
         return;
       }
@@ -206,14 +241,16 @@ export default function PatternEditor() {
       return;
     }
 
-    // ---- pleat: click an edge to place one
+    // ---- pleat: click an edge to place one on that copy
     if (st.tool === 'pleat') {
-      if ((kind === 'edge' || kind === 'piece') && pieceId) {
-        const piece = st.project.pieces.find((p) => p.id === pieceId)!;
-        const near = nearestOnOutline(piece.points, { x: w.x - piece.offset.x, y: w.y - piece.offset.y });
+      if ((kind === 'edge' || kind === 'piece') && pieceId && ent) {
+        const near = nearestOnOutline(ent.piece.points, { x: w.x - ent.offset.x, y: w.y - ent.offset.y });
         if (near.d < 16 / viewRef.current.k) {
-          const id = st.addPleat({ pieceId, pointId: piece.points[near.seg].id, t: near.t, depth: 2, length: 12, type: 'knife', direction: 1 });
+          // Pleat has no side field in the shared contract yet; the extra field is kept in the saved project
+          const pl = { pieceId, pointId: ent.src.points[near.seg].id, t: near.t, depth: 2, length: 12, type: 'knife' as const, direction: 1 as const, ...(ent.both ? { instance: ent.inst } : {}) };
+          const id = st.addPleat(pl);
           st.set({ selPleat: id, selPiece: pieceId, selAttachment: null });
+          pick(ent);
         }
         return;
       }
@@ -223,33 +260,37 @@ export default function PatternEditor() {
     }
 
     if (kind === 'pleat') {
-      st.set({ selPleat: target!.dataset.pleat!, selAttachment: null, inspectorTab: 'seams' });
+      st.set({ selPleat: target!.dataset.pleat!, selAttachment: null, inspectorTab: 'construction' });
+      pick(ent);
       drag.current = null;
       return;
     }
 
-    if (kind === 'attach') {
+    if (kind === 'attach' && ent) {
       const id = target!.dataset.att!;
       const att = st.project.edits?.attachments.find((a) => a.id === id);
-      const host = att && st.project.pieces.find((p) => p.id === att.pieceId);
-      if (att && host) {
-        st.set({ selAttachment: id, selPiece: att.pieceId, selPoint: null, selPleat: null, selLayer: null, inspectorTab: 'patchwork' });
-        drag.current = { mode: 'attach', id, grab: { x: w.x - (host.offset.x + att.x), y: w.y - (host.offset.y + att.y) }, start: w, committed: false };
+      if (att) {
+        const at = toWorldPt(ent, att);
+        st.set({ selAttachment: id, selPiece: att.pieceId, selPoint: null, selPleat: null, selLayer: null, inspectorTab: 'design' });
+        pick(ent);
+        drag.current = { mode: 'attach', id, key: ent.key, grab: { x: w.x - at.x, y: w.y - at.y }, start: w, committed: false };
         return;
       }
     }
 
     if (kind === 'ghost' && pieceId) {
       const cp = st.project.pieces.find((p) => p.id === pieceId);
-      const host = st.project.pieces.find((p) => p.id === cp?.placement?.hostPieceId);
-      if (cp?.placement && host) {
-        st.set({ selPiece: pieceId, selPoint: null, selAttachment: null, selPleat: null, inspectorTab: 'seams' });
-        drag.current = { mode: 'ghost', pieceId, grab: { x: w.x - (host.offset.x + (cp.placement.x ?? 0)), y: w.y - (host.offset.y + (cp.placement.y ?? 0)) }, start: w, committed: false };
+      const hostEnt = cp?.placement?.hostPieceId ? findEntry(cp.placement.hostPieceId, Number(target?.dataset.inst ?? 0)) : undefined;
+      if (cp?.placement && hostEnt) {
+        const at = toWorldPt(hostEnt, { x: cp.placement.x ?? 0, y: cp.placement.y ?? 0 });
+        st.set({ selPiece: pieceId, selPoint: null, selAttachment: null, selPleat: null, inspectorTab: 'construction' });
+        pick(hostEnt);
+        drag.current = { mode: 'ghost', pieceId, key: hostEnt.key, grab: { x: w.x - at.x, y: w.y - at.y }, start: w, committed: false };
         return;
       }
     }
 
-    if (kind === 'point' && pieceId) {
+    if (kind === 'point' && pieceId && ent) {
       const pointId = target!.dataset.point!;
       if (isDoubleTap('pt' + pointId)) {
         st.toggleSmooth(pieceId, pointId);
@@ -257,24 +298,26 @@ export default function PatternEditor() {
         return;
       }
       st.select(pieceId, pointId);
-      drag.current = { mode: 'point', pieceId, pointId, start: w, committed: false };
+      pick(ent);
+      drag.current = { mode: 'point', pieceId, pointId, key: ent.key, start: w, committed: false };
       return;
     }
 
-    if ((kind === 'edge' || kind === 'piece') && pieceId) {
-      const piece = st.project.pieces.find((p) => p.id === pieceId)!;
-      const local = { x: w.x - piece.offset.x, y: w.y - piece.offset.y };
-      const near = nearestOnOutline(piece.points, local);
+    if ((kind === 'edge' || kind === 'piece') && pieceId && ent) {
+      const local = { x: w.x - ent.offset.x, y: w.y - ent.offset.y };
+      const near = nearestOnOutline(ent.piece.points, local);
       const close = near.d < 14 / viewRef.current.k;
-      const dbl = isDoubleTap('pc' + pieceId);
+      const dbl = isDoubleTap('pc' + ent.key);
       if ((st.tool === 'add' && close) || (kind === 'edge' && dbl)) {
         const id = st.insertPoint(pieceId, near.seg, near.t);
-        if (id) drag.current = { mode: 'point', pieceId, pointId: id, start: w, committed: true };
+        pick(ent);
+        if (id) drag.current = { mode: 'point', pieceId, pointId: id, key: ent.key, start: w, committed: true };
         return;
       }
       st.select(pieceId, null);
+      pick(ent);
       st.set({ selAttachment: null, selPleat: null });
-      drag.current = { mode: 'piece', pieceId, start: w, startOffset: piece.offset, committed: false };
+      drag.current = { mode: 'piece', pieceId, start: w, startOffset: ent.src.offset, committed: false };
       return;
     }
 
@@ -284,12 +327,22 @@ export default function PatternEditor() {
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
-    if (useStore.getState().tool === 'pen') setPenHover(snap(toWorld(e.clientX, e.clientY)));
+    const stNow = useStore.getState();
+    if (stNow.tool === 'pen') setPenHover(snap(toWorld(e.clientX, e.clientY)));
+    if (stNow.pieceFlow?.picking && !drag.current) {
+      const w0 = toWorld(e.clientX, e.clientY);
+      const en = entryAt(w0);
+      if (en) {
+        const near = nearestOnOutline(en.piece.points, { x: w0.x - en.offset.x, y: w0.y - en.offset.y });
+        const next = near.d < 22 / viewRef.current.k ? { key: en.key, seg: near.seg } : null;
+        setPickHover((h) => (h?.key === next?.key && h?.seg === next?.seg ? h : next));
+      } else setPickHover(null);
+    }
     if (!pointers.current.has(e.pointerId)) return;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const d = drag.current;
     if (!d) return;
-    const st = useStore.getState();
+    const st = stNow;
 
     if (d.mode === 'pinch') {
       if (pointers.current.size < 2) return;
@@ -324,18 +377,28 @@ export default function PatternEditor() {
         d.committed = true;
       }
       const centre = { x: w.x - d.grab.x, y: w.y - d.grab.y };
+      const cur = entriesRef.current.find((en) => en.key === d.key);
+      if (!cur) return;
       if (d.mode === 'attach') {
         const att = st.project.edits?.attachments.find((a) => a.id === d.id);
         if (!att) return;
-        const host = st.project.pieces.find((p) => p.id === hostAt(w, att.pieceId, false))!;
-        st.updateAttachment(d.id, { pieceId: host.id, x: round2(centre.x - host.offset.x), y: round2(centre.y - host.offset.y) });
-        if (st.selPiece !== host.id) st.set({ selPiece: host.id });
+        const over = entryAt(w) ?? cur;
+        const local = toSource(over, centre);
+        const patch: Partial<Attachment> = { pieceId: over.src.id, x: round2(local.x), y: round2(local.y) };
+        // dropping on another copy or piece moves it there; a "both sides" item keeps shared coordinates
+        if (over.src.id !== att.pieceId) patch.instance = instanceFor(over);
+        else if (att.instance !== undefined && over.both) patch.instance = over.inst;
+        st.updateAttachment(d.id, patch);
+        d.key = over.key;
+        if (st.selPiece !== over.src.id) st.set({ selPiece: over.src.id });
+        if (over.both && st.selInstance !== over.inst) st.set({ selInstance: over.inst });
       } else {
         const cp = st.project.pieces.find((p) => p.id === d.pieceId);
         if (!cp?.placement) return;
-        const host = st.project.pieces.find((p) => p.id === hostAt(w, cp.placement!.hostPieceId ?? '', true));
-        if (!host) return;
-        st.updatePiece(d.pieceId, { placement: { ...cp.placement, hostPieceId: host.id, x: round2(centre.x - host.offset.x), y: round2(centre.y - host.offset.y) } });
+        const over = entryAt(w, true) ?? cur;
+        const local = toSource(over, centre);
+        st.updatePiece(d.pieceId, { placement: { ...cp.placement, hostPieceId: over.src.id, x: round2(local.x), y: round2(local.y), ...(over.both ? { instance: over.inst } : {}) } as typeof cp.placement });
+        d.key = over.key;
       }
       return;
     }
@@ -347,7 +410,10 @@ export default function PatternEditor() {
     const piece = st.project.pieces.find((p) => p.id === d.pieceId);
     if (!piece) return;
     if (d.mode === 'point') {
-      st.movePoint(d.pieceId, d.pointId, w.x - piece.offset.x, w.y - piece.offset.y);
+      const en = entriesRef.current.find((x) => x.key === d.key);
+      if (!en) return;
+      const l = toSource(en, w);
+      st.movePoint(d.pieceId, d.pointId, l.x, l.y);
     } else {
       st.movePiece(d.pieceId, { x: d.startOffset.x + w.x - d.start.x, y: d.startOffset.y + w.y - d.start.y });
     }
@@ -390,60 +456,109 @@ export default function PatternEditor() {
     </defs>
   );
 
+  const zoomBy = (f: number) => {
+    const r = svgRef.current!.getBoundingClientRect();
+    zoomAt(r.left + r.width / 2, r.top + r.height / 2, f);
+  };
+
+  // ---- drop a design from the library onto the chart ------------------------
+  const onDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(ATTACHMENT_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    const en = entryAt(toWorld(e.clientX, e.clientY));
+    setDropKey((cur) => (cur === (en?.key ?? null) ? cur : en?.key ?? null));
+  };
+  const onDrop = (e: React.DragEvent) => {
+    const raw = e.dataTransfer.getData(ATTACHMENT_MIME);
+    setDropKey(null);
+    if (!raw) return;
+    e.preventDefault();
+    const w = toWorld(e.clientX, e.clientY);
+    const en = entryAt(w);
+    if (!en) { setNote('Drop it on a piece of the pattern.'); setTimeout(() => setNote(null), 2500); return; }
+    try {
+      const t = JSON.parse(raw) as Partial<Attachment>;
+      if (!isAttachment(t)) return;
+      const l = toSource(en, w);
+      const inst = instanceFor(en);
+      useStore.getState().addAttachment({ ...t, rotation: t.rotation ?? 0, layers: t.layers ?? [], pieceId: en.src.id, x: round2(l.x), y: round2(l.y), ...(inst !== undefined ? { instance: inst } : {}) } as Omit<Attachment, 'id'>);
+      useStore.getState().set({ selPiece: en.src.id, selInstance: en.both ? en.inst : null, inspectorTab: 'design', selPoint: null });
+    } catch { /* not ours */ }
+  };
+
+  const hint = picking
+    ? pieceFlow?.hostEdge ? 'Edge picked. Click another edge to change it, then press Add piece.' : 'Click the edge of the garment that your new piece is sewn to. Escape cancels.'
+    : `${HUD[tool] ?? HUD.select}${showMeasure && k < 2.4 ? ' Zoom in to see measurements.' : ''}`;
+
   return (
     <div className="editor">
-      <svg
-        ref={svgRef}
-        className={`editor-svg tool-${tool}`}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        onContextMenu={(e) => e.preventDefault()}
-      >
-        {grid}
-        <g transform={`translate(${view.x},${view.y}) scale(${k})`}>
-          <rect x={-2000} y={-2000} width={4000} height={4000} fill="url(#g10)" />
-          {pieces.map((p) => (
-            <PieceView
-              key={p.id}
-              piece={p}
-              k={k}
-              selected={p.id === selPiece}
-              selPoint={p.id === selPiece ? selPoint : null}
-              symmetry={symmetry}
-              showMeasure={showMeasure}
-              showStitch={showStitch}
-              units={units}
-              tool={tool}
-              attachments={(edits?.attachments ?? []).filter((a) => a.pieceId === p.id)}
-              selAttachment={selAttachment}
-              pleats={(edits?.pleats ?? []).filter((q) => q.pieceId === p.id)}
-              selPleat={selPleat}
-              ghosts={pieces.filter((q) => q.role === 'custom' && q.placement?.mode === 'patch' && q.placement.hostPieceId === p.id)}
-              runs={runsByPiece.get(p.id) ?? []}
-              starts={draftStarts.get(p.id) ?? []}
-            />
-          ))}
-          {tool === 'pen' && <PenPreview draft={penDraft} hover={penHover} k={k} snap={penSnap} />}
-        </g>
-      </svg>
-      <div className="editor-hud">
-        <span>{Math.round(k * 10)}%</span>
-        <span className="hud-sep" />
-        <span>{HUD[tool] ?? HUD.select}</span>
+      <div className={`editor-canvas ${dropKey ? 'dropping' : ''} ${picking ? 'picking' : ''}`} onDragOver={onDragOver} onDragLeave={() => setDropKey(null)} onDrop={onDrop}>
+        <svg
+          ref={svgRef}
+          className={`editor-svg tool-${tool}`}
+          aria-label="Pattern chart"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {grid}
+          <g transform={`translate(${view.x},${view.y}) scale(${k})`}>
+            <rect x={-2000} y={-2000} width={4000} height={4000} fill="url(#g10)" />
+            {entries.map((en) => {
+              const p = en.piece;
+              const active = en.src.id === selPiece && (!en.both || (selInstance ?? 0) === en.inst);
+              return (
+                <PieceView
+                  key={en.key}
+                  entry={en}
+                  k={k}
+                  selected={active}
+                  selPoint={active ? selPoint : null}
+                  symmetry={symmetry}
+                  showMeasure={showMeasure}
+                  showStitch={showStitch}
+                  units={units}
+                  tool={tool}
+                  attachments={(edits?.attachments ?? []).filter((a) => a.pieceId === p.id && onCopy(a.instance, en))}
+                  selAttachment={selAttachment}
+                  pleats={(edits?.pleats ?? []).filter((q) => q.pieceId === p.id && onCopy((q as { instance?: number }).instance, en))}
+                  selPleat={selPleat}
+                  ghosts={pieces.filter((q) => q.role === 'custom' && q.placement?.mode === 'patch' && q.placement.hostPieceId === p.id && onCopy((q.placement as { instance?: number }).instance, en))}
+                  runs={(runsByPiece.get(p.id) ?? []).filter((r) => runOn(r, en))}
+                  starts={(draftStarts.get(p.id) ?? []).filter((st) => st.inst === undefined || en.copies !== 2 || st.inst === en.inst)}
+                  dropTarget={dropKey === en.key}
+                  pickSeg={pickHover?.key === en.key ? pickHover.seg : null}
+                  picking={picking}
+                />
+              );
+            })}
+            {tool === 'pen' && <PenPreview draft={penDraft} hover={penHover} k={k} snap={penSnap} />}
+          </g>
+        </svg>
       </div>
+      <footer className="pane-foot" role="status">
+        <span className="foot-zoom">
+          <button className="icon-btn sm" aria-label="Zoom out" title="Zoom out" onClick={() => zoomBy(1 / 1.25)}><Icon name="minus" size={14} /></button>
+          <span className="foot-pct" aria-label="Zoom level">{Math.round(k * 10)}%</span>
+          <button className="icon-btn sm" aria-label="Zoom in" title="Zoom in" onClick={() => zoomBy(1.25)}><Icon name="plus" size={14} /></button>
+        </span>
+        <span className="hud-sep" />
+        <span className="foot-hint">{note ?? hint}</span>
+      </footer>
     </div>
   );
 }
 
 const HUD: Record<string, string> = {
-  select: 'Drag points to reshape · double-tap an edge to add a point · double-tap a point for curve/corner · drag a pocket or patch to move it',
-  add: 'Tap an edge to add a point',
-  pan: 'Drag to pan',
+  select: 'Drag points to reshape. Double tap an edge to add a point. Drag a pocket or design to move it. Drop designs from the library here.',
+  add: 'Tap an edge to add a point.',
+  pan: 'Drag to pan the chart.',
   seams: 'Click a start point, then an end point, to pick a range to sew. Escape to stop.',
   pleat: 'Click an edge of a piece to place a pleat. Escape to stop.',
-  pen: 'Click to add corners · drag for a curve · click the first point to close · Backspace removes the last point · Escape cancels',
+  pen: 'Click to add corners. Drag for a curve. Click the first point to close. Backspace removes the last point. Escape cancels.',
 };
 
 function PenPreview({ draft, hover, k, snap }: { draft: { x: number; y: number; smooth: boolean }[]; hover: Pt | null; k: number; snap: boolean }) {
@@ -470,7 +585,7 @@ function PenPreview({ draft, hover, k, snap }: { draft: { x: number; y: number; 
 }
 
 function PieceView(props: {
-  piece: Piece;
+  entry: Entry;
   k: number;
   selected: boolean;
   selPoint: string | null;
@@ -486,8 +601,13 @@ function PieceView(props: {
   ghosts: Piece[];
   runs: Run[];
   starts: { id: string; tag: string }[];
+  dropTarget: boolean;
+  pickSeg: number | null;
+  picking: boolean;
 }) {
-  const { piece: p, k, selected, selPoint, symmetry, showMeasure, showStitch, units, tool, attachments, selAttachment, pleats, selPleat, ghosts, runs, starts } = props;
+  const { entry, k, selected, selPoint, symmetry, showMeasure, showStitch, units, tool, attachments, selAttachment, pleats, selPleat, ghosts, runs, starts, dropTarget, pickSeg, picking } = props;
+  const p = entry.piece;
+  const inst = entry.inst;
   const px = (n: number) => n / k;
   const selPieceId = useStore((st) => st.selPiece);
 
@@ -508,28 +628,34 @@ function PieceView(props: {
 
   const sel = p.points.find((q) => q.id === selPoint);
   const fontPx = 11;
+  // a label wider than its piece breaks after the comma: "Front," over "right leg"
+  const labelLines = entry.label.length * 6.8 > geo.bb.w * k * 0.92 && entry.label.includes(', ') ? entry.label.split(', ', 2) : [entry.label];
 
   return (
     <g transform={`translate(${p.offset.x},${p.offset.y})`}>
       {/* body */}
-      <path d={geo.d} fill={`url(#fab-${p.id})`} data-kind="piece" data-piece={p.id} style={{ cursor: 'move' }} />
+      <path d={geo.d} fill={`url(#fab-${p.id})`} data-kind="piece" data-piece={p.id} data-inst={inst} style={{ cursor: picking ? 'crosshair' : 'move' }} />
       <path d={geo.d} fill="var(--piece-sheen)" pointerEvents="none" />
       {showStitch && <path d={geo.cut} fill="none" stroke="var(--cut-line)" strokeWidth={px(1)} pointerEvents="none" />}
       {/* the editable outline is the sewing line (finished size); the outer line is the cut line with seam allowance */}
       <path d={geo.d} fill="none" stroke={selected ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(selected ? 2 : 1.4)} strokeDasharray={showStitch ? `${px(6)} ${px(3)}` : undefined} pointerEvents="none" />
       {/* wide invisible stroke for picking edges */}
-      <path d={geo.d} fill="none" stroke="transparent" strokeWidth={px(16)} data-kind="edge" data-piece={p.id} />
+      <path d={geo.d} fill="none" stroke="transparent" strokeWidth={px(16)} data-kind="edge" data-piece={p.id} data-inst={inst} />
+      {dropTarget && <path d={geo.d} fill="var(--accent-soft)" stroke="var(--accent)" strokeWidth={px(3)} pointerEvents="none" />}
+      {picking && pickSeg !== null && geo.bz[pickSeg] && (
+        <path d={runD(geo.bz, [pickSeg])} fill="none" stroke="var(--orange)" strokeWidth={px(7)} strokeLinecap="round" opacity={0.85} pointerEvents="none" />
+      )}
 
       {/* grainline + label */}
       <line
         x1={geo.c.x} x2={geo.c.x} y1={geo.c.y - geo.bb.h * 0.22} y2={geo.c.y + geo.bb.h * 0.22}
         stroke="var(--dim-line)" strokeWidth={px(1)} markerStart="url(#arr)" markerEnd="url(#arr)" pointerEvents="none" opacity={0.7}
       />
-      <text x={geo.c.x + 1.2} y={geo.c.y - 1} className="piece-label" fontSize={Math.min(3, geo.bb.w / 9)} pointerEvents="none">
-        {p.name}
+      <text x={geo.c.x} y={geo.c.y - px(2) - (labelLines.length - 1) * px(6.5)} className="piece-label" fontSize={px(12)} textAnchor="middle" pointerEvents="none">
+        {labelLines.map((l, i) => <tspan key={i} x={geo.c.x} dy={i ? px(13) : 0}>{l}</tspan>)}
       </text>
-      <text x={geo.c.x + 1.2} y={geo.c.y + 2.6} className="piece-sub" fontSize={Math.min(2.2, geo.bb.w / 12)} pointerEvents="none">
-        Cut {p.cut} · {fabricById(p.fabric.id).name}
+      <text x={geo.c.x} y={geo.c.y - px(2) + (labelLines.length - 1) * px(6.5) + px(13)} className="piece-sub" fontSize={px(11)} textAnchor="middle" pointerEvents="none">
+        {entry.both ? `Cut 1 of ${p.cut >= 2 ? p.cut : 2}` : `Cut ${p.cut} · ${fabricById(p.fabric.id).name}`}
       </text>
 
       {/* symmetry axis */}
@@ -538,7 +664,7 @@ function PieceView(props: {
       )}
 
       {/* measurements */}
-      {showMeasure &&
+      {showMeasure && !entry.mirror && k >= 2.4 &&
         geo.specs.map((m) => {
           const mx = (m.a.x + m.b.x) / 2, my = (m.a.y + m.b.y) / 2;
           const label = `${m.label} ${fmt(m.value, units)}`;
@@ -624,7 +750,7 @@ function PieceView(props: {
             {m.lines.map((l, i) => (
               <g key={i}>
                 <line x1={l.a.x} y1={l.a.y} x2={l.b.x} y2={l.b.y} stroke={col} strokeWidth={px(on ? 2.2 : 1.6)} strokeDasharray={l.fold ? undefined : `${px(5)} ${px(4)}`} pointerEvents="none" />
-                <line x1={l.a.x} y1={l.a.y} x2={l.b.x} y2={l.b.y} stroke="transparent" strokeWidth={px(18)} data-kind="pleat" data-pleat={pl.id} style={{ cursor: 'pointer' }} />
+                <line x1={l.a.x} y1={l.a.y} x2={l.b.x} y2={l.b.y} stroke="transparent" strokeWidth={px(18)} data-kind="pleat" data-pleat={pl.id} data-inst={inst} style={{ cursor: 'pointer' }} />
               </g>
             ))}
             {m.arrows.map((a, i) => <line key={i} x1={a.from.x} y1={a.from.y} x2={a.to.x} y2={a.to.y} stroke={col} strokeWidth={px(1.6)} markerEnd="url(#arr)" pointerEvents="none" />)}
@@ -639,13 +765,21 @@ function PieceView(props: {
         const f = fabricById((a.fabric ?? p.fabric).id);
         const hex = (f.colors[(a.fabric ?? p.fabric).color] ?? f.colors[0]).hex;
         const on = a.id === selAttachment;
+        const fr = frameOn(entry, a); // on the left copy the position and turn mirror, the artwork does not flip
+        const hw = a.kind === 'hardware';
+        const letters = a.outline === 'shape' && a.shape === 'text';
+        const hitW = Math.max(a.w, px(16)), hitH = Math.max(a.h, px(16));
         return (
-          <g key={a.id} transform={`translate(${a.x},${a.y}) rotate(${a.rotation})`} data-kind="attach" data-att={a.id} style={{ cursor: 'move' }}>
-            <path d={o.d} transform={o.transform} fill="transparent" />
+          <g key={a.id} transform={`translate(${fr.x},${fr.y}) rotate(${fr.rotation})`} data-kind="attach" data-att={a.id} data-inst={inst} style={{ cursor: 'move' }}>
+            {hw || letters ? <rect x={-hitW / 2} y={-hitH / 2} width={hitW} height={hitH} fill="transparent" /> : <path d={o.d} transform={o.transform} fill="transparent" />}
             <ArtworkGroup a={a} fill={hex} />
-            <path d={o.d} transform={o.transform} fill="none" stroke={on ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(on ? 2.2 : 1.4)} strokeDasharray={`${px(6)} ${px(4)}`} vectorEffect="non-scaling-stroke" pointerEvents="none" />
+            {(isCloth(a.kind) || on || a.kind !== 'hardware') && !(hw && !on) && (
+              hw || letters
+                ? <rect x={-a.w / 2} y={-a.h / 2} width={a.w} height={a.h} fill="none" stroke={on ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(on ? 2.2 : 1.2)} strokeDasharray={`${px(6)} ${px(4)}`} pointerEvents="none" opacity={on ? 1 : 0.55} />
+                : <path d={o.d} transform={o.transform} fill="none" stroke={on ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(on ? 2.2 : 1.4)} strokeDasharray={`${px(6)} ${px(4)}`} vectorEffect="non-scaling-stroke" pointerEvents="none" opacity={isCloth(a.kind) || on ? 1 : 0.55} />
+            )}
             {on && <circle r={px(3)} fill="var(--accent)" pointerEvents="none" />}
-            {(tool === 'select' || on) && <text y={a.h / 2 + px(14)} fontSize={px(11)} textAnchor="middle" className="edge-len" pointerEvents="none">{a.name}</text>}
+            {(on || k > 6) && <text y={a.h / 2 + px(14)} fontSize={px(11)} textAnchor="middle" className="edge-len" pointerEvents="none">{a.name}</text>}
           </g>
         );
       })}
@@ -656,8 +790,9 @@ function PieceView(props: {
         const on = g.id === selPieceId;
         const f = fabricById(g.fabric.id);
         const hex = (f.colors[g.fabric.color] ?? f.colors[0]).hex;
+        const gf = frameOn(entry, { x: pl.x ?? 0, y: pl.y ?? 0, rotation: pl.rotation ?? 0 });
         return (
-          <g key={g.id} transform={`translate(${pl.x ?? 0},${pl.y ?? 0}) rotate(${pl.rotation ?? 0})`} data-kind="ghost" data-piece={g.id} style={{ cursor: 'move' }}>
+          <g key={g.id} transform={`translate(${gf.x},${gf.y}) rotate(${gf.rotation})`} data-kind="ghost" data-piece={g.id} data-inst={inst} style={{ cursor: 'move' }}>
             <path d={pathD(toBeziers(g.points))} fill={hex} fillOpacity={0.85} stroke={on ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(on ? 2.2 : 1.4)} strokeDasharray={`${px(6)} ${px(4)}`} />
             <text y={px(4)} fontSize={px(11)} textAnchor="middle" className="edge-len" pointerEvents="none">{g.name}</text>
           </g>
@@ -678,7 +813,7 @@ function PieceView(props: {
               ) : (
                 <rect x={q.x - r} y={q.y - r} width={r * 2} height={r * 2} fill={fill} stroke={stroke} strokeWidth={px(1.5)} pointerEvents="none" />
               )}
-              <circle cx={q.x} cy={q.y} r={px(tool === 'seams' ? 16 : 13)} fill="transparent" data-kind="point" data-piece={p.id} data-point={q.id} style={{ cursor: tool === 'seams' ? 'pointer' : 'grab' }} />
+              <circle cx={q.x} cy={q.y} r={px(tool === 'seams' ? 16 : 13)} fill="transparent" data-kind="point" data-piece={p.id} data-inst={inst} data-point={q.id} style={{ cursor: tool === 'seams' ? 'pointer' : 'grab' }} />
             </g>
           );
         })}
