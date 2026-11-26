@@ -1,4 +1,4 @@
-// Inspector: five sections (Garment, Design, Construction, Body, Specs), each with titled, collapsible groups.
+// Inspector: four sections (Garment, Construction, Body, Specs), each with titled, collapsible groups.
 import { useStore, type InspectorTab } from '../store';
 import { CATALOG, migrateGarment } from '../data/catalog';
 import { FABRICS, fabricById, stretchLabel } from '../data/fabrics';
@@ -42,8 +42,8 @@ export default function Inspector() {
           <button className="drawer-close btn small" onClick={() => set({ drawer: false })} aria-label="Close inspector"><Icon name="chevronRight" size={14} /> Hide inspector</button>
           <div className="itabs" role="tablist" aria-label="Inspector sections" onKeyDown={onKey}>
             {TABS.map((t) => (
-              <button key={t.id} id={`itab-${t.id}`} role="tab" aria-selected={tab === t.id} tabIndex={tab === t.id ? 0 : -1} className={tab === t.id ? 'on' : ''} aria-label={t.label} title={t.label} onClick={() => go(t.id)}>
-                <Icon name={t.icon} size={20} />
+              <button key={t.id} id={`itab-${t.id}`} role="tab" aria-selected={tab === t.id} tabIndex={tab === t.id ? 0 : -1} className={tab === t.id ? 'on' : ''} title={t.label} onClick={() => go(t.id)}>
+                <i className="itab-dot"><Icon name={t.icon} size={20} /></i>
                 <span>{t.label}</span>
               </button>
             ))}
@@ -81,38 +81,79 @@ export function CollarControl() {
   );
 }
 
+function Swatch({ fabric, size = 44, label }: { fabric: { id: string; color: number }; size?: number; label?: string }) {
+  const f = fabricById(fabric.id);
+  const c = f.colors[fabric.color] ?? f.colors[0];
+  return <img className="swatch-img" src={fabricDataUrl(f, c.hex)} alt={label ?? ''} width={size} height={size} style={{ width: size, height: size }} />;
+}
+
+/** Outside and inside of the garment: a two face preview of the selected piece, a default for the whole garment, and the chart face. */
+function FacesSection() {
+  const { project, selPiece, viewFace, set, setInsideFabric, setInsideAll } = useStore();
+  const piece = project.pieces.find((p) => p.id === selPiece);
+  const inside = project.edits?.insideFabric ?? {};
+  const collar = project.edits?.collar;
+  const show = piece ?? project.pieces[0];
+  const own = inside[show.id];
+  const insideFab = own ?? show.fabric;
+  const outName = faceName(project.garment, show, 'outside', collar), inName = faceName(project.garment, show, 'inside', collar);
+  const all = project.pieces.every((p) => inside[p.id]);
+  const first = inside[project.pieces[0].id];
+  return (
+    <section className="faces-card" aria-label="Inside and outside">
+      <header>
+        <h3>Inside and outside</h3>
+        <p>Each piece has two faces. The inside can be a different fabric or colour.</p>
+      </header>
+      <Seg label="Face shown on the pattern" value={viewFace} onChange={(f) => set({ viewFace: f, designFace: f })} options={[{ id: 'outside', label: 'Outside' }, { id: 'inside', label: 'Inside' }]} />
+      <div className="faces-pair" role="group" aria-label={`${show.name}, both faces`}>
+        <button className={`face ${viewFace === 'outside' ? 'on' : ''}`} onClick={() => set({ viewFace: 'outside', designFace: 'outside' })} aria-pressed={viewFace === 'outside'}>
+          <Swatch fabric={show.fabric} size={64} />
+          <b>{outName}</b><small>{fabricById(show.fabric.id).name}</small>
+        </button>
+        <button className={`face ${viewFace === 'inside' ? 'on' : ''}`} onClick={() => set({ viewFace: 'inside', designFace: 'inside' })} aria-pressed={viewFace === 'inside'}>
+          <Swatch fabric={insideFab} size={64} />
+          <b>{inName}</b><small>{own ? fabricById(own.id).name : 'Same as outside'}</small>
+        </button>
+      </div>
+      <p className="faces-for">{piece ? <>For <b>{piece.name}</b></> : 'Select a piece on the pattern to change its inside. Showing the first piece.'}</p>
+      {piece && <FabricPick id="inside-fab" sameLabel="Same as outside" value={own} host={piece.fabric} onChange={(f) => setInsideFabric(piece.id, f ?? null)} />}
+      <div className="faces-all">
+        <SubLabel>Whole garment default</SubLabel>
+        <FabricPick id="inside-all" sameLabel="Same as outside" value={all ? first : undefined} onChange={(f) => setInsideAll(f ?? null)} />
+      </div>
+    </section>
+  );
+}
+
 function GarmentTab() {
-  const { project, selPiece, fabricScope, set, setFabric, setInsideFabric } = useStore();
+  const { project, selPiece, fabricScope, set, setFabric } = useStore();
   const style = CATALOG.find((s) => s.id === migrateGarment(project.garment));
   const piece = project.pieces.find((p) => p.id === selPiece);
   const scope = piece ? fabricScope : 'all';
   const current = (piece ?? project.pieces[0]).fabric;
+  const cf = fabricById(current.id);
 
   return (
     <>
-      <TabHeader icon="garment" title="Garment" subtitle={<>{style?.name ?? 'Garment'} in {fabricById(project.pieces[0].fabric.id).name}</>} />
+      <div className="mat-head">
+        <Swatch fabric={current} size={72} label={`${cf.name} swatch`} />
+        <div>
+          <span className="mat-kicker">Material and fit</span>
+          <h2>{style?.name ?? 'Garment'}</h2>
+          <p>{cf.name}, {cf.colors[current.color]?.name ?? cf.colors[0].name}{piece ? ` on ${piece.name}` : ', whole garment'}</p>
+        </div>
+      </div>
 
-      {hasCollar(project.pieces) && piece?.role !== 'collar' && (
+      <FacesSection />
+
+      {hasCollar(project.pieces) && (
         <Disclosure id="gar-collar" title="Collar position" icon="collar">
           <CollarControl />
         </Disclosure>
       )}
 
-      <Disclosure id="gar-piece" title={piece ? piece.name : 'Selected piece'} icon="pattern">
-        {piece ? (
-          <>
-            {piece.role === 'collar' && <CollarControl />}
-            <SubLabel>Inside fabric</SubLabel>
-            <p className="group-note">What the {faceName(project.garment, piece, 'inside', project.edits?.collar).toLowerCase()} is made of.</p>
-            <FabricPick id="inside-fab" sameLabel="Same as outside" value={project.edits?.insideFabric?.[piece.id]} host={piece.fabric}
-              onChange={(f) => setInsideFabric(piece.id, f ?? null)} />
-          </>
-        ) : (
-          <p className="group-note">Select a piece on the pattern to give its inside a different fabric and colour.</p>
-        )}
-      </Disclosure>
-
-      <Disclosure id="gar-fabric" title="Fabric" icon="grid">
+      <Disclosure id="gar-fabric" title="Fabric and colour" icon="grid">
         <div className="seg full">
           <button className={scope === 'all' ? 'on' : ''} onClick={() => set({ fabricScope: 'all' })}>Whole garment</button>
           <button className={scope === 'piece' ? 'on' : ''} disabled={!piece} onClick={() => set({ fabricScope: 'piece' })}>

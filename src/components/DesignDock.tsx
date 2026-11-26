@@ -34,30 +34,30 @@ export default function DesignDock({ mode }: { mode: 'side' | 'bottom' }) {
 
   if (designCollapsed) {
     return (
-      <aside className={`design-dock ${mode} collapsed`} aria-label="Design panel, collapsed">
-        <button className="dock-expand" aria-label="Open the Design panel" title="Open the Design panel" onClick={() => set({ designCollapsed: false })}>
-          <Icon name="design" size={20} /><span>Design</span><Icon name={side ? 'chevronRight' : 'up'} size={14} />
+      <aside className={`design-dock ${mode} collapsed`} aria-label="Insert design panel, collapsed">
+        <button className="dock-expand" aria-label="Open the Insert design panel" title="Open the Insert design panel" onClick={() => set({ designCollapsed: false })}>
+          <Icon name="design" size={20} /><span>Insert design</span><Icon name={side ? 'chevronRight' : 'up'} size={14} />
         </button>
       </aside>
     );
   }
 
   return (
-    <aside className={`design-dock ${mode}`} aria-label="Design panel" style={side ? { width: designSize.w } : { height: designSize.h }}>
+    <aside className={`design-dock ${mode}`} aria-label="Insert design panel" style={side ? { width: designSize.w } : { height: designSize.h }}>
       <div
-        className="dock-resize" role="separator" tabIndex={0} aria-orientation={side ? 'vertical' : 'horizontal'} aria-label="Resize the Design panel. Use the arrow keys."
+        className="dock-resize" role="separator" tabIndex={0} aria-orientation={side ? 'vertical' : 'horizontal'} aria-label="Resize the Insert design panel. Use the arrow keys."
         onPointerDown={(e) => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); start.current = { x: e.clientX, y: e.clientY, w: designSize.w, h: designSize.h }; }}
         onPointerMove={resize}
         onPointerUp={() => { if (start.current) writeDesignSize(useStore.getState().designSize); start.current = null; }}
         onKeyDown={key}
       />
       <header className="dock-head">
-        <span className="dock-title"><Icon name="design" size={18} /><h2>Design</h2></span>
-        <Seg full={false} label="Design panel view" value={tab} onChange={(t) => set({ designTab: t })}
-          options={[{ id: 'add', label: 'Add' }, { id: 'edit', label: 'Edit', disabled: !att }]} />
+        <span className="dock-title"><Icon name="design" size={20} /><h2>Insert design</h2></span>
+        <Seg full={false} label="Insert design view" value={tab} onChange={(t) => set({ designTab: t })}
+          options={[{ id: 'add', label: 'Library' }, { id: 'edit', label: 'Edit', disabled: !att }]} />
         <span className="spacer" />
-        <button className="icon-btn sm" aria-label="Collapse the Design panel" title="Collapse" onClick={() => set({ designCollapsed: true })}><Icon name={side ? 'chevron' : 'down'} size={16} /></button>
-        <button className="icon-btn sm" aria-label="Close the Design panel" title="Close" onClick={() => set({ designOpen: false })}><Icon name="close" size={16} /></button>
+        <button className="icon-btn sm" aria-label="Collapse the Insert design panel" title="Collapse" onClick={() => set({ designCollapsed: true })}><Icon name={side ? 'chevron' : 'down'} size={16} /></button>
+        <button className="icon-btn sm" aria-label="Close the Insert design panel" title="Close" onClick={() => set({ designOpen: false })}><Icon name="close" size={16} /></button>
       </header>
       <div className="dock-body">
         {tab === 'edit' && att ? <AttachmentEditor att={att} /> : <DesignLibrary />}

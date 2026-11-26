@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { useStore } from '../store';
 import type { Piece } from '../data/presets';
@@ -18,6 +18,9 @@ import { pickSeamPoint } from './ConstructionPanel';
 import { ATTACHMENT_MIME, isAttachment } from './designLibrary';
 import { attWorld, frameOn, instanceFor, layoutEntries, onCopy, toSource, toWorldPt, worldToAtt, type Entry } from './sides';
 import { openPieceFlow } from './flow';
+import { attsOnEntry, computeGeo, layoutChart, type Geo } from './chartLayout';
+import { hitList, type Cand } from './chartHit';
+import { createPortal } from 'react-dom';
 import Icon from './Icon';
 
 type View = { x: number; y: number; k: number };
@@ -81,6 +84,48 @@ export default function PatternEditor() {
     return null;
   };
   const instOf = (e: Entry) => (e.both ? e.inst : undefined);
+
+  // ---- geometry, label layout and hit testing -----------------------------------
+  const allPleats = edits?.pleats;
+  const geos = useMemo(() => {
+    const m = new Map<string, Geo>();
+    for (const en of entries) m.set(en.key, computeGeo(en, (allPleats ?? []).filter((q) => q.pieceId === en.src.id && onCopy((q as { instance?: number }).instance, en))));
+    return m;
+  }, [entries, allPleats]);
+  const geosRef = useRef(geos);
+  geosRef.current = geos;
+  const cycle = useRef({ x: -99, y: -99, t: 0, idx: 0, sig: '' });
+  const pending = useRef<{ x: number; y: number; run: () => void } | null>(null);
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const [hover, setHover] = useState<{ cand: Cand; wx: number; wy: number; more: number } | null>(null);
+  const selKey = (() => {
+    if (!selPiece) return null;
+    const en = entries.find((e) => e.src.id === selPiece && (!e.both || (selInstance ?? 0) === e.inst)) ?? entries.find((e) => e.src.id === selPiece);
+    return en?.key ?? null;
+  })();
+  const hoverKey = hover ? (hover.cand.hl.t === 'piece' ? hover.cand.hl.key : null) : null;
+  const layout = useMemo(
+    () => layoutChart({ entries, geos, atts: edits?.attachments ?? [], k: view.k, selKey, showMeasure, units, hoverKey, bounds: size ? { x0: -view.x / view.k, y0: -view.y / view.k, x1: (size.w - view.x) / view.k, y1: (size.h - view.y) / view.k } : null }),
+    [entries, geos, edits?.attachments, view.k, view.x, view.y, size, selKey, showMeasure, units, hoverKey],
+  );
+  const [layerEls, setLayerEls] = useState<{ labels: SVGGElement | null; top: SVGGElement | null }>({ labels: null, top: null });
+  const setLabelsEl = useCallback((el: SVGGElement | null) => { if (el) setLayerEls((c) => (c.labels === el ? c : { ...c, labels: el })); }, []);
+  const setTopEl = useCallback((el: SVGGElement | null) => { if (el) setLayerEls((c) => (c.top === el ? c : { ...c, top: el })); }, []);
+  const pickList = (w: Pt): Cand[] => {
+    const st = useStore.getState();
+    return hitList({
+      w, k: viewRef.current.k, entries: entriesRef.current, geos: geosRef.current, atts: st.project.edits?.attachments ?? [], pieces: st.project.pieces,
+      pleats: st.project.edits?.pleats ?? [], selAttachment: st.selAttachment, selKey, tool: st.tool,
+    });
+  };
+  const hoverRaf = useRef(0);
 
   // ---- seam runs to draw, grouped by piece ------------------------------
   const seamList = useMemo(() => builtinSeams(project.garment, pieces, project.edits), [project.garment, pieces, project.edits]);
@@ -208,16 +253,42 @@ export default function PatternEditor() {
     if (pointers.current.size > 2) return;
 
     const st = useStore.getState();
-    const target = (e.target as Element).closest('[data-kind]') as HTMLElement | null;
+    const w = toWorld(e.clientX, e.clientY);
+    const chartPick = (st.tool === 'select' || st.tool === 'add') && !st.pieceFlow?.picking;
+    const panNow = () => (drag.current = { mode: 'pan', startClient: { x: e.clientX, y: e.clientY }, startView: viewRef.current });
+    pending.current = null;
+
+    if (st.tool === 'pan' || e.button === 1 || (e.button === 0 && e.altKey && !chartPick)) return panNow();
+
+    // what is under the pointer: one resolver, not the first DOM element (see chartHit.ts)
+    let target = (e.target as Element).closest('[data-kind]') as HTMLElement | null;
+    if (chartPick) {
+      const list = pickList(w);
+      const c = cycle.current;
+      const now = performance.now();
+      const slow = now - c.t > 450; // a quick second click is a double tap, not a cycle
+      const same = Math.hypot(e.clientX - c.x, e.clientY - c.y) < 6 && now - c.t < 5000 && (slow || e.altKey) && c.sig === list.map((q) => q.id).join('|');
+      let idx = 0;
+      if (list.length > 1 && same) {
+        if (e.altKey) idx = (c.idx + 1) % list.length; // option-click steps to the next item under the pointer
+        else idx = c.idx; // a plain repeat keeps the item (so it can be dragged) and steps on release
+      }
+      cycle.current = { x: e.clientX, y: e.clientY, t: now, idx, sig: list.map((q) => q.id).join('|') };
+      const cand = list[idx];
+      target = cand ? ({ dataset: cand.ds } as unknown as HTMLElement) : null;
+      if (list.length > 1 && same && !e.altKey) {
+        const next = list[(idx + 1) % list.length];
+        pending.current = { x: e.clientX, y: e.clientY, run: () => { cycle.current = { ...cycle.current, idx: (idx + 1) % list.length }; run({ dataset: next.ds } as unknown as HTMLElement); drag.current = null; } };
+      }
+    }
+    run(target);
+
+    function run(target: HTMLElement | null) {
     const kind = target?.dataset.kind;
     const pieceId = target?.dataset.piece;
     const ent = pieceId ? findEntry(pieceId, Number(target?.dataset.inst ?? 0)) : undefined;
     /** remember which copy the user is working on */
     const pick = (en?: Entry) => st.set({ selInstance: en?.both ? en.inst : null });
-    const w = toWorld(e.clientX, e.clientY);
-    const panNow = () => (drag.current = { mode: 'pan', startClient: { x: e.clientX, y: e.clientY }, startView: viewRef.current });
-
-    if (st.tool === 'pan' || e.button === 1 || (e.button === 0 && e.altKey)) return panNow();
 
     // ---- new piece, sewing it into an edge: click the edge of the garment it joins
     if (st.pieceFlow?.picking) {
@@ -291,7 +362,8 @@ export default function PatternEditor() {
       if (att) {
         const at = attWorld(all, att, ent);
         st.set({ selAttachment: id, selPiece: ent.src.id, selPoint: null, selPleat: null, selLayer: null });
-        st.openDesign('edit');
+        // selecting never moves the chart: the editor only switches when the panel is already open
+        if (st.designOpen) st.set({ designTab: 'edit', designCollapsed: false });
         pick(ent);
         drag.current = { mode: 'attach', id, key: ent.key, grab: { x: w.x - at.x, y: w.y - at.y }, start: w, committed: false };
         return;
@@ -360,10 +432,25 @@ export default function PatternEditor() {
     st.select(null, null);
     st.set({ selAttachment: null, selPleat: null });
     panNow();
+    }
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     const stNow = useStore.getState();
+    if (!drag.current && !pointers.current.size && (stNow.tool === 'select' || stNow.tool === 'add') && !stNow.pieceFlow?.picking && e.pointerType !== 'touch') {
+      const cx = e.clientX, cy = e.clientY;
+      cancelAnimationFrame(hoverRaf.current);
+      hoverRaf.current = requestAnimationFrame(() => {
+        if (!svgRef.current) return;
+        const w0 = toWorld(cx, cy);
+        const list = pickList(w0);
+        const c = cycle.current;
+        const sig = list.map((q) => q.id).join('|');
+        const again = list.length > 1 && c.sig === sig && Math.hypot(cx - c.x, cy - c.y) < 6;
+        const cand = list[again ? (c.idx + 1) % list.length : 0];
+        setHover((h) => (!cand ? (h ? null : h) : h && h.cand.id === cand.id && h.more === list.length - 1 && Math.hypot(h.wx - w0.x, h.wy - w0.y) * viewRef.current.k < 4 ? h : { cand, wx: w0.x, wy: w0.y, more: list.length - 1 }));
+      });
+    }
     if (stNow.tool === 'pen') setPenHover(snap(toWorld(e.clientX, e.clientY)));
     if (stNow.pieceFlow?.picking && !drag.current) {
       const w0 = toWorld(e.clientX, e.clientY);
@@ -375,6 +462,7 @@ export default function PatternEditor() {
       } else setPickHover(null);
     }
     if (!pointers.current.has(e.pointerId)) return;
+    if (hover) setHover(null);
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const d = drag.current;
     if (!d) return;
@@ -489,6 +577,9 @@ export default function PatternEditor() {
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
+    const pc = pending.current;
+    pending.current = null;
+    if (pc && Math.hypot(e.clientX - pc.x, e.clientY - pc.y) < 4 && !(drag.current && 'committed' in drag.current && drag.current.committed)) pc.run();
     pointers.current.delete(e.pointerId);
     if (pointers.current.size === 0) drag.current = null;
     else if (pointers.current.size === 1 && drag.current?.mode === 'pinch') {
@@ -530,7 +621,7 @@ export default function PatternEditor() {
       <pattern id="inside-hatch" width="1.2" height="1.2" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
         <line x1="0" y1="0" x2="0" y2="1.2" stroke="var(--grid-major)" strokeWidth={px(1)} />
       </pattern>
-      <marker id="arr" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+      <marker id="arr" viewBox="0 0 10 10" refX="5" refY="5" markerWidth={px(7)} markerHeight={px(7)} orient="auto-start-reverse" markerUnits="userSpaceOnUse">
         <path d="M0 1L10 5L0 9z" fill="var(--dim-line)" />
       </marker>
     </defs>
@@ -584,7 +675,7 @@ export default function PatternEditor() {
 
   const hint = picking
     ? pieceFlow?.hostEdge ? 'Edge picked. Click another edge to change it, then press Add piece.' : 'Click the edge of the garment that your new piece is sewn to. Escape cancels.'
-    : `${HUD[tool] ?? HUD.select}${showMeasure && k < 2.4 ? ' Zoom in to see measurements.' : ''}`;
+    : `${HUD[tool] ?? HUD.select}`;
 
   return (
     <div className="editor">
@@ -597,6 +688,7 @@ export default function PatternEditor() {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onPointerLeave={() => setHover(null)}
           onContextMenu={(e) => e.preventDefault()}
         >
           {grid}
@@ -627,9 +719,16 @@ export default function PatternEditor() {
                   dropTarget={dropKey === en.key}
                   pickSeg={pickHover?.key === en.key ? pickHover.seg : null}
                   picking={picking}
+                  geo={geos.get(en.key)!}
+                  layout={layout}
+                  labelsEl={layerEls.labels}
+                  topEl={layerEls.top}
                 />
               );
             })}
+            <g ref={setLabelsEl} />
+            <g ref={setTopEl} />
+            {hover && tool !== 'pen' && <HoverOverlay hover={hover} entries={entries} geos={geos} k={k} />}
             {tool === 'pen' && <PenPreview draft={penDraft} hover={penHover} k={k} snap={penSnap} />}
           </g>
         </svg>
@@ -648,7 +747,7 @@ export default function PatternEditor() {
 }
 
 const HUD: Record<string, string> = {
-  select: 'Drag points to reshape. Double tap an edge to add a point. Drag a pocket or design to move it. Drop designs from the library here.',
+  select: 'Drag points to reshape. Double tap an edge to add a point. Drag a design to move it. Click again, or Option-click, to select what is underneath.',
   add: 'Tap an edge to add a point.',
   pan: 'Drag to pan the chart.',
   seams: 'Click a start point, then an end point, to pick a range to sew. Escape to stop.',
@@ -699,32 +798,18 @@ function PieceView(props: {
   dropTarget: boolean;
   pickSeg: number | null;
   picking: boolean;
+  geo: Geo;
+  layout: import('./chartLayout').Layout;
+  labelsEl: SVGGElement | null;
+  topEl: SVGGElement | null;
 }) {
-  const { entry, k, selected, selPoint, symmetry, showMeasure, showStitch, units, tool, attachments, selAttachment, pleats, selPleat, ghosts, runs, starts, dropTarget, pickSeg, picking } = props;
+  const { geo, layout, labelsEl, topEl, entry, k, selected, selPoint, symmetry, showMeasure, showStitch, units, tool, attachments, selAttachment, pleats, selPleat, ghosts, runs, starts, dropTarget, pickSeg, picking } = props;
   const p = entry.piece;
   const inst = entry.inst;
   const px = (n: number) => n / k;
   const selPieceId = useStore((st) => st.selPiece);
 
-  const geo = useMemo(() => {
-    const bz = toBeziers(p.points);
-    const poly = samplePoly(p.points);
-    const bb = bbox(poly);
-    return {
-      bz,
-      d: pathD(bz),
-      poly,
-      bb,
-      c: centroid(poly),
-      cut: polyD(offsetInward(poly, -SEAM_ALLOWANCE)),
-      specs: pieceSpecs(p, pleats.length ? { attachments: [], customSeams: [], detachedSeams: [], pleats } : undefined),
-    };
-  }, [p.points, p.specs, pleats]);
-
   const sel = p.points.find((q) => q.id === selPoint);
-  const fontPx = 11;
-  // a label wider than its piece breaks after the comma: "Front," over "right leg"
-  const labelLines = entry.label.length * 6.8 > geo.bb.w * k * 0.92 && entry.label.includes(', ') ? entry.label.split(', ', 2) : [entry.label];
 
   const allAtts = useStore((st) => st.project.edits?.attachments);
   const viewFace = useStore((st) => st.viewFace);
@@ -759,7 +844,12 @@ function PieceView(props: {
         <g opacity={dim ? 0.5 : 1}>
           {hw || letters ? <rect x={-hitW / 2} y={-hitH / 2} width={hitW} height={hitH} fill="transparent" /> : <path d={o.d} transform={o.transform} fill="transparent" />}
           {!hw && !letters && (a.w < px(18) || a.h < px(18)) && <rect x={-hitW / 2} y={-hitH / 2} width={hitW} height={hitH} fill="transparent" />}
-          <ArtworkGroup a={a} fill={hex} />
+          {hw && a.hardware?.type !== 'zipper' && Math.max(a.w, a.h) * k < 16 && (
+            <>
+              <circle r={px(10)} fill="var(--canvas)" fillOpacity={0.85} stroke="var(--outline)" strokeWidth={px(1.2)} pointerEvents="none" />
+            </>
+          )}
+          <g transform={hw && a.hardware?.type !== 'zipper' && Math.max(a.w, a.h) * k < 12 ? `scale(${px(12) / Math.max(a.w, a.h, 1e-3)})` : undefined}><ArtworkGroup a={a} fill={hex} /></g>
           {showLine && (
             hw || letters
               ? <rect x={-a.w / 2} y={-a.h / 2} width={a.w} height={a.h} fill="none" stroke={stroke} strokeWidth={px(on ? 2.2 : 1.2)} strokeDasharray={dash} strokeLinecap="round" pointerEvents="none" opacity={on ? 1 : 0.55} />
@@ -767,14 +857,8 @@ function PieceView(props: {
           )}
         </g>
         {kids.map((c) => renderAtt(c, false))}
-        {inside && (
-          <g transform={`translate(${-a.w / 2},${-a.h / 2 - px(10)})`} pointerEvents="none">
-            <rect width={px(46)} height={px(16)} rx={px(8)} fill="var(--bg-elevated)" stroke="var(--accent)" strokeWidth={px(1)} />
-            <text x={px(23)} y={px(8)} fontSize={px(11)} textAnchor="middle" dominantBaseline="central" fill="var(--accent)" fontWeight={600}>Inside</text>
-          </g>
-        )}
         {on && <circle r={px(3)} fill="var(--accent)" pointerEvents="none" />}
-        {(on || k > 6) && <text y={a.h / 2 + px(14)} fontSize={px(11)} textAnchor="middle" className="edge-len" pointerEvents="none">{a.name}</text>}
+        {on && <text y={a.h / 2 + px(14)} fontSize={px(11)} textAnchor="middle" className="edge-len" strokeWidth={px(3)} pointerEvents="none">{a.name}</text>}
         {on && (
           <g>
             <line x1={0} y1={-a.h / 2} x2={0} y2={handleY} stroke="var(--accent)" strokeWidth={px(1.5)} pointerEvents="none" />
@@ -788,8 +872,15 @@ function PieceView(props: {
     );
   };
 
+  const nm = layout.names.get(entry.key);
+  const ms = layout.measures.get(entry.key) ?? [];
+  const els = layout.edges.get(entry.key) ?? [];
+  const secondary = selected && k >= 4 ? (entry.both ? `Cut 1 of ${p.cut >= 2 ? p.cut : 2}` : `Cut ${p.cut} · ${fabricById(p.fabric.id).name}`) : null;
+  const tr = `translate(${p.offset.x},${p.offset.y})`;
+
   return (
-    <g transform={`translate(${p.offset.x},${p.offset.y})`}>
+    <>
+    <g transform={tr}>
       {/* body */}
       <path d={geo.d} fill={viewFace === 'inside' && insideOwn ? `url(#fab-in-${p.id})` : `url(#fab-${p.id})`} data-kind="piece" data-piece={p.id} data-inst={inst} style={{ cursor: picking ? 'crosshair' : 'move' }} />
       <path d={geo.d} fill="var(--piece-sheen)" pointerEvents="none" />
@@ -804,70 +895,17 @@ function PieceView(props: {
         <path d={runD(geo.bz, [pickSeg])} fill="none" stroke="var(--orange)" strokeWidth={px(7)} strokeLinecap="round" opacity={0.85} pointerEvents="none" />
       )}
 
-      {/* grainline + label */}
-      <line
-        x1={geo.c.x} x2={geo.c.x} y1={geo.c.y - geo.bb.h * 0.22} y2={geo.c.y + geo.bb.h * 0.22}
-        stroke="var(--dim-line)" strokeWidth={px(1)} markerStart="url(#arr)" markerEnd="url(#arr)" pointerEvents="none" opacity={0.7}
-      />
-      <text x={geo.c.x} y={geo.c.y - px(2) - (labelLines.length - 1) * px(6.5)} className="piece-label" fontSize={px(12)} textAnchor="middle" pointerEvents="none">
-        {labelLines.map((l, i) => <tspan key={i} x={geo.c.x} dy={i ? px(13) : 0}>{l}</tspan>)}
-      </text>
-      <text x={geo.c.x} y={geo.c.y - px(2) + (labelLines.length - 1) * px(6.5) + px(13)} className="piece-sub" fontSize={px(11)} textAnchor="middle" pointerEvents="none">
-        {entry.both ? `Cut 1 of ${p.cut >= 2 ? p.cut : 2}` : `Cut ${p.cut} · ${fabricById(p.fabric.id).name}`}
-      </text>
-
+      {/* grainline: only on the selected piece or when zoomed in */}
+      {(selected || k >= 6) && (
+        <line
+          x1={geo.c.x} x2={geo.c.x} y1={geo.c.y - geo.bb.h * 0.22} y2={geo.c.y + geo.bb.h * 0.22}
+          stroke="var(--dim-line)" strokeWidth={px(1)} markerStart="url(#arr)" markerEnd="url(#arr)" pointerEvents="none" opacity={0.45}
+        />
+      )}
       {/* symmetry axis */}
       {symmetry && p.symmetric && (
         <line x1={0} x2={0} y1={geo.bb.minY - 4} y2={geo.bb.maxY + 4} stroke="var(--purple)" strokeWidth={px(1.2)} strokeDasharray={`${px(6)} ${px(4)}`} pointerEvents="none" />
       )}
-
-      {/* measurements */}
-      {showMeasure && !entry.mirror && k >= 2.4 &&
-        geo.specs.map((m) => {
-          const mx = (m.a.x + m.b.x) / 2, my = (m.a.y + m.b.y) / 2;
-          const label = `${m.label} ${fmt(m.value, units)}`;
-          const w = px(label.length * 6.1 + 10);
-          const h = px(17);
-          const tick = px(5);
-          return (
-            <g key={m.label} pointerEvents="none">
-              <line x1={m.a.x} y1={m.a.y} x2={m.b.x} y2={m.b.y} stroke={ACCENT} strokeWidth={px(1)} />
-              {m.vertical ? (
-                <>
-                  <line x1={m.a.x - tick} x2={m.a.x + tick} y1={m.a.y} y2={m.a.y} stroke={ACCENT} strokeWidth={px(1)} />
-                  <line x1={m.b.x - tick} x2={m.b.x + tick} y1={m.b.y} y2={m.b.y} stroke={ACCENT} strokeWidth={px(1)} />
-                </>
-              ) : (
-                <>
-                  <line x1={m.a.x} x2={m.a.x} y1={m.a.y - tick} y2={m.a.y + tick} stroke={ACCENT} strokeWidth={px(1)} />
-                  <line x1={m.b.x} x2={m.b.x} y1={m.b.y - tick} y2={m.b.y + tick} stroke={ACCENT} strokeWidth={px(1)} />
-                </>
-              )}
-              <g transform={`translate(${mx},${my})${m.vertical ? ' rotate(-90)' : ''}`}>
-                <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={px(4)} fill="var(--canvas)" stroke={ACCENT} strokeWidth={px(1)} />
-                <text className="dim-text" fontSize={px(fontPx)} textAnchor="middle" dominantBaseline="central">
-                  {label}
-                </text>
-              </g>
-            </g>
-          );
-        })}
-
-      {/* edge lengths on the selected piece */}
-      {selected &&
-        geo.bz.map((b, i) => {
-          const L = bezLength(b);
-          if (L * k < 40) return null;
-          const m = bezAt(b, 0.5);
-          const t = bezTangent(b, 0.5);
-          let n = { x: -t.y, y: t.x };
-          if ((m.x + n.x - geo.c.x) ** 2 + (m.y + n.y - geo.c.y) ** 2 < (m.x - geo.c.x) ** 2 + (m.y - geo.c.y) ** 2) n = { x: -n.x, y: -n.y };
-          return (
-            <text key={i} x={m.x + n.x * px(14)} y={m.y + n.y * px(14)} className="edge-len" fontSize={px(10)} textAnchor="middle" dominantBaseline="central" pointerEvents="none">
-              {fmt(L, units)}
-            </text>
-          );
-        })}
 
       {/* seam runs: built in, detached, custom and the join in progress */}
       {runs.map((r) => {
@@ -917,25 +955,33 @@ function PieceView(props: {
         );
       })}
 
-      {/* attachments sit on their host in the host's own coordinates; designs on a pocket or tag sit inside it */}
-      {attachments.map((a) => renderAtt(a, true))}
-
-      {/* drawn pieces that are patched on: dashed placement, draggable */}
-      {ghosts.map((g) => {
-        const pl = g.placement!;
-        const on = g.id === selPieceId;
-        const f = fabricById(g.fabric.id);
-        const hex = (f.colors[g.fabric.color] ?? f.colors[0]).hex;
-        const gf = frameOn(entry, { x: pl.x ?? 0, y: pl.y ?? 0, rotation: pl.rotation ?? 0 });
-        return (
-          <g key={g.id} transform={`translate(${gf.x},${gf.y}) rotate(${gf.rotation})`} data-kind="ghost" data-piece={g.id} data-inst={inst} style={{ cursor: 'move' }}>
-            <path d={pathD(toBeziers(g.points))} fill={hex} fillOpacity={0.85} stroke={on ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(on ? 2.2 : 1.4)} strokeDasharray={`${px(6)} ${px(4)}`} />
-            <text y={px(4)} fontSize={px(11)} textAnchor="middle" className="edge-len" pointerEvents="none">{g.name}</text>
-          </g>
-        );
-      })}
-
-      {/* points */}
+    </g>
+    {labelsEl && createPortal(
+      <g transform={tr}>
+        {nm?.show && (
+          <text x={nm.x} y={nm.y - (nm.lines.length - 1) * px(6.5) - (secondary ? px(6) : 0)} className="piece-label" strokeWidth={px(2.2)} fontSize={px(11)} textAnchor="middle" dominantBaseline="central" pointerEvents="none">
+            {nm.lines.map((l, i) => <tspan key={i} x={nm.x} dy={i ? px(13) : 0}>{l}</tspan>)}
+          </text>
+        )}
+        {nm?.show && secondary && (
+          <text x={nm.x} y={nm.y + (nm.lines.length - 1) * px(6.5) + px(14) - px(6)} className="piece-sub" strokeWidth={px(2.2)} fontSize={px(11)} textAnchor="middle" dominantBaseline="central" pointerEvents="none">{secondary}</text>
+        )}
+        {ms.map((m) => {
+          const mx = (m.a.x + m.b.x) / 2, my = (m.a.y + m.b.y) / 2, tick = px(4);
+          return (
+            <g key={m.key} pointerEvents="none">
+              <line x1={m.a.x} y1={m.a.y} x2={m.b.x} y2={m.b.y} stroke={ACCENT} strokeWidth={px(1)} opacity={0.8} />
+              {m.vertical
+                ? <><line x1={m.a.x - tick} x2={m.a.x + tick} y1={m.a.y} y2={m.a.y} stroke={ACCENT} strokeWidth={px(1)} /><line x1={m.b.x - tick} x2={m.b.x + tick} y1={m.b.y} y2={m.b.y} stroke={ACCENT} strokeWidth={px(1)} /></>
+                : <><line x1={m.a.x} x2={m.a.x} y1={m.a.y - tick} y2={m.a.y + tick} stroke={ACCENT} strokeWidth={px(1)} /><line x1={m.b.x} x2={m.b.x} y1={m.b.y - tick} y2={m.b.y + tick} stroke={ACCENT} strokeWidth={px(1)} /></>}
+              <line x1={mx} y1={my} x2={m.lx} y2={m.ly} stroke={ACCENT} strokeWidth={px(0.8)} opacity={0.55} />
+              <text x={m.lx} y={m.ly} className="dim-text" strokeWidth={px(3)} fontSize={px(11)} textAnchor="middle" dominantBaseline="central">{m.text}</text>
+            </g>
+          );
+        })}
+        {els.map((l) => (
+          <text key={l.key} x={l.x} y={l.y} className="edge-len" strokeWidth={px(3)} fontSize={px(10)} textAnchor="middle" dominantBaseline="central" pointerEvents="none">{l.text}</text>
+        ))}
       {p.points.map((q) => {
           const isSel = q.id === selPoint;
           const isMirror = symmetry && sel && sel.mirror === q.id && sel.id !== q.id;
@@ -953,6 +999,64 @@ function PieceView(props: {
             </g>
           );
         })}
+      </g>,
+      labelsEl,
+    )}
+    {topEl && createPortal(
+      <g transform={tr}>
+      {/* attachments sit on their host in the host's own coordinates; designs on a pocket or tag sit inside it */}
+      {attachments.map((a) => renderAtt(a, true))}
+
+      {/* drawn pieces that are patched on: dashed placement, draggable */}
+      {ghosts.map((g) => {
+        const pl = g.placement!;
+        const on = g.id === selPieceId;
+        const f = fabricById(g.fabric.id);
+        const hex = (f.colors[g.fabric.color] ?? f.colors[0]).hex;
+        const gf = frameOn(entry, { x: pl.x ?? 0, y: pl.y ?? 0, rotation: pl.rotation ?? 0 });
+        return (
+          <g key={g.id} transform={`translate(${gf.x},${gf.y}) rotate(${gf.rotation})`} data-kind="ghost" data-piece={g.id} data-inst={inst} style={{ cursor: 'move' }}>
+            <path d={pathD(toBeziers(g.points))} fill={hex} fillOpacity={0.85} stroke={on ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(on ? 2.2 : 1.4)} strokeDasharray={`${px(6)} ${px(4)}`} />
+            <text y={px(4)} fontSize={px(11)} textAnchor="middle" className="edge-len" strokeWidth={px(3)} pointerEvents="none">{g.name}</text>
+          </g>
+        );
+      })}
+
+      </g>,
+      topEl,
+    )}
+    </>
+  );
+}
+
+/** What a click would select right now: outline of the item plus a small name chip. */
+function HoverOverlay({ hover, entries, geos, k }: { hover: { cand: Cand; wx: number; wy: number; more: number }; entries: Entry[]; geos: Map<string, Geo>; k: number }) {
+  const px = (n: number) => n / k;
+  const { cand } = hover;
+  const h = cand.hl;
+  const stroke = 'var(--accent)';
+  let shape: React.ReactNode = null;
+  if (h.t === 'ring') shape = <circle cx={h.x} cy={h.y} r={h.r} fill="var(--accent-soft)" stroke={stroke} strokeWidth={px(2)} />;
+  else if (h.t === 'rect') shape = <rect x={-Math.max(h.w, px(14)) / 2 - px(2)} y={-Math.max(h.h, px(14)) / 2 - px(2)} width={Math.max(h.w, px(14)) + px(4)} height={Math.max(h.h, px(14)) + px(4)} transform={`translate(${h.x},${h.y}) rotate(${h.rot})`} fill="var(--accent-soft)" stroke={stroke} strokeWidth={px(2)} rx={px(3)} />;
+  else if (h.t === 'line') shape = <line x1={h.a.x} y1={h.a.y} x2={h.b.x} y2={h.b.y} stroke={stroke} strokeWidth={px(4)} strokeLinecap="round" opacity={0.8} />;
+  else {
+    const en = entries.find((e) => e.key === h.key), g = geos.get(h.key);
+    if (en && g) shape = h.t === 'piece'
+      ? <path d={g.d} transform={`translate(${en.offset.x},${en.offset.y})`} fill="var(--accent-soft)" stroke={stroke} strokeWidth={px(2.5)} />
+      : <path d={runD(g.bz, [h.seg])} transform={`translate(${en.offset.x},${en.offset.y})`} fill="none" stroke={stroke} strokeWidth={px(5)} strokeLinecap="round" opacity={0.85} />;
+  }
+  const text = cand.name;
+  const sub = [cand.sub, hover.more > 0 ? `${hover.more} more under, click again` : null].filter(Boolean).join(' · ');
+  const w = Math.max(text.length * 6.6, sub.length * 5.8) + 16;
+  const hgt = sub ? 36 : 22;
+  return (
+    <g pointerEvents="none" aria-hidden="true">
+      {shape}
+      <g transform={`translate(${hover.wx},${hover.wy}) scale(${1 / k}) translate(14,-${hgt + 10})`}>
+        <rect width={w} height={hgt} rx={8} fill="var(--bg-elevated)" stroke="var(--accent)" strokeWidth={1} />
+        <text x={8} y={sub ? 14 : 11} dominantBaseline="central" fontSize={12} fontWeight={600} fill="var(--label)">{text}</text>
+        {sub && <text x={8} y={28} dominantBaseline="central" fontSize={11} fill="var(--text-2)">{sub}</text>}
+      </g>
     </g>
   );
 }
