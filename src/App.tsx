@@ -9,6 +9,7 @@ import { EMPTY_SEAM_DRAFT, useStore } from './store';
 import { useApplyTheme } from './components/theme';
 import { useDockMode } from './components/dock';
 import { copiesOf } from './components/sides';
+import Splash from './components/Splash';
 import { nudgePatch } from './components/editHelpers';
 
 let lastNudge = 0;
@@ -89,6 +90,7 @@ export default function App() {
 
   return (
     <div className={`app ${stacked ? 'stacked' : ''}`}>
+      <Splash />
       <TopBar />
       <main className="workspace">
         <div

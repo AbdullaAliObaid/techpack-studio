@@ -1,3 +1,4 @@
+import Logo from './Logo';
 import { useEffect, useRef, useState } from 'react';
 import { useStore, type Project, type ThemePref } from '../store';
 import { CATALOG, migrateGarment } from '../data/catalog';
@@ -73,7 +74,7 @@ export default function TopBar() {
   return (
     <header className="topbar material" ref={ref}>
       <div className="brand">
-        <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3l4 2 4-2 5 4-3 4-2-1v11H8V10l-2 1-3-4z" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" /></svg>
+        <Logo size={22} />
         <span>tech-it</span>
       </div>
 
