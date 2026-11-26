@@ -10,9 +10,14 @@ import { useApplyTheme } from './components/theme';
 import { useDockMode } from './components/dock';
 import { copiesOf } from './components/sides';
 import Splash from './components/Splash';
+import Home from './components/Home';
+import NewFlow from './components/NewFlow';
 import { nudgePatch } from './components/editHelpers';
 
 let lastNudge = 0;
+
+/** React 18 has no `inert` prop: set the attribute by hand. */
+const inertIf = (on: boolean) => (on ? ({ inert: '' } as Record<string, string>) : {});
 
 export default function App() {
   useApplyTheme();
@@ -24,6 +29,10 @@ export default function App() {
   const dockOpen = useStore((s) => s.designOpen);
   const dockCollapsed = useStore((s) => s.designCollapsed);
   const dockW = useStore((s) => s.designSize.w);
+  const screen = useStore((s) => s.screen);
+  const newFrom = useStore((s) => s.newFlow.from);
+  const prevScreen = useRef(screen);
+  useEffect(() => { prevScreen.current = screen; }, [screen]);
   const extra = !stacked && dock === 'side' && dockOpen ? (dockCollapsed ? 44 : dockW) : 0;
   // portrait iPad: Pattern on top, 3D view below, so both get the full width
   useEffect(() => {
@@ -38,6 +47,7 @@ export default function App() {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       const st = useStore.getState();
+      if (st.screen !== 'editor') return; // Home and the New flow own the keyboard
       const mod = e.metaKey || e.ctrlKey;
       if (st.pieceFlow && e.key.toLowerCase() !== 'escape') return; // the New piece sheet owns the keyboard
       if (mod && e.key.toLowerCase() === 'z') {
@@ -89,8 +99,9 @@ export default function App() {
   }, []);
 
   return (
-    <div className={`app ${stacked ? 'stacked' : ''}`}>
+    <div className={`app ${stacked ? 'stacked' : ''}`} data-screen={screen}>
       <Splash />
+      <div className="editor-shell" {...inertIf(screen !== 'editor')} data-state={screen === 'editor' ? 'active' : 'hidden'}>
       <TopBar />
       <main className="workspace">
         <div
@@ -120,6 +131,13 @@ export default function App() {
         <Inspector />
       </main>
       <PieceFlow />
+      </div>
+      <div className="layer home-layer" data-state={screen === 'home' ? 'active' : screen === 'new' && newFrom === 'home' ? 'under' : 'gone'} {...inertIf(screen !== 'home')}>
+        <Home />
+      </div>
+      <div className="layer new-layer" data-state={screen === 'new' ? 'active' : screen === 'home' ? 'right' : 'gone'} data-from={newFrom} {...inertIf(screen !== 'new')}>
+        <NewFlow />
+      </div>
     </div>
   );
 }

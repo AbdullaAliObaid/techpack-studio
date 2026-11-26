@@ -7,6 +7,7 @@ import { deleteProject, listProjects, saveProject } from '../lib/projects';
 import { uid } from '../lib/units';
 import { exportTechPack } from '../lib/exportPdf';
 import { piecesToDxf } from '../lib/exportDxf';
+import { flushSave, goHome, openNewFlow } from './nav';
 
 export default function TopBar() {
   const { project, units, past, future, set, undo, redo, loadProject, rename, theme, drawer } = useStore();
@@ -73,13 +74,13 @@ export default function TopBar() {
 
   return (
     <header className="topbar material" ref={ref}>
-      <div className="brand">
+      <button className="brand" onClick={goHome} title="Home: all your projects" aria-label="Home">
         <Logo size={22} />
         <span>tech-it</span>
-      </div>
+      </button>
 
       <div className="menus">
-        <button className="btn ghost" title="Start a new project from the style library" onClick={() => { set({ inspectorTab: 'garment', drawer: true }); useStore.getState().setSection('gar-style', true); setMenu(null); }}>
+        <button className="btn ghost" title="Start a new project" onClick={() => { setMenu(null); openNewFlow('create', 'editor'); }}>
           <Icon name="plus" size={16} /> New
         </button>
         <div className="menu-wrap">
@@ -88,11 +89,14 @@ export default function TopBar() {
           </button>
           {menu === 'open' && (
             <div className="menu wide" role="menu">
+              <button role="menuitem" className="menu-row" onClick={() => { setMenu(null); goHome(); }}><Icon name="home" size={18} /><span>All projects</span></button>
+              <button role="menuitem" className="menu-row" onClick={() => { setMenu(null); openNewFlow('change', 'editor'); }}><Icon name="garment" size={18} /><span>Change style of this project…</span></button>
+              <div className="menu-sep" role="separator" />
               <div className="menu-label">Saved on this device</div>
               {list.length === 0 && <div className="menu-empty">No saved projects yet</div>}
               {list.map((p) => (
                 <div className={`menu-item ${p.id === project.id ? 'on' : ''}`} key={p.id}>
-                  <button role="menuitem" onClick={() => { loadProject(p); setMenu(null); }}>
+                  <button role="menuitem" onClick={() => { flushSave(); loadProject(p); setMenu(null); }}>
                     <b>{p.name}</b>
                     <small>{styleName(p.garment)} · {new Date(p.updatedAt).toLocaleString()}</small>
                   </button>

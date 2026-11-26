@@ -58,7 +58,8 @@ export function initPersistence() {
   const last = lastProject();
   if (last) useStore.getState().loadProject(last);
   let timer: number | undefined;
-  let lastSaved = 0;
+  // the placeholder of a fresh install counts as already handled; it is only saved once it is edited
+  let lastSaved = useStore.getState().project.updatedAt;
   useStore.subscribe((s) => {
     if (s.project.updatedAt === lastSaved) return;
     window.clearTimeout(timer);
@@ -68,5 +69,6 @@ export function initPersistence() {
       window.dispatchEvent(new Event('tps-saved'));
     }, 400);
   });
-  saveProject(useStore.getState().project);
+  // a brand new install keeps its placeholder project unsaved until it is edited, so Home starts empty
+  if (last) saveProject(useStore.getState().project);
 }

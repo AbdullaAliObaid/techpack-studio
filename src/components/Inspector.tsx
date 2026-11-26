@@ -6,7 +6,6 @@ import { fabricDataUrl } from '../lib/textures';
 import { fitTable, garmentSpecs, pieceSpecs, seamReport } from '../lib/specs';
 import { FITS } from '../data/draft';
 import { fmt, toUnit } from '../lib/units';
-import Library from './Library';
 import { FabricPick } from './TrimFields';
 import { faceName, hasCollar } from './editHelpers';
 import ConstructionPanel from './ConstructionPanel';
@@ -195,10 +194,6 @@ function GarmentTab() {
       <Disclosure id="gar-fit" title="Fit" icon="stretch">
         <FitPick />
         <p className="group-note">How much room the pattern has around the body. The pattern and the 3D garment follow.</p>
-      </Disclosure>
-
-      <Disclosure id="gar-style" title="Style" icon="library" defaultOpen={false}>
-        <Library />
       </Disclosure>
     </>
   );

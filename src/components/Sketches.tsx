@@ -1,8 +1,5 @@
-import { useState, type ReactNode } from 'react';
-import { useStore } from '../store';
-import { CATALOG, CATEGORIES, migrateGarment, type Category, type StyleId } from '../data/catalog';
-import { fabricById } from '../data/fabrics';
-import Icon from './Icon';
+import type { ReactNode } from 'react';
+import { CATALOG, type StyleId } from '../data/catalog';
 
 /* ---------- flat sketches: 96 x 96, currentColor, themed by CSS ---------- */
 
@@ -128,59 +125,10 @@ const SKETCH: Record<StyleId, ReactNode> = {
   ),
 };
 
-export function Sketch({ id }: { id: StyleId }) {
+export function Sketch({ id, decorative = false }: { id: StyleId; decorative?: boolean }) {
   return (
-    <svg className="sketch" viewBox="0 0 96 96" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label={`${CATALOG.find((s) => s.id === id)?.name} flat sketch`}>
+    <svg className="sketch" viewBox="0 0 96 96" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...(decorative ? { 'aria-hidden': true } : { role: 'img', 'aria-label': `${CATALOG.find((s) => s.id === id)?.name} flat sketch` })}>
       {SKETCH[id]}
     </svg>
-  );
-}
-
-export default function Library() {
-  const { project, newProject, setSection } = useStore();
-  const [cat, setCat] = useState<Category>(() => CATALOG.find((s) => s.id === migrateGarment(project.garment))?.category ?? 'tops');
-  const [err, setErr] = useState<string | null>(null);
-  const current = migrateGarment(project.garment);
-  const styles = CATALOG.filter((s) => s.category === cat);
-
-  const start = (id: StyleId) => {
-    setErr(null);
-    try {
-      newProject(id as Parameters<typeof newProject>[0]);
-      setSection('gar-style', false);
-    } catch {
-      setErr('That style is not available yet.');
-    }
-  };
-
-  return (
-    <>
-      <div className="seg full" role="tablist" aria-label="Garment category">
-        {CATEGORIES.map((c) => (
-          <button key={c.id} role="tab" aria-selected={cat === c.id} className={cat === c.id ? 'on' : ''} onClick={() => setCat(c.id)}>{c.name}</button>
-        ))}
-      </div>
-      <p className="group-note">Pick a style to start a new project. Your current project is saved on this device.</p>
-      {err && <p className="inline-error" role="alert">{err}</p>}
-      <div className="lib-grid">
-        {styles.map((s) => {
-          const isCurrent = s.id === current;
-          return (
-            <article key={s.id} className={`lib-card ${isCurrent ? 'on' : ''}`} aria-label={s.name}>
-              <div className="lib-art"><Sketch id={s.id} /></div>
-              <h3>{s.name}</h3>
-              <p>{s.blurb}</p>
-              <div className="lib-meta">{fabricById(s.defaultFabric).name}</div>
-              {isCurrent ? (
-                <div className="lib-current"><Icon name="check" size={14} /> Current style</div>
-              ) : null}
-              <button className={`btn ${isCurrent ? '' : 'primary'} block`} onClick={() => start(s.id)} aria-label={`Start a new ${s.name} project`}>
-                {isCurrent ? 'Start over' : 'Start project'}
-              </button>
-            </article>
-          );
-        })}
-      </div>
-    </>
   );
 }

@@ -27,6 +27,8 @@ export interface Project {
 }
 
 export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen';
+export type Screen = 'home' | 'new' | 'editor';
+export interface NewFlow { mode: 'create' | 'change'; from: 'home' | 'editor' }
 export type ThemePref = 'system' | 'light' | 'dark';
 export type InspectorTab = 'garment' | 'construction' | 'body' | 'specs';
 
@@ -169,6 +171,16 @@ interface State {
   setLink: (on: boolean) => void;
   setFit: (fit: Fit) => void;
   newProject: (id: StyleId) => void;
+  /** which full screen is showing: the start screen, the new project flow, or the editor */
+  screen: Screen;
+  setScreen: (s: Screen) => void;
+  /** the new project flow: starting a project, or changing the style of the open one */
+  newFlow: NewFlow;
+  openNew: (mode: NewFlow['mode'], from: NewFlow['from']) => void;
+  /** a project from the new project flow: style, name, fit and body type chosen up front */
+  createProject: (o: { style: StyleId; name: string; fit: Fit; sex: 'male' | 'female' }) => void;
+  /** keep the open project (name, body, fit) but redraft it as another style */
+  restyle: (id: StyleId) => void;
   // --- edits (attachments, seams, pleats, user pieces) ---
   selAttachment: string | null;
   addAttachment: (a: Omit<Attachment, 'id'>) => string;
@@ -438,6 +450,25 @@ export const useStore = create<State>((set, get) => {
         return { project: { ...s.project, fit, pieces, updatedAt: Date.now() } };
       }),
 
+    screen: typeof location !== 'undefined' && new URLSearchParams(location.search).get('screen') === 'editor' ? 'editor' : 'home',
+    setScreen: (screen) => set({ screen }),
+    newFlow: { mode: 'create', from: 'home' },
+    openNew: (mode, from) => set({ newFlow: { mode, from }, screen: 'new' }),
+    createProject: ({ style, name, fit, sex }) =>
+      set((s) => {
+        const body = { ...(sex === 'female' ? FEMALE_BODY : MALE_BODY) };
+        let project = freshProject(style, name.trim() || undefined, body);
+        if (fit !== 'regular') project = { ...project, fit, pieces: regrade(project, body, body, 'regular', fit) };
+        return { project, past: [], future: [], selPiece: null, selPoint: null, selAttachment: null, fitToken: s.fitToken + 1, tool: 'select' };
+      }),
+    restyle: (id) =>
+      set((s) => {
+        const old = s.project;
+        const fit = old.fit ?? 'regular';
+        let project = { ...freshProject(id, old.name, old.body), id: old.id };
+        if (fit !== 'regular') project = { ...project, fit, pieces: regrade(project, old.body, old.body, 'regular', fit) };
+        return { project, past: [], future: [], selPiece: null, selPoint: null, selAttachment: null, fitToken: s.fitToken + 1, tool: 'select' };
+      }),
     newProject: (id) => set((s) => ({ project: freshProject(id, undefined, s.project.body), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
     // older saves stored 'jacket' | 'shirt' | 'pants'; map them onto catalog styles
     loadProject: (p) => set((s) => ({ project: withCollar({ ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
