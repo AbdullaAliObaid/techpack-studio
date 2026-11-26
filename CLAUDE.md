@@ -25,7 +25,9 @@ React + TypeScript + Vite, three.js via @react-three/fiber, zustand store, cloth
 - `tests/accuracy.ts`, `tests/drape.ts`, `tests/motion.ts`
 
 ## Commands
-`npm run dev`, `npm run build` (typecheck + bundle), `npm test`, `npm run test:drape`, `npm run test:motion`
+`npm run dev`, `npm run build` (typecheck + bundle), `npm test`, `npm run test:drape`, `npm run test:motion`, `npm run test:clip` (slow; `QUICK=1` for standing only)
+
+Sides: a piece cut twice has copy 0 on +x, which is the wearer's left (the avatar faces the camera). All labels are as worn.
 
 ## Agents (.claude/agents)
 - garment-engineer (opus): drafting, new styles, seams, simulation setup. Owns src/data, src/sim/setup.ts, src/lib/specs.ts.

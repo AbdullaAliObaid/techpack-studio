@@ -339,7 +339,7 @@ console.log('\n== left / right, appliques, hardware ==');
 {
   const pieces = makePreset('jeans', DEFAULT_BODY);
   const fr = pieces.find((q) => q.role === 'front')!, bk = pieces.find((q) => q.role === 'back')!;
-  pass(instanceLabel('jeans', bk, 0) === 'Right back leg' && instanceLabel('jeans', bk, 1) === 'Left back leg' && instanceLabel('jeans', bk) === 'Both back legs'
+  pass(instanceLabel('jeans', bk, 0) === 'Left back leg' && instanceLabel('jeans', bk, 1) === 'Right back leg' && instanceLabel('jeans', bk) === 'Both back legs'
     && instanceLabel('cap', makePreset('cap', DEFAULT_BODY)[0], 2) === 'Crown panel 3' && instanceLabel('basic-tee', makePreset('basic-tee', DEFAULT_BODY)[0], 0) === 'Front',
   `instanceLabel: ${instanceLabel('jeans', bk, 0)}, ${instanceLabel('jeans', bk, 1)}, ${instanceLabel('jeans', bk)}, ${instanceLabel('cap', makePreset('cap', DEFAULT_BODY)[0], 2)}`);
   const base = { rotation: 0, layers: [], outline: 'rect' as const };
@@ -367,13 +367,13 @@ console.log('\n== left / right, appliques, hardware ==');
   pass(onR.length === 2 && onL.length === 2 && off < 1 && ap.every((P) => !P.mirror), `left leg applique is the mirror placement with letters reading the right way (A left vs mirrored B right: ${off.toFixed(2)} cm)`);
   // specs: sides, trims, cut list
   const rows = attachmentReport(pieces, edits, 'jeans');
-  pass(rows.find((r) => r.id === 'apR')?.side === 'Right back leg' && rows.find((r) => r.id === 'ap')?.side === 'Both back legs' && rows.find((r) => r.id === 'ap')?.cutPieces === 2, 'attachment report names the side and counts letter pieces');
+  pass(rows.find((r) => r.id === 'apR')?.side === 'Left back leg' && rows.find((r) => r.id === 'ap')?.side === 'Both back legs' && rows.find((r) => r.id === 'ap')?.cutPieces === 2, 'attachment report names the side and counts letter pieces');
   const trims = trimsReport(pieces, edits, 'jeans');
   const rv = trims.find((t) => t.item === 'Rivet'), em = trims.find((t) => t.item === 'Embroidery'), apT = trims.filter((t) => t.item === 'Applique');
   pass(!!rv && rv.qty === 4 && /Copper, 9 mm/.test(rv.detail) && rv.placement === 'Both back legs' && !!em && /#c00/.test(em.detail) && apT.length === 2, `trims list: ${trims.map((t) => `${t.qty} x ${t.item} (${t.detail}; ${t.placement})`).join(' | ')}`);
   const cl = cutList(pieces, edits, 'jeans');
   pass(cl.some((r) => r.name === 'ap' && r.cut === 4) && cl.some((r) => r.name === 'apR' && r.cut === 1) && !cl.some((r) => r.name === 'em' || r.name === 'rv'), 'cut list includes the applique pieces (2 letters x 2 legs), not embroidery or rivets');
-  pass(pleatReport(pieces, edits, 'jeans')[0]?.side === 'Left front leg', 'pleat report names the side');
+  pass(pleatReport(pieces, edits, 'jeans')[0]?.side === 'Right front leg', 'pleat report names the side');
   pass(seamReport('jeans', pieces, edits).every((r) => r.attachment !== 'em' && r.attachment !== 'rv'), 'embroidery and rivets are not seams');
 }
 {
