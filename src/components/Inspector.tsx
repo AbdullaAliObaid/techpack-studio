@@ -7,17 +7,17 @@ import { fitTable, garmentSpecs, pieceSpecs, seamReport } from '../lib/specs';
 import { FITS } from '../data/draft';
 import { fmt, toUnit } from '../lib/units';
 import Library from './Library';
-import DesignPanel from './DesignPanel';
+import { FabricPick } from './TrimFields';
+import { faceName, hasCollar } from './editHelpers';
 import ConstructionPanel from './ConstructionPanel';
 import PosePanel from './PosePanel';
 import { BodyFields, BodyType } from './BodyPanel';
-import { Disclosure, TabHeader } from './controls';
+import { Disclosure, Seg, SubLabel, TabHeader } from './controls';
 import { copiesOf } from './sides';
 import Icon from './Icon';
 
 const TABS: { id: InspectorTab; label: string; icon: string }[] = [
   { id: 'garment', label: 'Garment', icon: 'garment' },
-  { id: 'design', label: 'Design', icon: 'design' },
   { id: 'construction', label: 'Construction', icon: 'construction' },
   { id: 'body', label: 'Body', icon: 'body' },
   { id: 'specs', label: 'Specs', icon: 'specs' },
@@ -50,7 +50,7 @@ export default function Inspector() {
           </div>
         </div>
         <div className="inspector-body" role="tabpanel" aria-labelledby={`itab-${tab}`}>
-          {tab === 'garment' ? <GarmentTab /> : tab === 'design' ? <DesignPanel /> : tab === 'construction' ? <ConstructionPanel /> : tab === 'body' ? <BodyTab /> : <SpecsTab />}
+          {tab === 'garment' ? <GarmentTab /> : tab === 'construction' ? <ConstructionPanel /> : tab === 'body' ? <BodyTab /> : <SpecsTab />}
         </div>
       </aside>
     </>
@@ -69,8 +69,20 @@ function FitPick() {
   );
 }
 
+/** Collar worn folded down or popped up. */
+export function CollarControl() {
+  const { project, setCollar } = useStore();
+  const collar = project.edits?.collar ?? 'down';
+  return (
+    <>
+      <Seg label="Collar" value={collar} onChange={setCollar} options={[{ id: 'down', label: 'Collar down' }, { id: 'up', label: 'Collar up' }]} />
+      <p className="group-note">{collar === 'down' ? 'Folded over, the way a shirt is normally worn.' : 'Popped up around the neck. The under collar shows on the outside edge.'}</p>
+    </>
+  );
+}
+
 function GarmentTab() {
-  const { project, selPiece, fabricScope, set, setFabric } = useStore();
+  const { project, selPiece, fabricScope, set, setFabric, setInsideFabric } = useStore();
   const style = CATALOG.find((s) => s.id === migrateGarment(project.garment));
   const piece = project.pieces.find((p) => p.id === selPiece);
   const scope = piece ? fabricScope : 'all';
@@ -79,6 +91,26 @@ function GarmentTab() {
   return (
     <>
       <TabHeader icon="garment" title="Garment" subtitle={<>{style?.name ?? 'Garment'} in {fabricById(project.pieces[0].fabric.id).name}</>} />
+
+      {hasCollar(project.pieces) && piece?.role !== 'collar' && (
+        <Disclosure id="gar-collar" title="Collar position" icon="collar">
+          <CollarControl />
+        </Disclosure>
+      )}
+
+      <Disclosure id="gar-piece" title={piece ? piece.name : 'Selected piece'} icon="pattern">
+        {piece ? (
+          <>
+            {piece.role === 'collar' && <CollarControl />}
+            <SubLabel>Inside fabric</SubLabel>
+            <p className="group-note">What the {faceName(project.garment, piece, 'inside', project.edits?.collar).toLowerCase()} is made of.</p>
+            <FabricPick id="inside-fab" sameLabel="Same as outside" value={project.edits?.insideFabric?.[piece.id]} host={piece.fabric}
+              onChange={(f) => setInsideFabric(piece.id, f ?? null)} />
+          </>
+        ) : (
+          <p className="group-note">Select a piece on the pattern to give its inside a different fabric and colour.</p>
+        )}
+      </Disclosure>
 
       <Disclosure id="gar-fabric" title="Fabric" icon="grid">
         <div className="seg full">

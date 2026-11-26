@@ -64,6 +64,11 @@ const P: Record<string, ReactNode> = {
   scissors: <><circle cx="6" cy="6.5" r="2.5" /><circle cx="6" cy="17.5" r="2.5" /><path d="M8 8.2L20 18M8 15.8L20 6" /></>,
   type: <path d="M5 7V5h14v2M12 5v14M9 19h6" />,
   stripes: <path d="M4 6h16M4 12h16M4 18h16" />,
+  tag: <><path d="M12 3v4M8 7h8v13l-4-3-4 3z" /><path d="M10.5 11h3" /></>,
+  inside: <><path d="M4 6h16v12H4z" strokeDasharray="3 2.5" /><path d="M8 12h8" /></>,
+  collar: <><path d="M4 8l8 3 8-3" /><path d="M4 8l3 9 5-3 5 3 3-9" /></>,
+  draw: <><path d="M4 20c3 0 4-2 5-4s2-3 4-3" /><path d="M14 5l5 5-7 7-5-5z" /></>,
+  zipper: <><path d="M12 2v20" /><path d="M9 5h3M12 8h3M9 11h3M12 14h3" /><rect x="9.5" y="16" width="5" height="5" rx="1.5" /></>,
   target: <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3.5" /></>,
 };
 

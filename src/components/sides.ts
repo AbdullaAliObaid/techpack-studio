@@ -5,6 +5,7 @@ import * as seamsMod from '../sim/seams';
 import type { StyleId } from '../data/catalog';
 import type { Piece } from '../data/presets';
 import type { Pt } from '../lib/geometry';
+import type { Attachment } from '../data/edits';
 
 export interface Entry {
   key: string;
@@ -102,3 +103,33 @@ export function onCopy(instance: number | undefined, e: Entry): boolean {
 
 /** the copy to record for something put on entry e, or undefined when the piece is cut once */
 export const instanceFor = (e: Entry): number | undefined => (e.both ? e.inst : undefined);
+
+/* ---------- designs sewn onto other designs (a print on a pocket, art on a tag) ---------- */
+
+export interface WorldPose { x: number; y: number; rot: number }
+const rad = (d: number) => (d * Math.PI) / 180;
+
+/** World position and turn (degrees) of an attachment on a copy. A design on another design sits in its host's frame. */
+export function attWorld(atts: Attachment[], a: Attachment, e: Entry): WorldPose {
+  const parent = atts.find((q) => q.id === a.pieceId);
+  if (parent) {
+    const pw = attWorld(atts, parent, e);
+    const c = Math.cos(rad(pw.rot)), s = Math.sin(rad(pw.rot));
+    return { x: pw.x + c * a.x - s * a.y, y: pw.y + s * a.x + c * a.y, rot: pw.rot + a.rotation };
+  }
+  const fr = frameOn(e, a);
+  return { x: e.offset.x + fr.x, y: e.offset.y + fr.y, rot: fr.rotation };
+}
+
+/** Stored x, y and rotation that put attachment `a` (keeping its host) at a world pose on copy e. */
+export function worldToAtt(atts: Attachment[], a: Attachment, e: Entry, w: Pt, rotW: number): { x: number; y: number; rotation: number } {
+  const parent = atts.find((q) => q.id === a.pieceId);
+  if (parent) {
+    const pw = attWorld(atts, parent, e);
+    const c = Math.cos(rad(-pw.rot)), s = Math.sin(rad(-pw.rot));
+    const dx = w.x - pw.x, dy = w.y - pw.y;
+    return { x: c * dx - s * dy, y: s * dx + c * dy, rotation: rotW - pw.rot };
+  }
+  const l = toSource(e, w);
+  return { x: l.x, y: l.y, rotation: e.mirror ? -rotW : rotW };
+}

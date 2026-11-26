@@ -1,5 +1,5 @@
 import { SHAPES, OUTLINES, outlinePolygon } from '../lib/shapes';
-import type { Attachment, Finish, Hardware, ShapeLayer } from '../data/edits';
+import type { Attachment, Finish, Hardware, ShapeLayer, ZipperDesign } from '../data/edits';
 import { polyD } from '../lib/geometry';
 
 type Art = Omit<Attachment, 'id' | 'pieceId' | 'x' | 'y'>;
@@ -15,43 +15,122 @@ export const FINISH: Record<Finish, { name: string; base: string; dark: string; 
 };
 export const FINISH_IDS = Object.keys(FINISH) as Finish[];
 
+/** Surface highlights shared by every drawn trim, tag and cloth panel. Fixed ids: every copy is identical. */
+export function SheenDefs() {
+  return (
+    <defs>
+      <linearGradient id="shn-satin" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#fff" stopOpacity="0.26" /><stop offset="0.55" stopColor="#fff" stopOpacity="0" /><stop offset="1" stopColor="#000" stopOpacity="0.12" /></linearGradient>
+      <linearGradient id="shn-glossy" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#fff" stopOpacity="0.7" /><stop offset="0.42" stopColor="#fff" stopOpacity="0.08" /><stop offset="0.5" stopColor="#000" stopOpacity="0" /><stop offset="1" stopColor="#000" stopOpacity="0.22" /></linearGradient>
+      <linearGradient id="shn-metallic" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#fff" stopOpacity="0.6" /><stop offset="0.3" stopColor="#000" stopOpacity="0.28" /><stop offset="0.55" stopColor="#fff" stopOpacity="0.5" /><stop offset="1" stopColor="#000" stopOpacity="0.34" /></linearGradient>
+    </defs>
+  );
+}
+const sheenFill = (s?: string) => (s === 'satin' || s === 'glossy' || s === 'metallic' ? `url(#shn-${s})` : null);
+
+/** Plastic or dyed colours: a base with a darker edge and a lighter spot. */
+const shade = (hex: string, to: 'black' | 'white', pct: number) => `color-mix(in srgb, ${hex} ${100 - pct}%, ${to})`;
+
+interface Tone { base: string; dark: string; light: string }
+function toneOf(hw: Hardware): Tone {
+  if (hw.color) return { base: hw.color, dark: shade(hw.color, 'black', 40), light: shade(hw.color, 'white', 55) };
+  const f = FINISH[hw.finish] ?? FINISH.silver;
+  return { base: f.base, dark: f.dark, light: f.light };
+}
+
+export const DEFAULT_ZIPPER: ZipperDesign = { teeth: 'metal', tape: '#3a3a3f', puller: 'standard' };
+
+function Puller({ z, tone, x, y, tw }: { z: ZipperDesign; tone: Tone; x: number; y: number; tw: number }) {
+  const body = <rect x={-tw * 0.3} y={-0.5} width={tw * 0.6} height={1} rx={tw * 0.14} fill={tone.base} stroke={tone.dark} strokeWidth={0.06} />;
+  const tab = (() => {
+    switch (z.puller) {
+      case 'ring': return <g><path d="M0 0.4V1" stroke={tone.dark} strokeWidth={0.1} /><circle cy={1.75} r={0.75} fill="none" stroke={tone.base} strokeWidth={0.22} /><circle cy={1.75} r={0.75} fill="none" stroke={tone.dark} strokeWidth={0.04} /></g>;
+      case 'tab': return <rect x={-tw * 0.26} y={0.4} width={tw * 0.52} height={2.4} rx={0.25} fill={tone.base} stroke={tone.dark} strokeWidth={0.06} />;
+      case 'cord': return <g><path d="M0 0.4C0.9 1.2 -0.9 2 0 2.8" fill="none" stroke={tone.dark} strokeWidth={0.16} strokeLinecap="round" /><circle cy={3} r={0.32} fill={tone.base} stroke={tone.dark} strokeWidth={0.05} /></g>;
+      case 'custom': {
+        const o = z.pullerOutline;
+        return (
+          <g transform="translate(0,1.6)">
+            {o && o.length >= 3 ? <path d={polyD(o)} fill={tone.base} stroke={tone.dark} strokeWidth={0.06} strokeLinejoin="round" /> : <circle r={0.6} fill={tone.base} stroke={tone.dark} strokeWidth={0.06} />}
+            {(z.pullerLayers ?? []).map((l) => <LayerShape key={l.id} l={l} pointer={false} />)}
+          </g>
+        );
+      }
+      default: return <path d={`M${-tw * 0.18} 0.45h${tw * 0.36}v1.5l${-tw * 0.18} 0.6l${-tw * 0.18} -0.6z`} fill={tone.base} stroke={tone.dark} strokeWidth={0.06} strokeLinejoin="round" />;
+    }
+  })();
+  return <g transform={`translate(${x},${y})`}>{tab}{body}</g>;
+}
+
+function Zipper({ hw, w, h }: { hw: Hardware; w: number; h: number }) {
+  const z = hw.zipper ?? DEFAULT_ZIPPER;
+  const metal = hw.zipper?.teeth !== 'coil' && hw.zipper?.teeth !== 'molded';
+  const tone: Tone = z.teeth === 'metal' || !z.teethColor ? toneOf(hw) : { base: z.teethColor, dark: shade(z.teethColor, 'black', 40), light: shade(z.teethColor, 'white', 55) };
+  const tw = Math.max(0.6, w), L = Math.max(2, h);
+  const step = z.teeth === 'coil' ? 0.3 : z.teeth === 'molded' ? 0.5 : 0.55;
+  const gap = hw.open ? L * 0.38 : 0;
+  const teeth: number[] = [];
+  for (let y = -L / 2 + 0.7; y < L / 2 - 0.3; y += step) teeth.push(y);
+  const sheen = sheenFill(hw.sheen);
+  const tooth = (y: number, i: number, openSide: boolean) => {
+    const left = openSide ? false : i % 2 === 0;
+    if (z.teeth === 'coil') return <rect key={i} x={left ? -tw * 0.42 : -tw * 0.02} y={y} width={tw * 0.44} height={0.2} rx={0.1} fill={tone.base} stroke={tone.dark} strokeWidth={0.025} />;
+    if (z.teeth === 'molded') return <rect key={i} x={left ? -tw * 0.36 : tw * 0.02} y={y} width={tw * 0.34} height={0.4} rx={0.07} fill={tone.base} />;
+    return <rect key={i} x={left ? -tw * 0.4 : -tw * 0.05} y={y} width={tw * 0.45} height={0.3} fill={tone.base} stroke={tone.dark} strokeWidth={0.03} />;
+  };
+  return (
+    <g>
+      <rect x={-tw / 2} y={-L / 2} width={tw} height={L} rx={tw * 0.08} fill={z.tape} />
+      <rect x={-tw / 2} y={-L / 2} width={tw} height={L} rx={tw * 0.08} fill="none" stroke="#000" strokeOpacity={0.25} strokeWidth={0.05} />
+      {teeth.map((y, i) => {
+        const open = y > L / 2 - gap - 0.4;
+        if (!open) return tooth(y, i, false);
+        return <g key={i}><rect x={-tw * 0.4} y={y} width={tw * 0.32} height={0.3} fill={tone.base} /><rect x={tw * 0.08} y={y + (i % 2 ? 0.2 : 0)} width={tw * 0.32} height={0.3} fill={tone.base} /></g>;
+      })}
+      {metal && sheen && <rect x={-tw * 0.42} y={-L / 2 + 0.6} width={tw * 0.84} height={L - 0.9} fill={sheen} pointerEvents="none" />}
+      <Puller z={z} tone={toneOf(hw.zipper?.pullerFinish ? { ...hw, finish: hw.zipper.pullerFinish, color: undefined } : hw)} x={0} y={-L / 2 - 0.1} tw={tw} />
+    </g>
+  );
+}
+
 /** One trim of diameter d, centred on 0,0 (cm). Zipper uses tape width w and length h. */
 export function HardwareMark({ hw, w, h }: { hw: Hardware; w: number; h: number }) {
-  const f = FINISH[hw.finish] ?? FINISH.silver;
+  if (hw.type === 'zipper') return <Zipper hw={hw} w={w} h={h} />;
+  const tone = toneOf(hw);
   const d = hw.size;
   const r = d / 2;
   const sw = Math.max(0.04, r * 0.14);
-  if (hw.type === 'zipper') {
-    const tw = Math.max(0.6, w), L = Math.max(2, h);
-    const teeth: number[] = [];
-    for (let y = -L / 2 + 0.5; y < L / 2 - 0.4; y += 0.55) teeth.push(y);
-    const gap = hw.open ? L * 0.38 : 0;
+  const sheen = sheenFill(hw.sheen);
+  const holes = hw.holes ?? (hw.type === 'button' ? 4 : 0);
+  const layers = (hw.layers ?? []).map((l) => <LayerShape key={l.id} l={l} pointer={false} />);
+  const holeMarks = holes === 2 || holes === 4
+    ? (holes === 2 ? [[-1, 0], [1, 0]] : [[-1, -1], [1, -1], [-1, 1], [1, 1]]).map(([x, y], i) => <circle key={i} cx={x * r * (holes === 2 ? 0.26 : 0.22)} cy={y * r * 0.22} r={r * 0.11} fill={tone.dark} />)
+    : holes === 'shank' ? <circle cy={r * 0.12} r={r * 0.14} fill="none" stroke={tone.dark} strokeWidth={sw * 0.7} strokeDasharray={`${r * 0.1} ${r * 0.08}`} /> : null;
+  // a drawn outline replaces the round shape
+  if (hw.outline && hw.outline.length >= 3) {
+    const rim = hw.outline.map((p) => ({ x: p.x * 0.74, y: p.y * 0.74 }));
     return (
       <g>
-        <rect x={-tw / 2} y={-L / 2} width={tw} height={L} rx={tw * 0.12} fill={f.dark} opacity={0.28} />
-        {teeth.map((y, i) => {
-          const open = y > L / 2 - gap - 0.4;
-          return open
-            ? <g key={i}><rect x={-tw * 0.4} y={y} width={tw * 0.3} height={0.3} fill={f.base} /><rect x={tw * 0.1} y={y + (i % 2 ? 0.2 : 0)} width={tw * 0.3} height={0.3} fill={f.base} /></g>
-            : <rect key={i} x={i % 2 ? -tw * 0.4 : -tw * 0.05} y={y} width={tw * 0.45} height={0.3} fill={f.base} stroke={f.dark} strokeWidth={0.03} />;
-        })}
-        <rect x={-tw * 0.32} y={-L / 2 - 0.2} width={tw * 0.64} height={Math.min(1.8, L * 0.2)} rx={tw * 0.16} fill={f.base} stroke={f.dark} strokeWidth={0.06} />
-        <circle cx={0} cy={-L / 2 + 0.55} r={tw * 0.1} fill={f.dark} />
+        <path d={polyD(hw.outline)} fill={tone.base} stroke={tone.dark} strokeWidth={sw} strokeLinejoin="round" />
+        {hw.type !== 'rivet' && <path d={polyD(rim)} fill="none" stroke={tone.dark} strokeWidth={sw * 0.7} strokeLinejoin="round" />}
+        {holeMarks}
+        {layers}
+        {sheen && <path d={polyD(hw.outline)} fill={sheen} pointerEvents="none" />}
       </g>
     );
   }
-  const body = <circle r={r} fill={f.base} stroke={f.dark} strokeWidth={sw} />;
+  const body = <circle r={r} fill={tone.base} stroke={tone.dark} strokeWidth={sw} />;
+  const shine = sheen ? <circle r={r} fill={sheen} pointerEvents="none" /> : null;
   switch (hw.type) {
     case 'eyelet':
-      return <g>{body}<circle r={r * 0.5} fill="#000" opacity={0.6} /><circle r={r * 0.5} fill="none" stroke={f.dark} strokeWidth={sw * 0.8} /></g>;
+      return <g>{body}<circle r={r * 0.5} fill="#000" opacity={0.6} /><circle r={r * 0.5} fill="none" stroke={tone.dark} strokeWidth={sw * 0.8} />{shine}</g>;
     case 'stud':
-      return <g>{body}<circle r={r * 0.62} fill="none" stroke={f.dark} strokeWidth={sw * 0.8} /><circle cx={-r * 0.2} cy={-r * 0.2} r={r * 0.22} fill={f.light} opacity={0.85} /></g>;
+      return <g>{body}<circle r={r * 0.62} fill="none" stroke={tone.dark} strokeWidth={sw * 0.8} /><circle cx={-r * 0.2} cy={-r * 0.2} r={r * 0.22} fill={tone.light} opacity={0.85} />{layers}{shine}</g>;
     case 'button':
-      return <g>{body}<circle r={r * 0.72} fill="none" stroke={f.dark} strokeWidth={sw * 0.8} />{[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([x, y], i) => <circle key={i} cx={x * r * 0.22} cy={y * r * 0.22} r={r * 0.11} fill={f.dark} />)}</g>;
+      return <g>{body}<circle r={r * 0.72} fill="none" stroke={tone.dark} strokeWidth={sw * 0.8} />{holeMarks}{layers}{shine}</g>;
     case 'snap':
-      return <g>{body}<circle r={r * 0.64} fill="none" stroke={f.dark} strokeWidth={sw * 0.8} /><circle r={r * 0.28} fill={f.dark} /><circle cx={-r * 0.35} cy={-r * 0.35} r={r * 0.14} fill={f.light} opacity={0.8} /></g>;
+      return <g>{body}<circle r={r * 0.64} fill="none" stroke={tone.dark} strokeWidth={sw * 0.8} /><circle r={r * 0.28} fill={tone.dark} /><circle cx={-r * 0.35} cy={-r * 0.35} r={r * 0.14} fill={tone.light} opacity={0.8} />{layers}{shine}</g>;
     default: // rivet
-      return <g>{body}<circle r={r * 0.55} fill={f.light} opacity={0.35} /><circle cx={-r * 0.25} cy={-r * 0.25} r={r * 0.2} fill={f.light} opacity={0.9} /></g>;
+      return <g>{body}<circle r={r * 0.55} fill={tone.light} opacity={0.35} /><circle cx={-r * 0.25} cy={-r * 0.25} r={r * 0.2} fill={tone.light} opacity={0.9} />{layers}{shine}</g>;
   }
 }
 
@@ -59,10 +138,11 @@ export function HardwareMark({ hw, w, h }: { hw: Hardware; w: number; h: number 
 export function HardwareRow({ a }: { a: Pick<Attachment, 'hardware' | 'w' | 'h'> }) {
   const hw = a.hardware;
   if (!hw) return null;
-  if (hw.type === 'zipper') return <HardwareMark hw={hw} w={a.w} h={a.h} />;
+  if (hw.type === 'zipper') return <><SheenDefs /><HardwareMark hw={hw} w={a.w} h={a.h} /></>;
   const n = Math.max(1, Math.round(hw.count ?? 1)), sp = hw.spacing ?? hw.size * 2;
   return (
     <>
+      <SheenDefs />
       {Array.from({ length: n }, (_, i) => (
         <g key={i} transform={`translate(${(i - (n - 1) / 2) * sp},0)`}><HardwareMark hw={hw} w={a.w} h={a.h} /></g>
       ))}
@@ -100,7 +180,7 @@ export function outlinePoly(a: Pick<Attachment, 'outline' | 'w' | 'h' | 'points'
 }
 
 /** Cloth attachments are drawn as cut cloth with a stitch line; the others sit on the host. */
-export const isCloth = (k: Attachment['kind']) => k === 'pocket' || k === 'patch' || k === 'strap' || k === 'applique';
+export const isCloth = (k: Attachment['kind']) => k === 'pocket' || k === 'patch' || k === 'strap' || k === 'applique' || k === 'label';
 
 /** The attachment as it looks on the chart: cloth with its stitching, thread, ink or metal. */
 export function ArtworkGroup({ a, fill, layers = true }: { a: Art | Attachment; fill?: string; layers?: boolean }) {
@@ -109,7 +189,9 @@ export function ArtworkGroup({ a, fill, layers = true }: { a: Art | Attachment; 
   const letters = a.outline === 'shape' && a.shape === 'text';
   return (
     <>
+      <SheenDefs />
       {isCloth(a.kind) && fill && !letters && <path d={o.d} transform={o.transform} fill={fill} />}
+      {isCloth(a.kind) && fill && !letters && sheenFill(a.sheen) && <path d={o.d} transform={o.transform} fill={sheenFill(a.sheen)!} pointerEvents="none" />}
       {isCloth(a.kind) && fill && letters && (
         <text fontSize={a.h} textLength={a.w} lengthAdjust="spacingAndGlyphs" textAnchor="middle" dominantBaseline="central" fill={fill} fontWeight={800} stroke={a.thread ?? 'none'} strokeWidth={a.h * 0.03} strokeDasharray={`${a.h * 0.08} ${a.h * 0.06}`} style={{ fontFamily: 'var(--font)' }}>{a.text ?? ''}</text>
       )}

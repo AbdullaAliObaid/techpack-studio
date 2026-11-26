@@ -5,7 +5,7 @@ import { DEFAULT_BODY, type Body } from './three/body';
 import { draft, regradePoints, type Fit } from './data/draft';
 import { bezAt, toBeziers, type PPoint, type Pt } from './lib/geometry';
 import { uid, type Units } from './lib/units';
-import { pleatIntakeOf, EMPTY_EDITS, ZERO_POSE, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
+import { pleatIntakeOf, EMPTY_EDITS, ZERO_POSE, type Face, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
 import { FEMALE_BODY, MALE_BODY } from './three/body';
 
 /** undo history entry: pattern pieces plus garment edits */
@@ -28,7 +28,7 @@ export interface Project {
 
 export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen';
 export type ThemePref = 'system' | 'light' | 'dark';
-export type InspectorTab = 'garment' | 'design' | 'construction' | 'body' | 'specs';
+export type InspectorTab = 'garment' | 'construction' | 'body' | 'specs';
 
 /** State of the step by step "New piece" sheet (Shape, Details, Attach). Null when closed. */
 export interface PieceFlow {
@@ -66,6 +66,15 @@ export interface SeamDraft { a: Partial<EdgeRef> | null; b: Partial<EdgeRef> | n
 export const EMPTY_SEAM_DRAFT: SeamDraft = { a: null, b: null, flip: false };
 /** A point of the pen tool outline in pattern space (cm); smooth when the pointer was dragged. */
 export interface PenPoint { x: number; y: number; smooth: boolean }
+
+const COACH_KEY = 'tech-it-design-coach';
+function readCoach(): boolean { try { return localStorage.getItem(COACH_KEY) === '1'; } catch { return false; } }
+const DESIGN_SIZE_KEY = 'tech-it-design-size';
+function readDesignSize(): { w: number; h: number } {
+  try { const v = JSON.parse(localStorage.getItem(DESIGN_SIZE_KEY) ?? 'null') as { w: number; h: number } | null; if (v && v.w > 0 && v.h > 0) return v; } catch { /* storage blocked */ }
+  return { w: 300, h: 280 };
+}
+export function writeDesignSize(v: { w: number; h: number }) { try { localStorage.setItem(DESIGN_SIZE_KEY, JSON.stringify(v)); } catch { /* storage blocked */ } }
 
 const THEME_KEY = 'tech-it-theme';
 export function readTheme(): ThemePref {
@@ -130,6 +139,19 @@ interface State {
   drawer: boolean;
   /** drop every half-finished tool action and go back to Select */
   cancelTools: () => void;
+  // --- Design panel (docked beside the pattern) ---
+  designOpen: boolean;
+  designCollapsed: boolean;
+  /** 'add' = the library, 'edit' = the selected design */
+  designTab: 'add' | 'edit';
+  /** side dock width and bottom sheet height, px */
+  designSize: { w: number; h: number };
+  /** face new designs go on, and the face the chart shows */
+  designFace: Face;
+  viewFace: Face;
+  coachDone: boolean;
+  openDesign: (tab?: 'add' | 'edit', face?: Face) => void;
+  dismissCoach: () => void;
 
   set: (s: Partial<State>) => void;
   commit: () => void;
@@ -150,6 +172,10 @@ interface State {
   // --- edits (attachments, seams, pleats, user pieces) ---
   selAttachment: string | null;
   addAttachment: (a: Omit<Attachment, 'id'>) => string;
+  duplicateAttachment: (id: string) => string | null;
+  setCollar: (c: 'down' | 'up') => void;
+  /** fabric on the inside face of a piece; null = same as the outside */
+  setInsideFabric: (pieceId: string, fabric: { id: string; color: number } | null) => void;
   updateAttachment: (id: string, patch: Partial<Attachment>) => void;
   removeAttachment: (id: string) => void;
   addCustomSeam: (s: Omit<CustomSeam, 'id'>) => string;
@@ -250,6 +276,15 @@ export const useStore = create<State>((set, get) => {
     seamHint: null,
     symmetricPose: true,
     cancelTools: () => set({ tool: 'select', seamDraft: EMPTY_SEAM_DRAFT, penDraft: [], penSheet: null, pieceFlow: null, seamHint: null, selLayer: null, selPleat: null, hoverSeam: null }),
+    designOpen: false,
+    designCollapsed: false,
+    designTab: 'add',
+    designSize: readDesignSize(),
+    designFace: 'outside',
+    viewFace: 'outside',
+    coachDone: readCoach(),
+    openDesign: (tab = 'add', face) => set((s) => ({ designOpen: true, designCollapsed: false, designTab: tab, ...(face ? { designFace: face, viewFace: face } : {}), coachDone: true })),
+    dismissCoach: () => { try { localStorage.setItem(COACH_KEY, '1'); } catch { /* storage blocked */ } set({ coachDone: true }); },
     showBothSides: true,
     selInstance: null,
     pieceFlow: null,
@@ -412,10 +447,36 @@ export const useStore = create<State>((set, get) => {
       set({ selAttachment: id });
       return id;
     },
+    duplicateAttachment: (id) => {
+      const a = get().project.edits?.attachments.find((q) => q.id === id);
+      if (!a) return null;
+      get().commit();
+      const nid = uid();
+      const copy: Attachment = JSON.parse(JSON.stringify(a));
+      copy.id = nid;
+      copy.name = `${a.name} copy`;
+      copy.x = a.x + 1.5; copy.y = a.y + 1.5;
+      copy.layers = copy.layers.map((l) => ({ ...l, id: uid() }));
+      if (copy.hardware?.layers) copy.hardware.layers = copy.hardware.layers.map((l) => ({ ...l, id: uid() }));
+      if (copy.hardware?.zipper?.pullerLayers) copy.hardware.zipper.pullerLayers = copy.hardware.zipper.pullerLayers.map((l) => ({ ...l, id: uid() }));
+      setEdits((e) => ({ ...e, attachments: [...e.attachments, copy] }));
+      set({ selAttachment: nid });
+      return nid;
+    },
+    setCollar: (c) => { get().commit(); setEdits((e) => ({ ...e, collar: c })); },
+    setInsideFabric: (pieceId, fabric) => {
+      get().commit();
+      setEdits((e) => {
+        const m = { ...(e.insideFabric ?? {}) };
+        if (fabric) m[pieceId] = fabric; else delete m[pieceId];
+        return { ...e, insideFabric: m };
+      });
+    },
     updateAttachment: (id, patch) => setEdits((e) => ({ ...e, attachments: e.attachments.map((a) => (a.id === id ? { ...a, ...patch } : a)) })),
     removeAttachment: (id) => {
       get().commit();
-      setEdits((e) => ({ ...e, attachments: e.attachments.filter((a) => a.id !== id) }));
+      // designs sewn onto this attachment go with it
+      setEdits((e) => ({ ...e, attachments: e.attachments.filter((a) => a.id !== id && a.pieceId !== id) }));
       set((s) => ({ selAttachment: s.selAttachment === id ? null : s.selAttachment }));
     },
     addCustomSeam: (cs) => {
@@ -475,7 +536,7 @@ export const useStore = create<State>((set, get) => {
       setPieces(get().project.pieces.filter((p) => p.id !== id));
       setEdits((e) => ({
         ...e,
-        attachments: e.attachments.filter((a) => a.pieceId !== id),
+        attachments: e.attachments.filter((a) => a.pieceId !== id && !e.attachments.some((h) => h.id === a.pieceId && h.pieceId === id)),
         customSeams: e.customSeams.filter((c) => c.a.pieceId !== id && c.b.pieceId !== id),
         pleats: e.pleats.filter((p) => p.pieceId !== id),
       }));

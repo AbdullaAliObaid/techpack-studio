@@ -5,12 +5,16 @@ import { PaneTitle, Switch } from './controls';
 import { copiesOf } from './sides';
 import PatternEditor from './PatternEditor';
 import Toolbar from './Toolbar';
+import DesignBar from './DesignBar';
+import DesignDock from './DesignDock';
+import { useDockMode } from './dock';
 
 export default function PatternPane() {
   const { project, showBothSides, set } = useStore();
   const style = CATALOG.find((s) => s.id === migrateGarment(project.garment))?.name ?? 'Garment';
   const hasPairs = project.pieces.some((p) => copiesOf(project.garment, p) === 2);
   const n = project.pieces.length;
+  const mode = useDockMode();
   return (
     <section className="pane pattern" aria-label="Pattern workspace">
       <PaneTitle icon="pattern" title="Pattern" meta={`${style} · ${n} ${n === 1 ? 'piece' : 'pieces'}`}>
@@ -21,9 +25,14 @@ export default function PatternPane() {
           </label>
         )}
       </PaneTitle>
+      <DesignBar />
       <div className="pane-body">
         <Toolbar />
-        <PatternEditor />
+        <div className={`pattern-main ${mode}`}>
+          {mode === 'side' && <DesignDock mode="side" />}
+          <PatternEditor />
+          {mode === 'bottom' && <DesignDock mode="bottom" />}
+        </div>
       </div>
     </section>
   );
