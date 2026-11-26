@@ -20,9 +20,10 @@ export function LayerShape({ l, pointer = true, ...rest }: { l: ShapeLayer; poin
   );
 }
 
-export function outlineD(a: Pick<Attachment, 'outline' | 'w' | 'h' | 'points'>): { d: string; transform?: string } {
+export function outlineD(a: Pick<Attachment, 'outline' | 'w' | 'h' | 'points'> & { shape?: Attachment['shape'] }): { d: string; transform?: string } {
   if (a.outline === 'custom' && a.points?.length) return { d: polyD(a.points) };
-  const o = a.outline === 'custom' ? 'rect' : a.outline;
+  if (a.outline === 'shape' && a.shape && SHAPES[a.shape].d) return { d: SHAPES[a.shape].d, transform: `scale(${a.w},${a.h})` };
+  const o = a.outline === 'custom' || a.outline === 'shape' ? 'rect' : a.outline;
   return { d: OUTLINES[o], transform: `scale(${a.w},${a.h})` };
 }
 
