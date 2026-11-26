@@ -1,0 +1,30 @@
+// The Pattern workspace: title bar, tool rail, chart and footer.
+import { useStore } from '../store';
+import { CATALOG, migrateGarment } from '../data/catalog';
+import { PaneTitle, Switch } from './controls';
+import { copiesOf } from './sides';
+import PatternEditor from './PatternEditor';
+import Toolbar from './Toolbar';
+
+export default function PatternPane() {
+  const { project, showBothSides, set } = useStore();
+  const style = CATALOG.find((s) => s.id === migrateGarment(project.garment))?.name ?? 'Garment';
+  const hasPairs = project.pieces.some((p) => copiesOf(project.garment, p) === 2);
+  const n = project.pieces.length;
+  return (
+    <section className="pane pattern" aria-label="Pattern workspace">
+      <PaneTitle icon="pattern" title="Pattern" meta={`${style} · ${n} ${n === 1 ? 'piece' : 'pieces'}`}>
+        {hasPairs && (
+          <label className="title-toggle" title="Draw pieces cut twice as a right and a left pattern">
+            <span><span className="long">Show both sides</span><span className="short">Both sides</span></span>
+            <Switch label="Show both sides" on={showBothSides} onChange={(v) => set({ showBothSides: v })} />
+          </label>
+        )}
+      </PaneTitle>
+      <div className="pane-body">
+        <Toolbar />
+        <PatternEditor />
+      </div>
+    </section>
+  );
+}

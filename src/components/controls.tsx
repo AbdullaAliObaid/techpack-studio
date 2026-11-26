@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { fromUnit, toUnit, type Units } from '../lib/units';
 import { PALETTE } from './editHelpers';
+import { useStore } from '../store';
+import Icon from './Icon';
 
 /** Inset list row: label on the left, control on the right. */
 export function Row({ label, children, htmlFor }: { label: ReactNode; children: ReactNode; htmlFor?: string }) {
@@ -90,5 +92,62 @@ export function LenInput({ value, onChange, label, min, max, units, step }: { va
       unit={units}
       onChange={(v) => onChange(fromUnit(v, units))}
     />
+  );
+}
+
+/**
+ * Collapsible inspector section: icon, title, optional count, chevron. Open or closed is remembered on this device.
+ * `open` (when given) forces it open, for example while a tool needs the controls.
+ */
+export function Disclosure({ id, title, icon, count, defaultOpen = true, open: force, action, children }: {
+  id: string; title: string; icon: string; count?: number; defaultOpen?: boolean; open?: boolean; action?: ReactNode; children: ReactNode;
+}) {
+  const stored = useStore((s) => s.sections[id]);
+  const setSection = useStore((s) => s.setSection);
+  const open = force || (stored ?? defaultOpen);
+  return (
+    <section className={`dsc ${open ? 'open' : ''}`}>
+      <div className="dsc-head">
+        <button className="dsc-toggle" aria-expanded={open} aria-controls={`dsc-${id}`} onClick={() => setSection(id, !open)}>
+          <span className="dsc-ico" aria-hidden="true"><Icon name={icon} size={16} /></span>
+          <span className="dsc-title">{title}</span>
+          {count !== undefined && <span className="dsc-count">{count}</span>}
+          <span className="dsc-chev" aria-hidden="true"><Icon name="chevronRight" size={14} /></span>
+        </button>
+        {action && <div className="dsc-action">{action}</div>}
+      </div>
+      {open && <div className="dsc-body" id={`dsc-${id}`}>{children}</div>}
+    </section>
+  );
+}
+
+/** Title block at the top of an inspector tab. */
+export function TabHeader({ title, subtitle, icon }: { title: string; subtitle?: ReactNode; icon: string }) {
+  return (
+    <div className="tab-head">
+      <span className="tab-head-ico" aria-hidden="true"><Icon name={icon} size={20} /></span>
+      <div>
+        <h2>{title}</h2>
+        {subtitle && <p>{subtitle}</p>}
+      </div>
+    </div>
+  );
+}
+
+/** Small uppercase label above a group of controls inside a section. */
+export function SubLabel({ children }: { children: ReactNode }) {
+  return <div className="sublabel">{children}</div>;
+}
+
+/** Title bar shared by the Pattern and 3D panes. */
+export function PaneTitle({ icon, title, meta, children }: { icon: string; title: string; meta?: ReactNode; children?: ReactNode }) {
+  return (
+    <header className="pane-title">
+      <span className="pane-ico" aria-hidden="true"><Icon name={icon} size={18} /></span>
+      <h1>{title}</h1>
+      {meta && <span className="pane-meta">{meta}</span>}
+      <span className="spacer" />
+      {children}
+    </header>
   );
 }

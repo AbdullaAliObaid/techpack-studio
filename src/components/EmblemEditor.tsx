@@ -1,11 +1,11 @@
-// BO2 style emblem editor: a layer stack plus a live preview where layers are dragged, scaled and rotated with the pointer.
+// Artwork layers: a layer stack plus a live preview where layers are dragged, scaled and rotated with the pointer.
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { SHAPES, SHAPE_IDS } from '../lib/shapes';
 import type { Attachment, ShapeId, ShapeLayer } from '../data/edits';
 import { LayerShape, outlineD } from './Artwork';
-import { ColorField, LenInput, Row, Switch } from './controls';
-import { PALETTE, layer, starFieldLayers, stripeLayers } from './editHelpers';
+import { ColorField, Disclosure, LenInput, Row, SubLabel, Switch } from './controls';
+import { PALETTE, layer, stripeLayers } from './editHelpers';
 import { fabricById } from '../data/fabrics';
 import { uid } from '../lib/units';
 import Icon from './Icon';
@@ -54,15 +54,12 @@ export default function EmblemEditor({ att }: { att: Attachment }) {
   };
 
   return (
-    <>
-      <div className="card">
-        <div className="card-title">Emblem layers</div>
+    <Disclosure id="design-layers" title="Artwork layers" icon="layers" count={layers.length} defaultOpen={false}>
         <Preview att={att} sel={sel} onPatch={patch} onSelect={(id) => set({ selLayer: id })} lock={lock} fabricHex={fabricHex(att, project.pieces.find((p) => p.id === att.pieceId)?.fabric)} />
         <div className="group-note" style={{ padding: '6px 0 0' }}>Drag a layer to move it. Use the corner handle to resize and the top handle to turn it.</div>
         <div className="row wrap">
           <button className="btn small" onClick={() => setPicking(!picking)} aria-expanded={picking}><Icon name="plus" size={14} /> Add shape</button>
-          <button className="btn small" onClick={() => { const ls = stripeLayers(att.w, att.h); setLayers([...layers, ...ls]); set({ selLayer: ls[0].id }); }}>Stripes</button>
-          <button className="btn small" onClick={() => { const ls = starFieldLayers(att.w, att.h); setLayers([...layers, ...ls]); set({ selLayer: ls[0].id }); }}>Star field</button>
+          <button className="btn small" onClick={() => { const ls = stripeLayers(att.w, att.h, 1); setLayers([...layers, ...ls]); set({ selLayer: ls[0].id }); }}><Icon name="stripes" size={14} /> Add stripe</button>
         </div>
         {picking && (
           <div className="shape-grid" role="group" aria-label="Shapes">
@@ -76,11 +73,9 @@ export default function EmblemEditor({ att }: { att: Attachment }) {
             ))}
           </div>
         )}
-      </div>
 
-      <div className="card">
-        <div className="card-title">Layer stack <span className="muted">· top first</span></div>
-        {layers.length === 0 && <div className="group-note">No layers yet. Add a shape, stripes or a star field.</div>}
+        <SubLabel>Layers, top first</SubLabel>
+        {layers.length === 0 && <div className="group-note">No extra layers. Add a shape or a stripe on top of this design.</div>}
         <ul className="layer-list">
           {[...layers].reverse().map((l) => {
             const hidden = (l.opacity ?? 1) <= 0;
@@ -101,11 +96,10 @@ export default function EmblemEditor({ att }: { att: Attachment }) {
             );
           })}
         </ul>
-      </div>
 
       {sel && (
-        <div className="card">
-          <div className="card-title">Selected layer</div>
+        <>
+          <SubLabel>Selected layer</SubLabel>
           <div className="frow stack"><span className="lbl">Colour</span><ColorField label="Layer colour" value={sel.color} onChange={(c) => patch(sel.id, { color: c })} /></div>
           {sel.shape === 'text' && (
             <Row label="Text" htmlFor="layer-text"><input id="layer-text" className="txt" value={sel.text ?? ''} maxLength={24} onChange={(e) => patch(sel.id, { text: e.target.value })} /></Row>
@@ -125,9 +119,9 @@ export default function EmblemEditor({ att }: { att: Attachment }) {
             <input id="layer-op" type="range" min={5} max={100} step={1} value={Math.round((sel.opacity ?? 1) * 100) || 100} onChange={(e) => patch(sel.id, { opacity: Number(e.target.value) / 100 })} />
           </div>
           <Row label="Flip left to right"><Switch label="Flip layer left to right" on={!!sel.flipX} onChange={(v) => patch(sel.id, { flipX: v })} /></Row>
-        </div>
+        </>
       )}
-    </>
+    </Disclosure>
   );
 }
 

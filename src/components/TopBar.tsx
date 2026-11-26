@@ -8,7 +8,7 @@ import { exportTechPack } from '../lib/exportPdf';
 import { piecesToDxf } from '../lib/exportDxf';
 
 export default function TopBar() {
-  const { project, units, past, future, set, undo, redo, loadProject, rename, theme } = useStore();
+  const { project, units, past, future, set, undo, redo, loadProject, rename, theme, drawer } = useStore();
   const [menu, setMenu] = useState<'open' | 'export' | 'theme' | null>(null);
   const [saved, setSaved] = useState(true);
   const [list, setList] = useState<Project[]>([]);
@@ -78,7 +78,7 @@ export default function TopBar() {
       </div>
 
       <div className="menus">
-        <button className="btn ghost" title="Start a new project from the Library" onClick={() => { set({ inspectorTab: 'library' }); setMenu(null); }}>
+        <button className="btn ghost" title="Start a new project from the style library" onClick={() => { set({ inspectorTab: 'garment', drawer: true }); useStore.getState().setSection('gar-style', true); setMenu(null); }}>
           <Icon name="plus" size={16} /> New
         </button>
         <div className="menu-wrap">
@@ -129,6 +129,7 @@ export default function TopBar() {
 
       <div className="spacer" />
 
+      <button className="icon-btn drawer-toggle" title="Show or hide the inspector" aria-label="Show or hide the inspector" aria-pressed={drawer} onClick={() => set({ drawer: !drawer })}><Icon name="sidebar" /></button>
       <button className="icon-btn" disabled={!past.length} onClick={undo} title="Undo (Ctrl+Z)" aria-label="Undo"><Icon name="undo" /></button>
       <button className="icon-btn" disabled={!future.length} onClick={redo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><Icon name="redo" /></button>
       <div className="seg" role="group" aria-label="Units">

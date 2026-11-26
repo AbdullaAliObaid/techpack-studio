@@ -1,21 +1,24 @@
-// Seams, pleats and drawn pieces: the controls behind the Seams, Pleat and Pen tools.
+// Construction tab: how the garment is put together. Seams (built in and joined by hand), pleats, and your own pieces.
 import { useMemo } from 'react';
 import { EMPTY_SEAM_DRAFT, useStore } from '../store';
 import { builtinSeams } from '../sim/seams';
 import { outlineLength } from '../lib/geometry';
 import { fmt } from '../lib/units';
 import type { EdgeRef, PleatType } from '../data/edits';
-import { LenInput, Row, Seg, Switch } from './controls';
+import { Disclosure, LenInput, Row, Seg, Switch, TabHeader } from './controls';
+import { copiesOf, instanceName } from './sides';
+import { openPieceFlow } from './flow';
 import Icon from './Icon';
 
-/** Click handler for the Seams tool: first click starts a range, second ends it. A and B fill in turn. */
-export function pickSeamPoint(pieceId: string, pointId: string) {
+/** Click handler for the Seams tool: first click starts a range, second ends it. A and B fill in turn. `instance` is the copy that was clicked. */
+export function pickSeamPoint(pieceId: string, pointId: string, instance?: number) {
   const st = useStore.getState();
   const d = st.seamDraft;
   const target: 'a' | 'b' = d.a && d.a.toId ? 'b' : 'a';
   const cur = d[target];
-  if (!cur || !cur.fromId || cur.pieceId !== pieceId) {
-    st.set({ seamDraft: { ...d, [target]: { pieceId, fromId: pointId } } });
+  const inst = instance === undefined ? {} : { instance };
+  if (!cur || !cur.fromId || cur.pieceId !== pieceId || cur.instance !== instance) {
+    st.set({ seamDraft: { ...d, [target]: { pieceId, fromId: pointId, ...inst } } });
   } else if (pointId !== cur.fromId) {
     st.set({ seamDraft: { ...d, [target]: { ...cur, toId: pointId } } });
   }
@@ -23,11 +26,21 @@ export function pickSeamPoint(pieceId: string, pointId: string) {
 
 const complete = (r: Partial<EdgeRef> | null): r is EdgeRef => !!(r && r.pieceId && r.fromId && r.toId);
 
-export default function SeamsTab() {
-  const { project, units, tool, set, hoverSeam, seamDraft, seamHint, setSeamAttached, addCustomSeam, removeCustomSeam, selPiece } = useStore();
+/** "Front, right leg" for a pick on a copy, the plain piece name otherwise. */
+function useRefName() {
+  const { project } = useStore();
+  return (r?: Partial<EdgeRef> | null) => {
+    const p = project.pieces.find((q) => q.id === r?.pieceId);
+    if (!p) return 'Piece';
+    return r?.instance !== undefined && copiesOf(project.garment, p) === 2 ? instanceName(project.garment, p, r.instance) : p.name;
+  };
+}
+
+export default function ConstructionPanel() {
+  const { project, units, tool, set, hoverSeam, seamDraft, seamHint, setSeamAttached, addCustomSeam, removeCustomSeam } = useStore();
   const edits = project.edits;
   const pieces = project.pieces;
-  const name = (id?: string) => pieces.find((p) => p.id === id)?.name ?? 'Piece';
+  const refName = useRefName();
   const seams = useMemo(() => builtinSeams(project.garment, pieces), [project.garment, pieces]);
   const detached = new Set(edits?.detachedSeams ?? []);
   // seams that share a group (both halves of a sleeve cap) show as one row and toggle together
@@ -40,12 +53,12 @@ export default function SeamsTab() {
     }
     return out;
   }, [seams]);
-  const len = (r: EdgeRef | null) => {
+  const len = (r: Partial<EdgeRef> | null) => {
     if (!complete(r)) return null;
     const p = pieces.find((q) => q.id === r.pieceId);
     return p ? outlineLength(p.points, r.fromId, r.toId) : null;
   };
-  const la = len(seamDraft.a as EdgeRef), lb = len(seamDraft.b as EdgeRef);
+  const la = len(seamDraft.a), lb = len(seamDraft.b);
   const ready = complete(seamDraft.a) && complete(seamDraft.b);
   const diff = la !== null && lb !== null ? la - lb : 0;
   const step = !seamDraft.a?.fromId ? 'Click a start point on the first piece.'
@@ -59,18 +72,19 @@ export default function SeamsTab() {
     addCustomSeam({ a: seamDraft.a, b: seamDraft.b, flip: seamDraft.flip });
     set({ seamDraft: EMPTY_SEAM_DRAFT, seamHint: null });
   };
+  const joining = tool === 'seams';
 
   return (
     <>
+      <TabHeader icon="construction" title="Construction" subtitle="How the pieces are cut and sewn together." />
+
       {seamHint && (
-        <div className="card callout" role="status">
-          <div className="card-title">{seamHint}</div>
-          <div className="group-note" style={{ padding: 0 }}>Use Join seam below: pick a range on your piece, then the open edge it should be sewn to.</div>
-        </div>
+        <div className="callout-box" role="status"><Icon name="check" size={16} /><span>{seamHint}</span></div>
       )}
 
-      <div className="card">
-        <div className="card-title">Built in seams</div>
+      <PiecesSection />
+
+      <Disclosure id="con-seams" title="Seams" icon="seams" count={rows.length} defaultOpen={false}>
         {seams.length === 0 && <div className="group-note">This garment has no seam list yet. Custom seams still work.</div>}
         <ul className="seam-list">
           {rows.map((s) => {
@@ -85,21 +99,20 @@ export default function SeamsTab() {
           })}
         </ul>
         <p className="fit-note">Turn a seam off to leave that edge open. The 3D garment follows.</p>
-      </div>
+      </Disclosure>
 
-      <div className="card">
-        <div className="card-title">Join seam</div>
-        {tool !== 'seams' ? (
+      <Disclosure id="con-join" title="Join seams" icon="seams" count={edits?.customSeams.length ?? 0} open={joining}>
+        {!joining ? (
           <>
-            <p className="group-note" style={{ padding: 0 }}>Sew any stretch of one piece to a stretch of another.</p>
-            <button className="btn block" style={{ marginTop: 8 }} onClick={() => set({ tool: 'seams', seamDraft: EMPTY_SEAM_DRAFT })}><Icon name="seams" size={16} /> Start joining</button>
+            <p className="group-note">Sew any stretch of one piece to a stretch of another. Each pick belongs to the side of the piece you click.</p>
+            <button className="btn block" onClick={() => set({ tool: 'seams', seamDraft: EMPTY_SEAM_DRAFT })}><Icon name="seams" size={16} /> Start joining</button>
           </>
         ) : (
           <>
             <p className="step-hint" role="status">{step}</p>
             <div className="range-rows">
-              <RangeRow tag="A" colorClass="a" r={seamDraft.a} name={name(seamDraft.a?.pieceId)} length={la} units={units} />
-              <RangeRow tag="B" colorClass="b" r={seamDraft.b} name={name(seamDraft.b?.pieceId)} length={lb} units={units} />
+              <RangeRow tag="A" colorClass="a" r={seamDraft.a} name={refName(seamDraft.a)} length={la} units={units} />
+              <RangeRow tag="B" colorClass="b" r={seamDraft.b} name={refName(seamDraft.b)} length={lb} units={units} />
             </div>
             {ready && (
               <>
@@ -109,33 +122,32 @@ export default function SeamsTab() {
                 <Row label="Flip direction of B"><Switch label="Flip direction of B" on={seamDraft.flip} onChange={(v) => set({ seamDraft: { ...seamDraft, flip: v } })} /></Row>
               </>
             )}
-            <div className="row">
+            <div className="row wrap">
               <button className="btn primary" disabled={!ready} onClick={confirm}><Icon name="check" size={16} /> Confirm</button>
               <button className="btn" onClick={() => set({ seamDraft: EMPTY_SEAM_DRAFT })}>Start over</button>
               <button className="btn ghost" onClick={() => useStore.getState().cancelTools()}>Done</button>
             </div>
           </>
         )}
-      </div>
+        {!!edits?.customSeams.length && (
+          <>
+            <div className="sublabel">Your seams</div>
+            <ul className="seam-list">
+              {edits.customSeams.map((c, i) => {
+                const a = len(c.a), b = len(c.b);
+                return (
+                  <li key={c.id} className={`seam-item ${hoverSeam === c.id ? 'hover' : ''}`} onMouseEnter={() => set({ hoverSeam: c.id })} onMouseLeave={() => set({ hoverSeam: null })}>
+                    <span className="seam-name">Seam {i + 1}: {refName(c.a)} to {refName(c.b)}<small>{a !== null && b !== null ? `${fmt(a, units)} and ${fmt(b, units)}` : ''}{c.flip ? ', flipped' : ''}</small></span>
+                    <button className="icon-btn sm danger" aria-label={`Delete custom seam ${i + 1}`} title="Delete seam" onClick={() => removeCustomSeam(c.id)}><Icon name="trash" size={16} /></button>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+      </Disclosure>
 
-      <div className="card">
-        <div className="card-title">Custom seams <span className="muted">· {edits?.customSeams.length ?? 0}</span></div>
-        {!edits?.customSeams.length && <div className="group-note">Seams you join by hand show up here.</div>}
-        <ul className="seam-list">
-          {edits?.customSeams.map((c, i) => {
-            const a = len(c.a), b = len(c.b);
-            return (
-              <li key={c.id} className={`seam-item ${hoverSeam === c.id ? 'hover' : ''}`} onMouseEnter={() => set({ hoverSeam: c.id })} onMouseLeave={() => set({ hoverSeam: null })}>
-                <span className="seam-name">Seam {i + 1}: {name(c.a.pieceId)} to {name(c.b.pieceId)}<small>{a !== null && b !== null ? `${fmt(a, units)} and ${fmt(b, units)}` : ''}{c.flip ? ', flipped' : ''}</small></span>
-                <button className="icon-btn sm danger" aria-label={`Delete custom seam ${i + 1}`} title="Delete seam" onClick={() => removeCustomSeam(c.id)}><Icon name="trash" size={16} /></button>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-
-      <PleatCard />
-      <DrawCard selPiece={selPiece} />
+      <PleatSection />
     </>
   );
 }
@@ -156,22 +168,32 @@ const TYPE_NOTE: Record<PleatType, string> = {
   inverted: 'Two folds that meet in the middle.',
 };
 
-function PleatCard() {
+function PleatSection() {
   const { project, selPleat, tool, set, updatePleat, removePleat, units } = useStore();
   const pleats = project.edits?.pleats ?? [];
   const pl = pleats.find((p) => p.id === selPleat);
-  const pname = (id: string) => project.pieces.find((p) => p.id === id)?.name ?? 'Piece';
+  const pname = (id: string, inst?: number) => {
+    const p = project.pieces.find((q) => q.id === id);
+    if (!p) return 'Piece';
+    return inst !== undefined && copiesOf(project.garment, p) === 2 ? instanceName(project.garment, p, inst) : p.name;
+  };
+  const instOf = (x: object) => (x as { instance?: number }).instance;
   return (
-    <div className="card">
-      <div className="card-title">Pleats <span className="muted">· {pleats.length}</span></div>
-      {tool !== 'pleat' && <button className="btn block" onClick={() => set({ tool: 'pleat' })}><Icon name="pleat" size={16} /> Add a pleat</button>}
-      {tool === 'pleat' && <p className="step-hint" role="status">Click an edge of a piece to place a pleat there.</p>}
+    <Disclosure id="con-pleats" title="Pleats" icon="pleat" count={pleats.length} defaultOpen={false} open={tool === 'pleat'}>
+      {tool !== 'pleat' ? (
+        <button className="btn block" onClick={() => set({ tool: 'pleat' })}><Icon name="pleat" size={16} /> Add a pleat</button>
+      ) : (
+        <>
+          <p className="step-hint" role="status">Click an edge of a piece to place a pleat there. It goes on the side you click.</p>
+          <button className="btn block" onClick={() => useStore.getState().cancelTools()}>Done</button>
+        </>
+      )}
       {pleats.length > 0 && (
         <ul className="seam-list" style={{ marginTop: 8 }}>
           {pleats.map((p, i) => (
             <li key={p.id} className={`seam-item ${p.id === selPleat ? 'hover' : ''}`}>
               <button className="plain-row" aria-pressed={p.id === selPleat} onClick={() => set({ selPleat: p.id, selPiece: p.pieceId })}>
-                <span className="seam-name">Pleat {i + 1}: {TYPES.find((t) => t.id === p.type)?.label}<small>{pname(p.pieceId)}</small></span>
+                <span className="seam-name">Pleat {i + 1}: {TYPES.find((t) => t.id === p.type)?.label}<small>{pname(p.pieceId, instOf(p))}</small></span>
               </button>
             </li>
           ))}
@@ -192,73 +214,70 @@ function PleatCard() {
           <button className="btn block danger" style={{ marginTop: 8 }} onClick={() => removePleat(pl.id)}><Icon name="trash" size={16} /> Delete pleat</button>
         </div>
       )}
-    </div>
+    </Disclosure>
   );
 }
 
-function DrawCard({ selPiece }: { selPiece: string | null }) {
-  const { project, tool, penDraft, penSnap, set, removePiece, updatePiece } = useStore();
+function PiecesSection() {
+  const { project, selPiece, set, removePiece, updatePiece, tool, penDraft, penSnap } = useStore();
   const custom = project.pieces.filter((p) => p.role === 'custom');
   const sel = custom.find((p) => p.id === selPiece);
-  const drawing = tool === 'pen';
-  const close = () => { if (penDraft.length >= 3) set({ penSheet: penDraft, penDraft: [] }); };
+  const hosts = project.pieces.filter((q) => q.role !== 'custom');
   return (
-    <div className="card">
-      <div className="card-title">Draw a new piece</div>
-      {!drawing ? (
-        <button className="btn block" onClick={() => set({ tool: 'pen', penDraft: [] })}><Icon name="pen" size={16} /> Start drawing</button>
-      ) : (
-        <>
-          <p className="step-hint" role="status">{penDraft.length < 3 ? 'Click to add corners. Drag a little to make a point curved.' : 'Click the first point or press Close shape to finish.'}</p>
+    <Disclosure id="con-pieces" title="Your pieces" icon="pattern" count={custom.length} open={tool === 'pen'}
+      action={<button className="btn small primary" onClick={() => openPieceFlow()}><Icon name="plus" size={14} /> New piece</button>}>
+      {tool === 'pen' && (
+        <div className="pen-block">
+          <p className="step-hint" role="status">{penDraft.length < 3 ? 'Click on the chart to add corners. Drag a little to make a point curved.' : 'Click the first point, or press Close shape, to finish.'}</p>
           <Row label="Snap to grid"><Switch label="Snap to grid" on={penSnap} onChange={(v) => set({ penSnap: v })} /></Row>
           <div className="row wrap">
             <button className="btn" disabled={penDraft.length === 0} onClick={() => set({ penDraft: penDraft.slice(0, -1) })}>Undo point</button>
-            <button className="btn primary" disabled={penDraft.length < 3} onClick={close}><Icon name="check" size={16} /> Close shape</button>
+            <button className="btn primary" disabled={penDraft.length < 3} onClick={() => openPieceFlow(penDraft)}><Icon name="check" size={16} /> Close shape</button>
             <button className="btn ghost" onClick={() => useStore.getState().cancelTools()}>Cancel</button>
           </div>
-        </>
+        </div>
       )}
-      {custom.length > 0 && (
-        <>
-          <div className="card-title" style={{ paddingTop: 14 }}>Your pieces</div>
-          <ul className="seam-list">
-            {custom.map((p) => (
-              <li key={p.id} className={`seam-item ${p.id === selPiece ? 'hover' : ''}`}>
-                <button className="plain-row" aria-pressed={p.id === selPiece} onClick={() => set({ selPiece: p.id, selPoint: null })}>
-                  <span className="seam-name">{p.name}<small>{p.placement?.mode === 'patch' ? `Patched on ${project.pieces.find((q) => q.id === p.placement?.hostPieceId)?.name ?? 'a piece'}` : 'Sewn into an open area'}</small></span>
-                </button>
-                <button className="icon-btn sm danger" aria-label={`Delete ${p.name}`} title="Delete piece" onClick={() => removePiece(p.id)}><Icon name="trash" size={16} /></button>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+      {custom.length === 0 && <div className="group-note">Pockets, panels and straps you draw or start from a template show up here. Press New piece to begin.</div>}
+      <ul className="seam-list">
+        {custom.map((p) => (
+          <li key={p.id} className={`seam-item ${p.id === selPiece ? 'hover' : ''}`}>
+            <button className="plain-row" aria-pressed={p.id === selPiece} onClick={() => set({ selPiece: p.id, selPoint: null })}>
+              <span className="seam-name">{p.name}<small>{p.placement?.mode === 'patch' ? `Stitched on top of ${project.pieces.find((q) => q.id === p.placement?.hostPieceId)?.name ?? 'a piece'}` : 'Sewn into an edge'}{p.cut >= 2 ? ', cut as a pair' : ''}</small></span>
+            </button>
+            <button className="icon-btn sm danger" aria-label={`Delete ${p.name}`} title="Delete piece" onClick={() => removePiece(p.id)}><Icon name="trash" size={16} /></button>
+          </li>
+        ))}
+      </ul>
       {sel && (
         <div className="subgroup">
           <Row label="Name" htmlFor="cp-name"><input id="cp-name" className="txt" value={sel.name} maxLength={40} onChange={(e) => updatePiece(sel.id, { name: e.target.value })} /></Row>
-          <Seg label="How it goes on" value={sel.placement?.mode ?? 'sewn'} options={[{ id: 'sewn', label: 'Sewn in' }, { id: 'patch', label: 'Patched on' }]}
-            onChange={(m) => {
-              const host = project.pieces.find((q) => q.role !== 'custom');
-              updatePiece(sel.id, { placement: m === 'sewn' ? { mode: 'sewn' } : { mode: 'patch', hostPieceId: sel.placement?.hostPieceId ?? host?.id, x: sel.placement?.x ?? 0, y: sel.placement?.y ?? 0, rotation: sel.placement?.rotation ?? 0 } });
-            }} />
+          <Row label="Cut"><Seg full={false} label="Cut count" value={sel.cut >= 2 ? '2' : '1'} options={[{ id: '1', label: 'One' }, { id: '2', label: 'A pair' }]} onChange={(v) => updatePiece(sel.id, { cut: Number(v) })} /></Row>
+          <div className="frow stack">
+            <span className="lbl">How it goes on</span>
+            <Seg label="How it goes on" value={sel.placement?.mode ?? 'sewn'} options={[{ id: 'sewn', label: 'Sewn in' }, { id: 'patch', label: 'Stitched on top' }]}
+              onChange={(m) => {
+                const host = hosts[0];
+                updatePiece(sel.id, { placement: m === 'sewn' ? { mode: 'sewn' } : { mode: 'patch', hostPieceId: sel.placement?.hostPieceId ?? host?.id, x: sel.placement?.x ?? 0, y: sel.placement?.y ?? 0, rotation: sel.placement?.rotation ?? 0 } });
+              }} />
+          </div>
           {sel.placement?.mode === 'patch' && (
             <>
               <div className="frow stack">
                 <label htmlFor="cp-host">Sits on</label>
                 <select id="cp-host" className="sel" value={sel.placement.hostPieceId ?? ''} onChange={(e) => updatePiece(sel.id, { placement: { ...sel.placement!, hostPieceId: e.target.value } })}>
-                  {project.pieces.filter((q) => q.role !== 'custom').map((q) => <option key={q.id} value={q.id}>{q.name}</option>)}
+                  {hosts.map((q) => <option key={q.id} value={q.id}>{q.name}</option>)}
                 </select>
               </div>
               <div className="frow stack">
                 <label htmlFor="cp-rot">Rotation <b className="val">{Math.round(sel.placement.rotation ?? 0)}°</b></label>
                 <input id="cp-rot" type="range" min={-180} max={180} value={sel.placement.rotation ?? 0} onChange={(e) => updatePiece(sel.id, { placement: { ...sel.placement!, rotation: Number(e.target.value) } })} />
               </div>
-              <p className="group-note" style={{ padding: 0 }}>Drag the dashed outline on the sewing chart to move it.</p>
+              <p className="group-note">Drag the dashed outline on the chart to move it.</p>
             </>
           )}
-          {sel.placement?.mode !== 'patch' && <p className="group-note" style={{ padding: 0 }}>Use Join seam above to sew it into an open area.</p>}
+          {sel.placement?.mode !== 'patch' && <p className="group-note">Use Join seams to sew it into an open edge.</p>}
         </div>
       )}
-    </div>
+    </Disclosure>
   );
 }
