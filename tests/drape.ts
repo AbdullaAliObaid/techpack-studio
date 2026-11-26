@@ -1,9 +1,11 @@
 // Run: npx tsx tests/drape.ts   (every catalog style drapes on the default body; BODY=female for the female preset)
+// Sections (argv[2]): a style id, 'edits', 'collar', 'collar-edits'.
 // Checks: no NaN, seams closed, strain sane, the garment stays where it belongs (hats on the head, pants on the hips).
 import { makePreset } from '../src/data/presets';
 import { CATALOG } from '../src/data/catalog';
 import { DEFAULT_BODY, DEFAULT_BODY as MALE, FEMALE_BODY, bodyFrame } from '../src/three/body';
-import { assemble, locate, type Garment3D } from '../src/sim/setup';
+import { assemble, locate, warmStart, type Garment3D } from '../src/sim/setup';
+import { draft, regradePoints } from '../src/data/draft';
 import type { Attachment, Edits } from '../src/data/edits';
 import type { Piece } from '../src/data/presets';
 import type { StyleId } from '../src/data/catalog';
@@ -286,6 +288,100 @@ if (!only || only === 'collar') {
     // popped up, the points are far from the front buttons: nothing buttons
     const Gu = assemble('button-up', pieces, DEFAULT_BODY, SP, collider, E({ collar: 'up', attachments: all }))!;
     verdict(!Object.keys(Gu.seamLinks).some((k) => k.startsWith('fasten:')), 'collar up: the collar point buttons do not reach the front buttons');
+  }
+}
+
+// ---- edited collars: made longer, taller, or with a neck edge that no longer matches the neckline ----
+// A user drags collar points in the 2D editor (symmetry on: the mirror point follows). Every such collar must drape
+// calmly: no NaN, no blow-up recovery, nothing thrown about once it has settled, nothing far from the body, the
+// collar still round the neck. Also the same edits arriving as a warm start (how the app rebuilds after an edit)
+// and after a regrade to new measurements with the pattern linked.
+if (!only || only === 'collar-edits') {
+  console.log('\n== edited collars ==');
+  const BM = meshField(FF);
+  const bv: number[] = [];
+  for (let i = 0; i < BM.positions.length; i += 6) bv.push(BM.positions[i], BM.positions[i + 1], BM.positions[i + 2]);
+  /** furthest cloth point from the body surface (cm, against every other body mesh vertex) */
+  const farthest = (P: Float32Array, n: number) => {
+    let w = 0;
+    for (let i = 0; i < n; i++) {
+      let b = Infinity;
+      for (let j = 0; j < bv.length && b > w * w; j += 3) { const d = (P[i * 3] - bv[j]) ** 2 + (P[i * 3 + 1] - bv[j + 1]) ** 2 + (P[i * 3 + 2] - bv[j + 2]) ** 2; if (d < b) b = d; }
+      if (b > w * w) w = Math.sqrt(b);
+    }
+    return w;
+  };
+  /** move a keyed collar point like movePoint with symmetry on */
+  const mv = (p: Piece, k: string, dx: number, dy: number) => {
+    const pt = p.points.find((q) => q.key === k)!, onAxis = pt.mirror === pt.id, nx = onAxis ? 0 : pt.x + dx, ny = pt.y + dy;
+    p.points = p.points.map((q) => (q.id === pt.id ? { ...q, x: nx, y: ny } : !onAxis && q.id === pt.mirror ? { ...q, x: -nx, y: ny } : q));
+  };
+  const EDITS: Record<string, (c: Piece) => void> = {
+    '2 cm longer': (c) => { mv(c, 'collar.1', 1, 0); mv(c, 'collar.2', 1, 0); },
+    '4 cm longer': (c) => { mv(c, 'collar.1', 2, 0); mv(c, 'collar.2', 2, 0); },
+    'points 4 cm longer': (c) => mv(c, 'collar.2', 2, 0),
+    '2 cm taller': (c) => { mv(c, 'collar.2', 0, 2); mv(c, 'collar.3', 0, 2); },
+    'neck edge +3 cm': (c) => mv(c, 'collar.1', 1.5, 0),
+  };
+  const run = (G: Garment3D) => {
+    const sim = G.sim;
+    let frames = 0, late = 0;
+    while (!sim.sleeping && frames < 600) {
+      sim.step(); frames++;
+      // once the seams are closed and the cloth has had a second to fall: nothing may still be thrown about
+      if (frames > sim.sewFrames + 60) for (let i = 0; i < sim.n; i++) late = Math.max(late, Math.hypot(sim.vel[i * 3], sim.vel[i * 3 + 1], sim.vel[i * 3 + 2]));
+    }
+    let bad = 0;
+    for (let i = 0; i < sim.pos.length; i++) if (!Number.isFinite(sim.pos[i])) bad++;
+    const C = G.panels.find((p) => p.piece.role === 'collar' && !p.attach)!, P = sim.pos;
+    // round the neck: every collar point near the neck axis (a taller collar, popped, flares out further at its front
+    // corners: allowed 0.6 cm per cm of collar height at centre back), between the shoulders and the ears
+    const cH = C.piece.points.find((q) => q.key === 'collar.3')!.y - C.piece.points.find((q) => q.key === 'collar.0')!.y;
+    const rMax = 12 + 0.6 * cH;
+    let around = true;
+    for (let i = C.offset; i < C.offset + C.mesh.uv.length; i++) if (Math.hypot(P[i * 3], P[i * 3 + 2]) > rMax || P[i * 3 + 1] < f.neckH - 14 || P[i * 3 + 1] > f.neckH + 16) around = false;
+    // the neckline seam of the collar stays on the neckline (closed, no pulling apart)
+    const links = G.seamLinks.collar ?? [];
+    const gap = links.reduce((a, [i, j]) => a + Math.hypot(P[i * 3] - P[j * 3], P[i * 3 + 1] - P[j * 3 + 1], P[i * 3 + 2] - P[j * 3 + 2]), 0) / (links.length || 1);
+    const far = farthest(P, sim.n);
+    const ok = bad === 0 && sim.recoveries === 0 && late < 500 && far < 25 && around && gap < 0.6;
+    return { ok, msg: `NaN ${bad}, recoveries ${sim.recoveries}, settled max speed ${late.toFixed(0)} cm/s, furthest ${far.toFixed(1)} cm off the body, round the neck ${around}, collar seam gap ${gap.toFixed(2)} cm` };
+  };
+  for (const st of ['polo', 'collared-tee', 'button-up', 'jacket'] as StyleId[]) {
+    for (const cs of ['down', 'up'] as const) {
+      for (const [name, edit] of Object.entries(EDITS)) {
+        const pieces = makePreset(st, DEFAULT_BODY);
+        edit(pieces.find((p) => p.role === 'collar')!);
+        const r = run(assemble(st, pieces, DEFAULT_BODY, SP, collider, E({ collar: cs }))!);
+        verdict(r.ok, `${st} collar ${cs}, ${name}: ${r.msg}`);
+      }
+    }
+    {
+      // warm start: drape the drafted shirt, then the user makes the collar longer and the neck edge no longer matches
+      const pieces = makePreset(st, DEFAULT_BODY);
+      const G0 = assemble(st, pieces, DEFAULT_BODY, SP, collider, E({ collar: 'down' }))!;
+      for (let k = 0; k < 600 && !G0.sim.sleeping; k++) G0.sim.step();
+      const p2 = pieces.map((p) => ({ ...p, points: p.points.map((q) => ({ ...q })) }));
+      EDITS['neck edge +3 cm'](p2.find((p) => p.role === 'collar')!);
+      EDITS['points 4 cm longer'](p2.find((p) => p.role === 'collar')!);
+      const G = assemble(st, p2, DEFAULT_BODY, SP, collider, E({ collar: 'down' }))!;
+      const warm = warmStart(G, G0);
+      const r = run(G);
+      verdict(warm && r.ok, `${st} collar down, edited after draping (warm start): ${r.msg}`);
+    }
+    {
+      // pattern linked to the body: a collar edited on other measurements, then regraded to this body
+      const from = { ...DEFAULT_BODY, neck: DEFAULT_BODY.neck + 3, chest: DEFAULT_BODY.chest + 6 };
+      const pieces = makePreset(st, from);
+      EDITS['4 cm longer'](pieces.find((p) => p.role === 'collar')!);
+      const a = draft(st, from), b = draft(st, DEFAULT_BODY);
+      const re = pieces.map((pc) => {
+        const da = a.find((d) => d.role === pc.role), db = b.find((d) => d.role === pc.role);
+        return da && db ? { ...pc, points: regradePoints(pc.points, da.points, db.points) } : pc;
+      });
+      const r = run(assemble(st, re, DEFAULT_BODY, SP, collider, E({ collar: 'down' }))!);
+      verdict(r.ok, `${st} collar down, 4 cm longer then regraded: ${r.msg}`);
+    }
   }
 }
 

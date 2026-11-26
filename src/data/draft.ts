@@ -21,6 +21,9 @@ export const RIB = {
   cuff: 0.72,
 };
 
+/** How far a collar's outer tip runs out past the end of its sewn edge (cm, pattern x): woven point collar, knit collar. */
+export const COLLAR_TIP = { woven: 0.8, knit: 1.5 };
+
 /** Ease = how much bigger the garment is than the body, in cm of circumference (or length). */
 export type Ease = Record<string, number>;
 
@@ -238,8 +241,8 @@ function tops(style: StyleId, b: Body, f: BodyFrame, fit: Fit): DraftPiece[] {
     // collar: the sewn edge (tip to tip) is walked to exactly the neckline length
     const cH = E.collar ?? (shirt ? 5.5 : 7);
     const make = (x: number) => woven
-      ? half('collar', [[0, 0, true], [x, 1.2, false, 'tip'], [x + 0.8, cH + 0.8], [0, cH, true]])
-      : half('collar', [[0, 0], [x, 0, false, 'tip'], [x + 1.5, cH], [0, cH]]); // knit collar: outer edge a little longer so the fall lies flat
+      ? half('collar', [[0, 0, true], [x, 1.2, false, 'tip'], [x + COLLAR_TIP.woven, cH + 0.8], [0, cH, true]])
+      : half('collar', [[0, 0], [x, 0, false, 'tip'], [x + COLLAR_TIP.knit, cH], [0, cH]]); // knit collar: outer edge a little longer so the fall lies flat
     const x = solve((v) => edge(make(v), 'collar.1', 'collar.1m'), neckLen, neckLen * 0.3, neckLen * 0.6);
     out.push({ role: 'collar', points: make(x) });
   }
