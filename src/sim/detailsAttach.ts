@@ -8,7 +8,7 @@
 
 import type { Attachment } from '../data/edits';
 import type { Pt } from '../lib/geometry';
-import { attachmentPolygon } from '../lib/trims';
+import { attachmentPolygon, attachmentRings } from '../lib/trims';
 import { DASH, Locator, outwardSigns, panelHex, threadTone, type DetailsMsg } from './details';
 import type { Garment3D, PanelInst } from './setup';
 
@@ -135,7 +135,8 @@ export function buildAttachmentDetails(G: Garment3D, attachments: Attachment[]):
     if (a.instance !== undefined) targets = targets.filter(({ P }) => panels[P.attach!.host]?.instance === a.instance);
     const own = targets.length > 0;
     if (!own) targets = panels.map((P, k) => ({ P, k })).filter(({ P }) => !P.attach && P.piece.id === a.pieceId && (a.instance === undefined || P.instance === a.instance));
-    for (const { k } of targets) {
+    const rings = attachmentRings(a);
+    for (const [ti, { k }] of targets.entries()) {
       const c = own ? 1 : Math.cos(rad(a.rotation)), s = own ? 0 : Math.sin(rad(a.rotation));
       const ox = own ? 0 : a.x, oy = own ? 0 : a.y;
       const T = (p: Pt): Pt => ({ x: ox + c * p.x - s * p.y, y: oy + s * p.x + c * p.y });
@@ -144,7 +145,12 @@ export function buildAttachmentDetails(G: Garment3D, attachments: Attachment[]):
       const ring = inset(poly, INSET);
 
       if (a.kind === 'applique') {
-        zigzag(k, inset(poly, 0.15), col, T);
+        // own panels: one per ring (letter) per host copy, in ring order; on the host: every ring
+        if (own) {
+          const host = panels[k].attach!.host;
+          const j = targets.filter((t, i) => i < ti && panels[t.k].attach!.host === host).length;
+          zigzag(k, inset(rings[j % rings.length], 0.15), col, T);
+        } else for (const r of rings) zigzag(k, inset(r, 0.15), col, T);
       } else if (a.kind === 'patch') {
         line(k, [...ring, ring[0]].map(T), col);
       } else if (a.kind === 'pocket') {

@@ -47,7 +47,7 @@ export default function TopBar() {
   };
   const exportDxf = () => {
     const b = project.body;
-    const dxf = piecesToDxf(project.pieces, { project: project.name, size: `H${Math.round(b.height)} C${Math.round(b.chest)} W${Math.round(b.waist)} H${Math.round(b.hips)}` }, undefined, project.edits);
+    const dxf = piecesToDxf(project.pieces, { project: project.name, size: `H${Math.round(b.height)} C${Math.round(b.chest)} W${Math.round(b.waist)} H${Math.round(b.hips)}` }, undefined, project.edits, project.garment);
     const url = URL.createObjectURL(new Blob([dxf], { type: 'application/dxf' }));
     const a = document.createElement('a');
     a.href = url;

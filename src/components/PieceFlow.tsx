@@ -187,7 +187,7 @@ function Sheet() {
               {hostCopies === 2 && (
                 <div className="frow stack">
                   <span className="lbl">Side</span>
-                  <Seg label="Side" value={String(f.side ?? 0)} options={[{ id: '0', label: 'Right' }, { id: '1', label: 'Left' }]} onChange={(v) => setFlow({ side: Number(v) })} />
+                  <Seg label="Side" value={String(f.side ?? 0)} options={[{ id: '0', label: 'Left' }, { id: '1', label: 'Right' }]} onChange={(v) => setFlow({ side: Number(v) })} />
                 </div>
               )}
             </>

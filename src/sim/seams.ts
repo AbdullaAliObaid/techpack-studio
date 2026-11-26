@@ -16,7 +16,7 @@ import type { EdgeRef } from '../data/edits';
 export interface BuiltinSeam {
   /** stable id, e.g. 'shoulder-r', 'side-l', 'inseam-r', 'waistband' */
   id: string;
-  /** plain language label for the UI, e.g. 'Right shoulder' */
+  /** plain language label for the UI, named as worn, e.g. 'Left shoulder' */
   label: string;
   /** one or more piece edges in a row on each side */
   a: EdgeRef[];
@@ -51,7 +51,7 @@ export function instanceLabel(style: StyleId, piece: Piece, instance?: number): 
     return n === 2 ? `Both ${plural}` : `All ${n} ${plural}`;
   }
   if (piece.role === 'crown') return `${name} ${Math.max(0, Math.min(n - 1, instance)) + 1}`;
-  return `${instance === 1 ? 'Left' : 'Right'} ${lower}`;
+  return `${instance === 1 ? 'Right' : 'Left'} ${lower}`;
 }
 
 export function builtinSeams(style: StyleId, pieces: Piece[]): BuiltinSeam[] {
@@ -72,7 +72,8 @@ export function builtinSeams(style: StyleId, pieces: Piece[]): BuiltinSeam[] {
   };
   const S = (id: string, label: string, a: EdgeRef | null, b: EdgeRef | null, group?: string) => push(out, id, label, [a], [b], group);
   const M = (id: string, label: string, a: (EdgeRef | null)[], b: (EdgeRef | null)[]) => push(multi, id, label, a, b);
-  const sideName = (i: number) => (i === 0 ? 'Right' : 'Left');
+  // sides are named as worn: copy 0 sits on +x, which is the wearer's left (the avatar faces the camera)
+  const sideName = (i: number) => (i === 0 ? 'Left' : 'Right');
   const sfx = (i: number) => (i === 0 ? 'r' : 'l');
 
   const hat = fam === 'bucket' || fam === 'cap';
@@ -119,10 +120,10 @@ export function builtinSeams(style: StyleId, pieces: Piece[]): BuiltinSeam[] {
   const F = (i: number, m = '') => `front.${i + fo}${m}`;
   const B = (i: number, m = '') => `back.${i}${m}`;
   // right side of the body (+x): front keys without "m" meet back keys with "m"
-  S('shoulder-r', 'Right shoulder', E(fr, F(2), F(3)), E(bk, B(2, 'm'), B(3, 'm')));
-  S('shoulder-l', 'Left shoulder', E(fr, F(2, 'm'), F(3, 'm')), E(bk, B(2), B(3)));
-  S('side-r', 'Right side seam', E(fr, F(5), F(7)), E(bk, B(5, 'm'), B(7, 'm')));
-  S('side-l', 'Left side seam', E(fr, F(5, 'm'), F(7, 'm')), E(bk, B(5), B(7)));
+  S('shoulder-r', 'Left shoulder', E(fr, F(2), F(3)), E(bk, B(2, 'm'), B(3, 'm')));
+  S('shoulder-l', 'Right shoulder', E(fr, F(2, 'm'), F(3, 'm')), E(bk, B(2), B(3)));
+  S('side-r', 'Left side seam', E(fr, F(5), F(7)), E(bk, B(5, 'm'), B(7, 'm')));
+  S('side-l', 'Right side seam', E(fr, F(5, 'm'), F(7, 'm')), E(bk, B(5), B(7)));
   const sleeve = role('sleeve');
   if (sleeve) {
     for (const i of [0, 1]) {
@@ -134,8 +135,8 @@ export function builtinSeams(style: StyleId, pieces: Piece[]): BuiltinSeam[] {
   }
   const placket = role('placket');
   if (placket) {
-    S('placket-r', 'Right placket', E(placket, 'placket.1', 'placket.2'), E(fr, 'front.2', 'front.1'));
-    S('placket-l', 'Left placket', E(placket, 'placket.1m', 'placket.2m'), E(fr, 'front.2m', 'front.1m'));
+    S('placket-r', 'Left placket', E(placket, 'placket.1', 'placket.2'), E(fr, 'front.2', 'front.1'));
+    S('placket-l', 'Right placket', E(placket, 'placket.1m', 'placket.2m'), E(fr, 'front.2m', 'front.1m'));
     S('placket-base', 'Placket base', E(placket, 'placket.2', 'placket.2m'), E(fr, 'front.1', 'front.1m'));
   }
   const band = role('neckband');

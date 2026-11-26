@@ -358,7 +358,7 @@ function sideLabel(style: StyleId | undefined, host: Piece | undefined, instance
   if (!host) return 'missing piece';
   if (style) return instanceLabel(style, host, instance);
   if (host.cut <= 1) return host.name;
-  return instance === undefined ? `${host.name}, every copy` : `${host.name}, ${instance === 1 ? 'left' : 'right'}`;
+  return instance === undefined ? `${host.name}, every copy` : `${host.name}, ${instance === 1 ? 'right' : 'left'}`;
 }
 
 /** Attachments (pockets, patches, appliques, straps, embroidery, prints, hardware) and user pieces patched on, for the spec sheet. */

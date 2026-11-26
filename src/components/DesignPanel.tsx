@@ -313,9 +313,9 @@ function AttachmentEditor({ att }: { att: Attachment }) {
         {copies === 2 && (
           <div className="frow stack">
             <span className="lbl">Side</span>
-            <Seg label="Side" value={side} options={[{ id: 'r', label: 'Right' }, { id: 'l', label: 'Left' }, { id: 'b', label: 'Both' }]}
+            <Seg label="Side" value={side} options={[{ id: 'r', label: 'Left' }, { id: 'l', label: 'Right' }, { id: 'b', label: 'Both' }]}
               onChange={(v) => patch({ instance: v === 'b' ? undefined : v === 'r' ? 0 : 1 })} />
-            <span className="group-note" style={{ padding: 0 }}>{side === 'b' ? 'Shows on both copies, mirrored on the left.' : `Only on the ${side === 'r' ? 'right' : 'left'} copy of this piece.`}</span>
+            <span className="group-note" style={{ padding: 0 }}>{side === 'b' ? 'Shows on both copies, mirrored on the other side.' : `Only on the ${side === 'r' ? 'left' : 'right'} side, as worn.`}</span>
           </div>
         )}
         <Row label="Across"><LenInput units={units} label="Position across" value={att.x} onChange={(v) => patch({ x: v })} /></Row>

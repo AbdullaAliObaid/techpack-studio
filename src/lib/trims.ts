@@ -6,14 +6,16 @@
 import type { Attachment, Hardware } from '../data/edits';
 import * as shapesLib from './shapes';
 
-/** Polygon (cm, centred) of an attachment outline; uses shapePolygon (any shape or letter) when the shape library has it. */
-export function attachmentPolygon(a: Pick<Attachment, 'outline' | 'w' | 'h' | 'points' | 'shape' | 'text'>): { x: number; y: number }[] {
-  const sp = (shapesLib as unknown as Record<string, unknown>).shapePolygon as ((s: string, w: number, h: number, t?: string) => { x: number; y: number }[]) | undefined;
-  if (a.outline === 'shape' && a.shape && sp) {
-    const q = sp(a.shape, a.w, a.h, a.text);
-    if (q && q.length >= 3) return q;
-  }
-  return shapesLib.outlinePolygon(a.outline, a.w, a.h, a.points);
+/** Outline rings (cm, centred) of an attachment: one ring per cut piece (an applique word gives one per letter). */
+export function attachmentRings(a: Pick<Attachment, 'kind' | 'outline' | 'w' | 'h' | 'points' | 'shape' | 'text'>): { x: number; y: number }[][] {
+  const rings = shapesLib.attachmentPolygons(a);
+  return rings.length ? rings : [shapesLib.outlinePolygon(a.outline, a.w, a.h, a.points)];
+}
+
+/** The largest outline ring of an attachment. */
+export function attachmentPolygon(a: Pick<Attachment, 'kind' | 'outline' | 'w' | 'h' | 'points' | 'shape' | 'text'>): { x: number; y: number }[] {
+  const area = (r: { x: number; y: number }[]) => Math.abs(r.reduce((s, p, i) => { const q = r[(i + 1) % r.length]; return s + p.x * q.y - q.x * p.y; }, 0));
+  return attachmentRings(a).reduce((b, r) => (area(r) > area(b) ? r : b));
 }
 
 export interface GlyphPath { d: string; fillRule?: 'evenodd' | 'nonzero' }

@@ -60,7 +60,7 @@ export interface Attachment {
   name: string;
   /**
    * host pattern piece and the centre position in that piece's local pattern coords (cm). x, y and rotation are
-   * always in the stored piece's own frame, for every copy: on a mirrored copy (instance 1, the left side) the
+   * always in the stored piece's own frame, for every copy: on a mirrored copy (instance 1, the wearer's right) the
    * placement is the mirror image in 3D, but the attachment itself is not flipped (text still reads the right way).
    */
   pieceId: string;
@@ -86,7 +86,7 @@ export interface Attachment {
   hardware?: Hardware;
   /**
    * which placed copy of a piece cut more than once gets the attachment (see instanceCount in
-   * src/sim/seams.ts: 0 = right side, 1 = left side; crown panels 0..5). Omitted: every copy.
+   * src/sim/seams.ts: 0 = +x copy, the wearer's left; 1 = the wearer's right; crown panels 0..5). Omitted: every copy.
    */
   instance?: number;
 }
@@ -97,7 +97,7 @@ export interface EdgeRef {
   fromId: string;
   toId: string;
   /**
-   * placed copy of a piece cut more than once (0 = right side / first, 1 = left side; crown panels 0..5).
+   * placed copy of a piece cut more than once (0 = +x copy, the wearer's left; 1 = the wearer's right; crown panels 0..5).
    * Omitted on a custom seam: sewn on every copy, copy i to copy i (a mirrored pair stays mirrored).
    */
   instance?: number;
@@ -127,7 +127,7 @@ export interface Pleat {
   direction: 1 | -1;
   /** pattern width (cm) the store added beside the pleat so the edge still matches its seam after folding */
   spread?: number;
-  /** placed copy of a piece cut more than once that gets the pleat (0 = right side, 1 = left side). Omitted: every copy. */
+  /** placed copy of a piece cut more than once that gets the pleat (0 = +x copy, the wearer's left; 1 = the wearer's right). Omitted: every copy. */
   instance?: number;
 }
 
@@ -142,7 +142,7 @@ export interface Placement {
   x?: number;
   y?: number;
   rotation?: number;
-  /** 'patch' on a host cut more than once: the host copy it goes on (0 = right side, 1 = left side). Omitted: every copy. */
+  /** 'patch' on a host cut more than once: the host copy it goes on (0 = +x copy, the wearer's left; 1 = the wearer's right). Omitted: every copy. */
   instance?: number;
 }
 

@@ -5,7 +5,7 @@ import { useStore } from '../store';
 import type { Attachment, ShapeLayer } from '../data/edits';
 import { fabricById } from '../data/fabrics';
 import { SHAPES, outlinePolygon } from '../lib/shapes';
-import { attachmentPolygon } from '../lib/trims';
+import { attachmentRings } from '../lib/trims';
 import { registerHitCloth, type ClothHit } from './hitCloth';
 import { NONE, type VertexPattern } from './printsAdapter';
 
@@ -38,10 +38,11 @@ function fabricHex(f: Attachment['fabric']) {
 }
 
 function outlinePath(a: Attachment) {
-  const pts = attachmentPolygon(a);
   const p = new Path2D();
-  pts.forEach((q, i) => (i ? p.lineTo(q.x, q.y) : p.moveTo(q.x, q.y)));
-  p.closePath();
+  for (const pts of attachmentRings(a)) {
+    pts.forEach((q, i) => (i ? p.lineTo(q.x, q.y) : p.moveTo(q.x, q.y)));
+    p.closePath();
+  }
   return p;
 }
 

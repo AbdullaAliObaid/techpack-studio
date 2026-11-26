@@ -1,5 +1,5 @@
 // Pieces cut twice (legs, sleeves, cuffs) are drawn as two separate patterns on the chart: the first copy
-// is the right side of the body, the second copy is its mirror image, the left side.
+// sits on +x, the wearer's left (the avatar faces you), the second copy is its mirror image, the wearer's right.
 // Everything the user places belongs to a copy (`instance`); undefined means every copy.
 import * as seamsMod from '../sim/seams';
 import type { StyleId } from '../data/catalog';
@@ -29,7 +29,7 @@ export function copiesOf(style: StyleId, p: Piece): number {
   return seamsMod.instanceCount(style, p);
 }
 
-export const sideName = (inst: number) => (inst === 0 ? 'Right' : 'Left');
+export const sideName = (inst: number) => (inst === 0 ? 'Left' : 'Right');
 
 /** "Front, right leg", "Sleeve, left". Uses the simulation's own label when it provides one. */
 export function instanceName(style: StyleId, p: Piece, inst: number): string {
