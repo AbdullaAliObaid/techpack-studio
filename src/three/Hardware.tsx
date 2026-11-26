@@ -1,14 +1,21 @@
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { HardwareMsg } from '../sim/detailsHardware';
-import { HW_TYPES } from '../sim/detailsHardware';
+import type { HardwareMsg, TrimDesign } from '../sim/detailsHardware';
+import { HW_FINISHES, HW_TYPES } from '../sim/detailsHardware';
 import type { DetailUpdater } from './Details';
+import { applyLook, sheenLook } from './detailsLook';
+import {
+  coilLoops, cordPuller, customPuller, faceTextures, holesGeometry, metalTooth, moldedTooth, ringPuller, shellGeometry,
+  sliderBody, standardPuller, tabPuller, type ShellType,
+} from './detailsTrim';
 
 // Hardware trims on the live cloth: rivets, eyelets, studs, buttons, snaps and zippers. Each trim is anchored to a
 // cloth triangle (barycentric) and its pose is rebuilt from the latest particle positions every frame, so it follows
-// the drape and the movement. One InstancedMesh per part and material class keeps the draw calls low.
+// the drape and the movement. One InstancedMesh per part and material keeps the draw calls low.
 // Trim geometry is modelled for a diameter of 1, base on z = 0, pointing along +z (the cloth's outward normal).
+// Every attachment has its own design (outline, holes, artwork, colour, sheen, zipper parts); a row made with `count`
+// repeats that one design. Buttons, and any trim with a drawn outline or artwork, use the extruded shell from detailsTrim.
 
 const LIFT = 0.05; // cm off the cloth surface
 const FINISH_COLOR = ['#d8dadf', '#d6b25a', '#c8774a', '#6b7078', '#18181a', '#efeeea'];
@@ -20,9 +27,8 @@ const lathe = (pts: [number, number][], seg = 28) => {
   return g;
 };
 const merge = (gs: THREE.BufferGeometry[]) => mergeGeometries(gs.map((g) => (g.index ? g : g.toNonIndexed())), false) ?? gs[0];
-const moved = (g: THREE.BufferGeometry, x: number, y: number, z: number) => { g.translate(x, y, z); return g; };
 
-/** Parts per trim: 'finish' parts take the finish colour (metal or plastic by finish), 'dark' parts are fixed dark. */
+/** Plain round trims without a drawn outline or artwork. */
 const GEO = {
   rivet: () => lathe([[0.5, 0], [0.5, 0.05], [0.46, 0.09], [0.41, 0.09], ...Array.from({ length: 6 }, (_, k) => {
     const t = ((k + 1) / 6) * (Math.PI / 2);
@@ -37,79 +43,144 @@ const GEO = {
     cone.translate(0, 0, 0.06 + 0.17);
     return merge([lathe([[0.5, 0], [0.5, 0.05], [0.44, 0.07], [0.3, 0.07]]), cone]);
   },
-  button4: () => lathe([[0.5, 0], [0.5, 0.1], [0.47, 0.14], [0.39, 0.155], [0.33, 0.1], [0.22, 0.085], [0, 0.08]], 36),
-  button4Holes: () => merge([[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy]) => moved(lathe([[0.065, 0.088], [0, 0.088]], 12), sx * 0.13, sy * 0.13, 0))),
-  buttonShank: () => lathe([[0.5, 0], [0.5, 0.06], [0.47, 0.13], [0.42, 0.18], [0.35, 0.19], [0.32, 0.17], [0.2, 0.16], [0, 0.155]], 36),
   snap: () => lathe([[0.5, 0], [0.5, 0.05], [0.46, 0.1], [0.38, 0.11], [0.34, 0.08], [0.3, 0.1], [0.27, 0.17], [0.18, 0.21], [0, 0.225]]),
-  tooth: () => merge([new THREE.BoxGeometry(0.3, 0.32, 0.12).translate(0, 0, 0.06), new THREE.BoxGeometry(0.2, 0.14, 0.17).translate(0.0, 0.0, 0.085)]),
-  slider: () => merge([new THREE.BoxGeometry(1.05, 0.95, 0.2).translate(0, 0, 0.1), new THREE.BoxGeometry(0.5, 0.35, 0.16).translate(0, 0.45, 0.28)]),
-  puller: () => {
-    const w = 0.28, l = 1.3, r = 0.2;
-    const s = new THREE.Shape();
-    s.moveTo(-w + r, 0); s.lineTo(w - r, 0); s.quadraticCurveTo(w, 0, w, r); s.lineTo(w, l - r); s.quadraticCurveTo(w, l, w - r, l);
-    s.lineTo(-w + r, l); s.quadraticCurveTo(-w, l, -w, l - r); s.lineTo(-w, r); s.quadraticCurveTo(-w, 0, -w + r, 0);
-    const hole = new THREE.Path(); hole.absarc(0, l * 0.68, 0.11, 0, Math.PI * 2, true); s.holes.push(hole);
-    const g = new THREE.ExtrudeGeometry(s, { depth: 0.05, bevelEnabled: false, curveSegments: 10 });
-    g.rotateX(0.2); // lifts the far end a little
-    g.translate(0, 0.38, 0.3);
-    return g;
-  },
 };
 
-type Cls = 'metal' | 'plastic' | 'dark';
-interface Entry { kind: 0 | 1 | 2 | 3; i: number; s?: number }
-interface PartSet { geo: () => THREE.BufferGeometry; cls: Cls; entries: Entry[]; finish: number[] }
+interface Entry { kind: 0 | 1 | 2 | 3 | 4; i: number; s?: number; side?: number; scale?: number }
+interface PartSet { geo: () => THREE.BufferGeometry; mat: THREE.Material | THREE.Material[]; entries: Entry[] }
 
 interface Built { group: THREE.Group; update: DetailUpdater; dispose: () => void }
 
 function build(m: HardwareMsg, geo: THREE.BufferGeometry): Built {
   const group = new THREE.Group();
   const disposables: { dispose(): void }[] = [];
-  const metalMat = new THREE.MeshStandardMaterial({ color: '#ffffff', metalness: 1, roughness: 0.28, side: THREE.DoubleSide, envMapIntensity: 1.2 });
-  const plasticMat = new THREE.MeshStandardMaterial({ color: '#ffffff', metalness: 0, roughness: 0.4, side: THREE.DoubleSide });
   const darkMat = new THREE.MeshStandardMaterial({ color: '#1b1815', metalness: 0, roughness: 0.7, side: THREE.DoubleSide });
-  const tapeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
-  disposables.push(metalMat, plasticMat, darkMat, tapeMat);
-  const matOf = { metal: metalMat, plastic: plasticMat, dark: darkMat };
+  const tapeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+  disposables.push(darkMat, tapeMat);
+
+  const matCache = new Map<string, THREE.MeshPhysicalMaterial>();
+  /** material for a finish (index) or CSS colour, with a sheen. Metal finishes stay metal unless matte makes them brushed. */
+  const material = (finish: number, color: string | undefined, sheen: TrimDesign['sheen'], metalOverride?: boolean): THREE.MeshPhysicalMaterial => {
+    const metal = metalOverride ?? isMetal(finish);
+    const key = [finish, color, sheen, metal].join('|');
+    let mt = matCache.get(key);
+    if (!mt) {
+      mt = new THREE.MeshPhysicalMaterial({ color: color ?? FINISH_COLOR[finish] ?? '#ffffff', side: THREE.DoubleSide });
+      applyLook(mt, sheenLook(sheen ?? (metal ? 'metallic' : 'glossy'), metal));
+      matCache.set(key, mt);
+      disposables.push(mt);
+    }
+    return mt;
+  };
+  const finishOf = (f?: string) => Math.max(0, HW_FINISHES.indexOf((f ?? 'silver') as never));
 
   // ---- which instanced sets exist ----
   const sets = new Map<string, PartSet>();
-  const add = (key: string, geoFn: () => THREE.BufferGeometry, cls: Cls, e: Entry, finish: number) => {
-    let s = sets.get(key);
-    if (!s) { s = { geo: geoFn, cls, entries: [], finish: [] }; sets.set(key, s); }
-    s.entries.push(e);
-    s.finish.push(finish);
+  const add = (key: string, geoFn: () => THREE.BufferGeometry, mat: THREE.Material | THREE.Material[], e: Entry) => {
+    let st = sets.get(key);
+    if (!st) { st = { geo: geoFn, mat, entries: [] }; sets.set(key, st); }
+    st.entries.push(e);
   };
-  for (let i = 0; i < m.count; i++) {
-    const t = HW_TYPES[m.kind[i]], f = m.finish[i], c: Cls = isMetal(f) ? 'metal' : 'plastic', e: Entry = { kind: 0, i };
-    if (t === 'rivet') add(`rivet:${c}`, GEO.rivet, c, e, f);
-    else if (t === 'eyelet') { add(`eyelet:${c}`, GEO.eyelet, c, e, f); add('eyeletHole', GEO.eyeletHole, 'dark', e, f); }
-    else if (t === 'stud') add(`stud:${c}`, GEO.stud, c, e, f);
-    else if (t === 'snap') add(`snap:${c}`, GEO.snap, c, e, f);
-    else if (t === 'button') {
-      if (c === 'metal') add('buttonShank', GEO.buttonShank, 'metal', e, f);
-      else { add(`button4:${c}`, GEO.button4, c, e, f); add('button4Holes', GEO.button4Holes, 'dark', e, f); }
+  const designs = m.designs ?? [];
+  const designOf = (i: number): TrimDesign | undefined => designs[m.design?.[i] ?? 0];
+
+  // drawn shells and their textures are built once per design
+  const shellCache = new Map<string, ReturnType<typeof shellGeometry>>();
+  const drawnSets = (di: number, d: TrimDesign, type: ShellType, e: Entry) => {
+    const hw = d.hardware, f = finishOf(hw.finish), metal = isMetal(f);
+    const sheen = hw.sheen ?? d.sheen;
+    const key = `drawn:${di}`;
+    let shell = shellCache.get(key);
+    if (!shell) { shell = shellGeometry(hw.outline, type, 1); shellCache.set(key, shell); disposables.push(shell.geo); }
+    const sh = shell;
+    const body = material(f, hw.color, sheen);
+    if (!sets.has(`${key}:shell`)) {
+      const faceMat = body.clone();
+      if (hw.layers && hw.layers.length) {
+        const ft = faceTextures(sh, hw.layers, metal);
+        faceMat.map = ft.map; faceMat.bumpMap = ft.bump; faceMat.bumpScale = metal ? 2.2 : 1.2;
+        disposables.push(ft.map, ft.bump);
+      }
+      disposables.push(faceMat);
+      add(`${key}:shell`, () => sh.geo, [body, faceMat], e);
+      if (type === 'button') {
+        const hg = holesGeometry(sh, hw.holes ?? (metal ? 'shank' : 4));
+        if (hg) {
+          disposables.push(hg.holes, hg.thread);
+          add(`${key}:holes`, () => hg.holes, darkMat, e);
+          add(`${key}:thread`, () => hg.thread, new THREE.MeshStandardMaterial({ color: d.thread, roughness: 0.9 }), e);
+          disposables.push(sets.get(`${key}:thread`)!.mat as THREE.Material);
+        }
+      }
+    } else {
+      for (const k of ['shell', 'holes', 'thread']) sets.get(`${key}:${k}`)?.entries.push(e);
     }
+  };
+
+  for (let i = 0; i < m.count; i++) {
+    const t = HW_TYPES[m.kind[i]], f = m.finish[i], d = designOf(i), di = m.design?.[i] ?? 0;
+    const e: Entry = { kind: 0, i };
+    const hw = d?.hardware;
+    const sheen = hw?.sheen ?? d?.sheen;
+    const drawn = !!d && (t === 'button' || ((t === 'snap' || t === 'stud' || t === 'rivet') && ((hw?.outline?.length ?? 0) > 2 || (hw?.layers?.length ?? 0) > 0)));
+    if (drawn && d && (t === 'button' || t === 'snap' || t === 'stud' || t === 'rivet')) { drawnSets(di, d, t, e); continue; }
+    const mt = material(f, hw?.color, sheen);
+    if (t === 'rivet') add(`rivet:${mt.uuid}`, GEO.rivet, mt, e);
+    else if (t === 'eyelet') { add(`eyelet:${mt.uuid}`, GEO.eyelet, mt, e); add('eyeletHole', GEO.eyeletHole, darkMat, e); }
+    else if (t === 'stud') add(`stud:${mt.uuid}`, GEO.stud, mt, e);
+    else if (t === 'snap') add(`snap:${mt.uuid}`, GEO.snap, mt, e);
   }
-  // zipper samples, tape geometry
+  // zipper samples, tape geometry, parts per zipper
   const Z = m.zipTri.length / 3;
+  const customShells: (ReturnType<typeof customPuller> | null)[] = [];
   for (let z = 0; z < m.zipCount; z++) {
-    const f = m.zipFinish[z], c: Cls = isMetal(f) ? 'metal' : 'plastic';
-    for (let s = 0; s < m.zipLen[z]; s++) add(`tooth:${c}`, GEO.tooth, c, { kind: 1, i: z, s }, f);
-    add(`slider:${c}`, GEO.slider, c, { kind: 2, i: z }, f);
-    add(`puller:${c}`, GEO.puller, c, { kind: 3, i: z }, f);
+    const d = designs[m.zipDesign?.[z] ?? 0];
+    const hw = d?.hardware;
+    const zd = hw?.zipper;
+    const f = m.zipFinish[z], sheen = hw?.sheen ?? d?.sheen;
+    const tooth = zd?.teeth ?? 'metal';
+    const pf = finishOf(zd?.pullerFinish ?? hw?.finish);
+    const toothColor = zd?.teethColor ?? '#ece9e0';
+    const toothMat = tooth === 'metal' ? material(f, hw?.color, sheen) : material(7, toothColor, tooth === 'coil' ? (sheen ?? 'satin') : (sheen ?? 'glossy'), false);
+    const L = m.zipLen[z];
+    for (let s = 0; s < L; s++) {
+      if (tooth === 'coil') { add(`z${z}:coil`, coilLoops, toothMat, { kind: 1, i: z, s, side: -1 }); add(`z${z}:coil`, coilLoops, toothMat, { kind: 1, i: z, s, side: 1 }); }
+      else add(`z${z}:tooth`, tooth === 'molded' ? moldedTooth : metalTooth, toothMat, { kind: 1, i: z, s });
+    }
+    const pm = material(pf, undefined, zd?.pullerFinish ? undefined : sheen);
+    add(`z${z}:slider`, sliderBody, pm, { kind: 2, i: z });
+    const pull = zd?.puller ?? 'standard';
+    if (pull === 'ring') add(`z${z}:ring`, ringPuller, pm, { kind: 3, i: z });
+    else if (pull === 'tab') add(`z${z}:tab`, tabPuller, material(pf, undefined, 'matte', false), { kind: 3, i: z });
+    else if (pull === 'cord') {
+      const cp = cordPuller();
+      disposables.push(cp.cord, cp.tip);
+      add(`z${z}:cord`, () => cp.cord, material(pf, undefined, 'matte', false), { kind: 3, i: z });
+      add(`z${z}:cordtip`, () => cp.tip, material(0, undefined, 'metallic'), { kind: 3, i: z });
+    } else if (pull === 'custom' && zd?.pullerOutline && zd.pullerOutline.length > 2) {
+      const shell = customPuller(zd.pullerOutline);
+      disposables.push(shell.geo);
+      customShells[z] = shell;
+      const body = material(pf, undefined, zd.pullerFinish ? 'glossy' : sheen);
+      const faceMat = body.clone();
+      if (zd.pullerLayers?.length) {
+        const ft = faceTextures(shell, zd.pullerLayers, isMetal(pf));
+        faceMat.map = ft.map; faceMat.bumpMap = ft.bump; faceMat.bumpScale = 2;
+        disposables.push(ft.map, ft.bump);
+      }
+      disposables.push(faceMat);
+      add(`z${z}:custom`, () => shell.geo, [body, faceMat], { kind: 3, i: z, scale: shell.ext });
+    } else add(`z${z}:puller`, standardPuller, pm, { kind: 3, i: z });
   }
 
   const meshes: { mesh: THREE.InstancedMesh; set: PartSet; arr: Float32Array }[] = [];
-  const col = new THREE.Color();
   sets.forEach((set) => {
     const g = set.geo();
     const n = set.entries.length;
-    const im = new THREE.InstancedMesh(g, matOf[set.cls], n);
+    const im = new THREE.InstancedMesh(g, set.mat, n);
     im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     im.frustumCulled = false;
     im.castShadow = true;
-    if (set.cls !== 'dark') set.finish.forEach((f, j) => im.setColorAt(j, col.set(FINISH_COLOR[f] ?? '#ffffff')));
     group.add(im);
     disposables.push(g);
     meshes.push({ mesh: im, set, arr: im.instanceMatrix.array as Float32Array });
@@ -118,15 +189,21 @@ function build(m: HardwareMsg, geo: THREE.BufferGeometry): Built {
   // zipper tape: 4 vertices per sample (outer left, inner left, inner right, outer right)
   const tPos = new Float32Array(Z * 12), tNor = new Float32Array(Z * 12), tCol = new Float32Array(Z * 12);
   const tIdx: number[] = [];
-  const tapeFor = (f: number) => (f === 5 ? new THREE.Color('#e9e8e3') : new THREE.Color('#1d1d20'));
+  const tapeFor = (z: number) => {
+    const d = designs[m.zipDesign?.[z] ?? 0];
+    const css = d?.hardware.zipper?.tape;
+    return css ? new THREE.Color(css) : m.zipFinish[z] === 5 ? new THREE.Color('#e9e8e3') : new THREE.Color('#1d1d20');
+  };
   for (let z = 0; z < m.zipCount; z++) {
-    const c = tapeFor(m.zipFinish[z]);
+    const c = tapeFor(z);
     const dark = new THREE.Color('#0b0a09');
     for (let s = 0; s < m.zipLen[z]; s++) {
       const v = (m.zipStart[z] + s) * 4;
+      // faint rib every other sample so the tape reads as woven
+      const rib = s % 2 ? 0.93 : 1;
       for (let q = 0; q < 4; q++) {
         const cc = m.zipOpen[z] && (q === 1 || q === 2) ? dark : c;
-        tCol.set([cc.r, cc.g, cc.b], (v + q) * 3);
+        tCol.set([cc.r * rib, cc.g * rib, cc.b * rib], (v + q) * 3);
       }
       if (s + 1 < m.zipLen[z]) {
         const w = v + 4;
@@ -260,13 +337,22 @@ function build(m: HardwareMsg, geo: THREE.BufferGeometry): Built {
           // geometry x = lateral, y = along (down), z = out
           let off = 0, sc = 1;
           if (e.kind === 1) {
-            const g = gapAt(z, s), side = s % 2 ? 1 : -1;
-            off = side * (g / 2 + 0.06);
+            const g = gapAt(z, s), side = e.side ?? (s % 2 ? 1 : -1);
+            const coil = e.side !== undefined;
+            off = side * (g / 2 + (coil ? 0.17 : 0.06));
             sc = Math.min(1.3, Math.max(0.75, m.zipSize[z]));
+            if (coil) {
+              // the two chains interlock: offset half a winding along the tape
+              const sh = side * 0.065 * sc;
+              setM(arr, o, lx * sc, ly * sc, lz * sc, tx * sc, ty * sc, tz * sc, nx * sc, ny * sc, nz * sc,
+                zP[i * 3] + nx * LIFT + lx * off + tx * sh, zP[i * 3 + 1] + ny * LIFT + ly * off + ty * sh, zP[i * 3 + 2] + nz * LIFT + lz * off + tz * sh);
+              j++;
+              continue;
+            }
             setM(arr, o, lx * sc, ly * sc, lz * sc, tx * sc, ty * sc, tz * sc, nx * sc, ny * sc, nz * sc,
               zP[i * 3] + nx * LIFT + lx * off, zP[i * 3 + 1] + ny * LIFT + ly * off, zP[i * 3 + 2] + nz * LIFT + lz * off);
           } else {
-            sc = Math.min(1.4, Math.max(0.8, m.zipSize[z]));
+            sc = e.scale ?? Math.min(1.4, Math.max(0.8, m.zipSize[z]));
             setM(arr, o, lx * sc, ly * sc, lz * sc, tx * sc, ty * sc, tz * sc, nx * sc, ny * sc, nz * sc,
               zP[i * 3] + nx * (LIFT + 0.02), zP[i * 3 + 1] + ny * (LIFT + 0.02), zP[i * 3 + 2] + nz * (LIFT + 0.02));
           }

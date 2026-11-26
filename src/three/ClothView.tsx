@@ -4,11 +4,12 @@ import * as THREE from 'three';
 import type { GarmentType, Piece } from '../data/presets';
 import { bodyFrame, type Body } from './body';
 import { riskColor } from './rings';
-import { fabricMaterial, stretchMat } from './materials';
+import { stretchMat } from './materials';
 import { useStore } from '../store';
 import Details, { type DetailUpdater } from './Details';
 import type { DetailsMsg } from '../sim/details';
 import Prints from './Prints';
+import { clothMaterials } from './detailsCloth';
 import Hardware from './Hardware';
 import type { HardwareMsg } from '../sim/detailsHardware';
 import { vertexPattern, type VertexPattern } from './printsAdapter';
@@ -215,7 +216,13 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
     if (stretch && topo && lastStrain.current) paint(topo.geo, lastStrain.current);
   }, [stretch, topo]);
 
-  const mats = useMemo(() => (topo ? topo.fabrics.map((fb) => fabricMaterial(fb)) : []), [topo]);
+  const insideFabric = useStore((s) => s.project.edits?.insideFabric);
+  const labelKey = JSON.stringify((attachments ?? []).filter((a) => a.kind === 'label').map((a) => [a.id, a.label, a.sheen]));
+  const cloth = useMemo(
+    () => (topo ? clothMaterials(topo.fabrics, topo.pat, { insideFabric }, attachments ?? []) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [topo, insideFabric, labelKey],
+  );
   return (
     <group>
       {showBody && skinned && <primitive object={skinned} material={skinMat} />}
@@ -223,7 +230,10 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         <mesh key={i} ref={(el) => { if (el) jointRefs.current[i] = el; }} geometry={jointGeo} material={jointMat} renderOrder={10} />
       ))}
       {showGarment && topo && (
-        <mesh geometry={topo.geo} material={stretch ? topo.fabrics.map(() => stretchMat) : mats} castShadow receiveShadow frustumCulled={false} />
+        <mesh geometry={topo.geo} material={stretch || !cloth ? topo.fabrics.map(() => stretchMat) : cloth.outside} castShadow receiveShadow frustumCulled={false} />
+      )}
+      {showGarment && topo && cloth?.twoSided && !stretch && (
+        <mesh geometry={topo.geo} material={cloth.inside} receiveShadow frustumCulled={false} />
       )}
       {showGarment && topo && <Prints geo={topo.geo} pat={topo.pat} visible={!stretch} />}
       {showGarment && topo && hardware && <Hardware data={hardware} geo={topo.geo} visible={!stretch} updater={hardwareUpdater} />}

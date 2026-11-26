@@ -2,7 +2,8 @@
 // triangle under each pattern point (host piece + instance + pattern coords) and send barycentric anchors. The main
 // thread (src/three/Hardware.tsx) turns those into meshes every frame, so trims follow the drape and the motion.
 
-import type { Attachment, Finish, HardwareType } from '../data/edits';
+import type { Attachment, Finish, Hardware, HardwareType } from '../data/edits';
+import { outlineExtent } from '../lib/trims';
 import { Locator } from './details';
 import type { Garment3D, PanelInst } from './setup';
 
@@ -12,6 +13,18 @@ export const HW_FINISHES: Finish[] = ['silver', 'brass', 'copper', 'gunmetal', '
 export const ZIP_STEP = 0.4;
 const MAX_ITEMS = 4000;
 const MAX_ZIP_SAMPLES = 3000;
+
+/** One trim design: every attachment has its own (no sharing); a row made with `count` repeats it. Plain JSON (structured clone). */
+export interface TrimDesign {
+  attachmentId: string;
+  hardware: Hardware;
+  /** thread colour for button holes (the attachment's thread, CSS) */
+  thread: string;
+  /** attachment face; 'inside' trims sit on the inner side of the cloth */
+  face: 'outside' | 'inside';
+  /** Attachment.sheen when set (Hardware.sheen wins) */
+  sheen?: Hardware['sheen'];
+}
 
 export interface HardwareMsg {
   type: 'hardware';
@@ -35,10 +48,14 @@ export interface HardwareMsg {
   zipTri: Uint32Array;
   zipW: Float32Array;
   zipSign: Float32Array;
+  /** designs[design[i]] is the design of round trim i, designs[zipDesign[z]] that of zipper z */
+  designs: TrimDesign[];
+  design: Uint16Array;
+  zipDesign: Uint16Array;
 }
 
 export function hardwareTransfers(m: HardwareMsg): ArrayBuffer[] {
-  return [m.kind, m.finish, m.size, m.tri, m.w, m.sign, m.up, m.zipFinish, m.zipSize, m.zipOpen, m.zipStart, m.zipLen, m.zipTri, m.zipW, m.zipSign].map((a) => a.buffer as ArrayBuffer);
+  return [m.kind, m.finish, m.size, m.tri, m.w, m.sign, m.up, m.zipFinish, m.zipSize, m.zipOpen, m.zipStart, m.zipLen, m.zipTri, m.zipW, m.zipSign, m.design, m.zipDesign].map((a) => a.buffer as ArrayBuffer);
 }
 
 export function buildHardware(G: Garment3D, attachments: Attachment[], signs: number[]): HardwareMsg {
@@ -48,6 +65,7 @@ export function buildHardware(G: Garment3D, attachments: Attachment[], signs: nu
   const kind: number[] = [], finish: number[] = [], size: number[] = [], tri: number[] = [], w: number[] = [], sign: number[] = [], up: number[] = [];
   const zFinish: number[] = [], zSize: number[] = [], zOpen: number[] = [], zStart: number[] = [], zLen: number[] = [];
   const zTri: number[] = [], zW: number[] = [], zSign: number[] = [];
+  const designs: TrimDesign[] = [], design: number[] = [], zDesign: number[] = [];
 
   const upOf = (P: PanelInst, t: [number, number, number], dx: number, dy: number): [number, number] => {
     const o = P.offset;
@@ -62,6 +80,10 @@ export function buildHardware(G: Garment3D, attachments: Attachment[], signs: nu
     if (a.kind !== 'hardware' || !hw) continue;
     const ti = HW_TYPES.indexOf(hw.type), fi = Math.max(0, HW_FINISHES.indexOf(hw.finish));
     if (ti < 0) continue;
+    const di = designs.length;
+    designs.push({ attachmentId: a.id, hardware: hw, thread: a.thread || '#d8d2c4', face: a.face ?? 'outside', sheen: a.sheen });
+    // trims on the inside face sit on the inner side of the cloth: flip the outward normal
+    const fs = a.face === 'inside' ? -1 : 1;
     const r = (a.rotation * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
     // pattern direction of the attachment's local +y (down the garment when unrotated)
     const dirX = -s, dirY = c;
@@ -77,11 +99,11 @@ export function buildHardware(G: Garment3D, attachments: Attachment[], signs: nu
           const p = to(0, -len / 2 + (len * i) / (ns - 1));
           const l = loc(k).at(p.x, p.y);
           if (!l) continue;
-          zTri.push(...l.tri); zW.push(...l.w); zSign.push(signs[k]);
+          zTri.push(...l.tri); zW.push(...l.w); zSign.push(signs[k] * fs);
           got++;
         }
         if (got < 2) { zTri.length = start * 3; zW.length = start * 3; zSign.length = start; continue; }
-        zFinish.push(fi); zSize.push(Math.max(0.5, hw.size)); zOpen.push(hw.open ? 1 : 0); zStart.push(start); zLen.push(got);
+        zFinish.push(fi); zSize.push(Math.max(0.5, hw.size)); zOpen.push(hw.open ? 1 : 0); zStart.push(start); zLen.push(got); zDesign.push(di);
         continue;
       }
       const n = Math.max(1, Math.min(60, Math.round(hw.count ?? 1)));
@@ -91,8 +113,8 @@ export function buildHardware(G: Garment3D, attachments: Attachment[], signs: nu
         const l = loc(k).at(p.x, p.y);
         if (!l) continue;
         const [al, be] = upOf(P, l.tri, dirX, dirY);
-        kind.push(ti); finish.push(fi); size.push(Math.max(0.2, hw.size));
-        tri.push(...l.tri); w.push(...l.w); sign.push(signs[k]); up.push(al, be);
+        kind.push(ti); finish.push(fi); size.push(hw.outline && hw.outline.length > 2 ? outlineExtent(hw.outline) : Math.max(0.2, hw.size)); design.push(di);
+        tri.push(...l.tri); w.push(...l.w); sign.push(signs[k] * fs); up.push(al, be);
       }
     }
   }
@@ -104,5 +126,6 @@ export function buildHardware(G: Garment3D, attachments: Attachment[], signs: nu
     zipCount: zStart.length, zipFinish: new Uint8Array(zFinish), zipSize: new Float32Array(zSize), zipOpen: new Uint8Array(zOpen),
     zipStart: new Uint32Array(zStart), zipLen: new Uint32Array(zLen),
     zipTri: new Uint32Array(zTri), zipW: new Float32Array(zW), zipSign: new Float32Array(zSign),
+    designs, design: new Uint16Array(design), zipDesign: new Uint16Array(zDesign),
   };
 }

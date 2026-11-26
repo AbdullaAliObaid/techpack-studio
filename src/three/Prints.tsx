@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+const THREE_COLOR = THREE.Color;
 import { useStore } from '../store';
 import type { Attachment, ShapeLayer } from '../data/edits';
 import { fabricById } from '../data/fabrics';
@@ -8,6 +9,7 @@ import { SHAPES, outlinePolygon } from '../lib/shapes';
 import { attachmentRings } from '../lib/trims';
 import { registerHitCloth, type ClothHit } from './hitCloth';
 import { NONE, type VertexPattern } from './printsAdapter';
+import { applyLook, cottonTile, grainTile, labelLook, sheenLook, weaveTile, type LabelLook } from './detailsLook';
 
 // Attachment artwork on the draped cloth, plus picking and dragging in 3D.
 // Artwork is painted per placed cloth panel into canvases in pattern space (cm to pixels), so a left and a right copy
@@ -18,6 +20,13 @@ import { NONE, type VertexPattern } from './printsAdapter';
 // simulated panel are painted on that panel (above the pocket or applique cloth), otherwise on the host piece.
 //   print:      flat ink
 //   embroidery: raised satin stitch (thread colour + height map), outline stitch
+// Two faces: every cloth panel has an outside and an inside layer set. Artwork with Attachment.face 'inside' is drawn
+// only on the inside layers (opposite side, lifted the other way, artwork mirrored so it reads from the inside),
+// 'outside' (default) only on the outside layers. Attachment panels follow the same rule through their own face.
+// Sheen (Attachment.sheen) sets the material gloss of the layer: glossy ink gets a clear coat and a soft puff,
+// embroidery thread can be metallic. Labels (kind 'label') are painted in the thread pass with weave / grain / moulded
+// relief by tag type (src/three/detailsLook.ts); their cloth comes from ClothView when the sim has a panel for them,
+// else they are painted on the host at their position.
 // Panels whose pattern x runs the other way round (left copies) get their artwork flipped so text reads correctly.
 
 export const ATTACH_MIME = 'application/x-techit-attachment';
@@ -63,16 +72,16 @@ function drawInk(ctx: CanvasRenderingContext2D, a: Attachment, local: boolean, o
   if (!local) { ctx.translate(a.x, a.y); ctx.rotate(rad(a.rotation)); }
   if (flip) ctx.scale(-1, 1);
   const fill = fabricHex(a.fabric);
-  if ((a.kind === 'print' || onHost) && fill && a.kind !== 'embroidery' && a.kind !== 'hardware') {
+  if ((a.kind === 'print' || onHost) && fill && a.kind !== 'embroidery' && a.kind !== 'hardware' && a.kind !== 'label') {
     ctx.fillStyle = fill;
     ctx.fill(outlinePath(a));
-  } else if (onHost && a.kind !== 'print' && a.kind !== 'embroidery' && a.kind !== 'hardware') {
+  } else if (onHost && a.kind !== 'print' && a.kind !== 'embroidery' && a.kind !== 'hardware' && a.kind !== 'label') {
     // no cloth of its own yet: a faint edge so the shape still reads
     ctx.strokeStyle = 'rgba(0,0,0,0.3)';
     ctx.lineWidth = 0.12;
     ctx.stroke(outlinePath(a));
   }
-  if (a.kind !== 'embroidery') {
+  if (a.kind !== 'embroidery' && a.kind !== 'label') {
     for (const l of a.layers) {
       ctx.save();
       ctx.translate(l.x, l.y);
@@ -208,6 +217,102 @@ function drawThread(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2D
   });
 }
 
+
+/** one layer path in the current (cm) transform */
+function fillLayer(ctx: CanvasRenderingContext2D, l: ShapeLayer, fill: string | CanvasPattern) {
+  ctx.save();
+  ctx.translate(l.x, l.y);
+  ctx.rotate(rad(l.rotation));
+  if (l.flipX) ctx.scale(-1, 1);
+  ctx.globalAlpha *= l.opacity ?? 1;
+  ctx.fillStyle = fill;
+  if (l.shape === 'text') {
+    if (l.text) {
+      ctx.font = `700 ${Math.max(0.5, l.h)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(l.text, 0, 0, Math.max(0.5, l.w));
+    }
+  } else {
+    ctx.scale(l.w, l.h);
+    ctx.fill(new Path2D(SHAPES[l.shape].d));
+  }
+  ctx.restore();
+}
+
+const tintCache = new Map<string, HTMLCanvasElement>();
+/** a tile multiplied into a colour, for thread of that colour woven in */
+function tinted(tile: HTMLCanvasElement, color: string) {
+  const key = color + tile.width;
+  let c = tintCache.get(key);
+  if (!c) {
+    c = document.createElement('canvas');
+    c.width = c.height = tile.width;
+    const g = c.getContext('2d')!;
+    g.fillStyle = color; g.fillRect(0, 0, c.width, c.height);
+    g.globalCompositeOperation = 'multiply'; g.globalAlpha = 0.55; g.drawImage(tile, 0, 0);
+    tintCache.set(key, c);
+  }
+  return c;
+}
+
+const TILE: Record<NonNullable<LabelLook['tile']>, () => HTMLCanvasElement> = { weave: weaveTile, grain: grainTile, cotton: cottonTile };
+
+/** a repeating tile as a pattern in cm space: `perCm` tiles per cm */
+function tilePattern(ctx: CanvasRenderingContext2D, tile: HTMLCanvasElement, perCm: number) {
+  const p = ctx.createPattern(tile, 'repeat')!;
+  p.setTransform(new DOMMatrix().scale(1 / (perCm * tile.width)));
+  return p;
+}
+
+/**
+ * Tag pass: colour and height canvases of a clothing tag. Base (only when painted on the host, its own cloth panel
+ * already has the tag material): tag colour, weave / grain relief, a thick slab for rubber and leather. Artwork:
+ * woven = thread coloured with the weave through it, ink = flat, raised = moulded (rubber), debossed = pressed in (leather).
+ */
+function drawLabel(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2D, a: Attachment, local: boolean, onHost: boolean, flip: boolean) {
+  const look = labelLook(a.label, a.sheen);
+  const tile = look.tile ? TILE[look.tile]() : null;
+  for (const x of [col, hgt]) {
+    x.save();
+    if (!local) { x.translate(a.x, a.y); x.rotate(rad(a.rotation)); }
+    if (flip) x.scale(-1, 1);
+  }
+  const path = outlinePath(a);
+  if (onHost) {
+    col.fillStyle = a.label?.color ?? '#f2efe6';
+    col.fill(path);
+    hgt.save();
+    hgt.clip(path);
+    if (tile) { hgt.fillStyle = tilePattern(hgt, tile, look.tilesPerCm); hgt.fillRect(-60, -60, 120, 120); }
+    hgt.restore();
+    if (tile && look.tile !== 'cotton') {
+      col.save(); col.clip(path); col.globalCompositeOperation = 'multiply'; col.globalAlpha = look.tile === 'weave' ? 0.5 : 0.4;
+      col.fillStyle = tilePattern(col, tile, look.tilesPerCm); col.fillRect(-60, -60, 120, 120); col.restore();
+    }
+    if (look.thickness > 0.1) {
+      // thick tag: a raised slab with a rounded edge
+      hgt.save(); hgt.shadowColor = '#fff'; hgt.shadowBlur = 5; hgt.fillStyle = look.art === 'raised' ? '#ccc' : '#aaa'; hgt.fill(path); hgt.restore();
+    }
+  }
+  a.layers.forEach((l) => {
+    col.save();
+    if (look.art === 'debossed') {
+      const dark = new THREE_COLOR(l.color).multiplyScalar(0.55);
+      fillLayer(col, l, `rgb(${Math.round(dark.r * 255)},${Math.round(dark.g * 255)},${Math.round(dark.b * 255)})`);
+    } else if (look.art === 'woven' && tile) fillLayer(col, l, tilePattern(col, tinted(tile, l.color), look.tilesPerCm * 1.6));
+    else fillLayer(col, l, l.color);
+    col.restore();
+    hgt.save();
+    if (look.art === 'raised') { hgt.shadowColor = '#fff'; hgt.shadowBlur = 4; fillLayer(hgt, l, '#fff'); }
+    else if (look.art === 'debossed') fillLayer(hgt, l, '#000');
+    else if (look.art === 'woven' && tile) fillLayer(hgt, l, tilePattern(hgt, tile, look.tilesPerCm * 1.6));
+    hgt.restore();
+  });
+  col.restore();
+  hgt.restore();
+}
+
 function pointInPoly(x: number, y: number, poly: { x: number; y: number }[]) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -239,7 +344,7 @@ function lifted(m: THREE.Material, lift: number, sgn: number) {
   m.customProgramCacheKey = () => 'decal-lift';
 }
 
-interface Slot { canvas: HTMLCanvasElement; tex: THREE.CanvasTexture; sig: string }
+interface Slot { canvas: HTMLCanvasElement; tex: THREE.CanvasTexture; sig: string; hgt?: HTMLCanvasElement; hgtTex?: THREE.CanvasTexture }
 interface ThreadSlot { col: HTMLCanvasElement; hgt: HTMLCanvasElement; colTex: THREE.CanvasTexture; hgtTex: THREE.CanvasTexture; sig: string; k: number }
 
 export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometry; pat: VertexPattern; visible: boolean }) {
@@ -279,10 +384,13 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
     g.setIndex(geo.index);
     const pos = geo.getAttribute('position') as THREE.BufferAttribute;
     const idx = geo.index!.array;
-    // two materials per cloth panel (ink, thread). Only the outside faces are drawn: front faces where the cloth's
-    // front is outward, back faces where it is not.
-    const inkMats: THREE.MeshStandardMaterial[] = [], threadMats: THREE.MeshPhysicalMaterial[] = [];
+    // two faces per cloth panel, two materials per face (ink, thread). The outside layers show on the outward side
+    // (front faces where the cloth's front is outward, back faces where it is not) and lift along the outward normal;
+    // the inside layers show on the other side and lift the other way.
+    type Face = 'outside' | 'inside';
+    const inkMats: THREE.MeshPhysicalMaterial[] = [], threadMats: THREE.MeshPhysicalMaterial[] = [];
     const panelOf: number[] = []; // per entry: panel (geometry group material index)
+    const faceOf: Face[] = [];
     const mats: THREE.Material[] = [];
     const voteFront = (gr: { start: number; count: number }) => {
       let cx = 0, cy = 0, cz = 0, cnt = 0;
@@ -303,22 +411,26 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
       const panel = gr.materialIndex ?? 0;
       const f = pat.panels?.[panel]?.front;
       const front = f ? (f > 0 ? 1 : -1) : voteFront(gr);
-      const side = front > 0 ? THREE.FrontSide : THREE.BackSide;
-      const ink = new THREE.MeshStandardMaterial({
-        transparent: true, depthWrite: false, roughness: 0.85, side, visible: false,
-        polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
-      });
-      lifted(ink, INK_LIFT, front);
-      const thread = new THREE.MeshPhysicalMaterial({
-        transparent: true, depthWrite: false, roughness: 0.42, side, visible: false, bumpScale: 2.2,
-        sheen: 1, sheenRoughness: 0.35, sheenColor: new THREE.Color('#ffffff'),
-        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-      });
-      lifted(thread, THREAD_LIFT, front);
-      g.addGroup(gr.start, gr.count, mats.length);
-      mats.push(ink); inkMats.push(ink); panelOf.push(panel);
-      g.addGroup(gr.start, gr.count, mats.length);
-      mats.push(thread); threadMats.push(thread);
+      for (const face of ['outside', 'inside'] as Face[]) {
+        const out = face === 'outside';
+        const sgn = out ? front : -front; // lift direction along the geometry normal
+        const side = sgn > 0 ? THREE.FrontSide : THREE.BackSide;
+        const ink = new THREE.MeshPhysicalMaterial({
+          transparent: true, depthWrite: false, roughness: 0.85, side, visible: false,
+          polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+        });
+        lifted(ink, INK_LIFT, sgn);
+        const thread = new THREE.MeshPhysicalMaterial({
+          transparent: true, depthWrite: false, roughness: 0.42, side, visible: false, bumpScale: 2.2,
+          sheen: 1, sheenRoughness: 0.35, sheenColor: new THREE.Color('#ffffff'),
+          polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+        });
+        lifted(thread, THREAD_LIFT, sgn);
+        g.addGroup(gr.start, gr.count, mats.length);
+        mats.push(ink); inkMats.push(ink); panelOf.push(panel); faceOf.push(face);
+        g.addGroup(gr.start, gr.count, mats.length);
+        mats.push(thread); threadMats.push(thread);
+      }
     });
     const mesh = new THREE.Mesh(g, mats);
     mesh.frustumCulled = false;
@@ -326,11 +438,11 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
     mesh.receiveShadow = true;
     const ink = new Map<number, Slot>();
     const thread = new Map<number, ThreadSlot>();
-    return { mesh, g, mats, inkMats, threadMats, panelOf, ink, thread };
+    return { mesh, g, mats, inkMats, threadMats, panelOf, faceOf, ink, thread };
   }, [geo, pat, bounds]);
 
   useEffect(() => () => {
-    rig.ink.forEach((c) => c.tex.dispose());
+    rig.ink.forEach((c) => { c.tex.dispose(); c.hgtTex?.dispose(); });
     rig.thread.forEach((c) => { c.colTex.dispose(); c.hgtTex.dispose(); });
     rig.mats.forEach((m) => m.dispose());
     rig.g.dispose();
@@ -341,16 +453,18 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
     const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#007aff';
     const hasPanel = new Set((pat.panels ?? []).map((q) => q.attachId).filter(Boolean) as string[]);
     if (!pat.panels) for (const a of list) if (pat.pieceIds.includes(a.id)) hasPanel.add(a.id);
-    const entries = new Map<number, number>(); // panel -> entry index in inkMats
-    rig.panelOf.forEach((panel, e) => entries.set(panel, e));
-    entries.forEach((e, panel) => {
+    rig.panelOf.forEach((panel, e) => {
+      const face = rig.faceOf[e];
+      const slotKey = panel * 2 + (face === 'inside' ? 1 : 0);
       const info = pat.panels?.[panel];
       const pi = info?.pieceIndex ?? pat.vPiece[rig.g.index!.array[rig.g.groups[e * 2].start]];
       const pid = pat.pieceIds[pi];
       const instance = info?.instance ?? 0;
-      const flip = info?.flip ?? false;
+      // seen from the inside the pattern runs the other way round, so artwork is mirrored once more to read correctly there
+      const flip = (info?.flip ?? false) !== (face === 'inside');
       const own = info?.attachId ?? (hasPanel.has(pid) ? pid : undefined);
       const mine = list.filter((a) => {
+        if ((a.face ?? 'outside') !== face) return false;
         if (own) return a.id === own || (a.pieceId === own && (a.kind === 'print' || a.kind === 'embroidery'));
         if (a.pieceId !== pid) return false;
         if (a.instance !== undefined && a.instance !== instance) return false;
@@ -358,17 +472,20 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
         if (a.kind === 'hardware') return a.id === sel;
         return !hasPanel.has(a.id);
       });
-      const art = mine.filter((a) => a.layers.length > 0 || a.id === sel || (a.kind === 'print' && a.fabric) || (a.id !== own && a.kind !== 'print' && a.kind !== 'embroidery' && a.kind !== 'hardware'));
+      const art = mine.filter((a) => a.layers.length > 0 || a.id === sel || (a.kind === 'print' && a.fabric) || a.kind === 'label' || (a.id !== own && a.kind !== 'print' && a.kind !== 'embroidery' && a.kind !== 'hardware'));
       const b = bounds[pi];
       if (!b || !isFinite(b.x0)) return;
-      const inkArt = art.filter((a) => a.kind !== 'embroidery' || a.id === sel);
-      const threadArt = art.filter((a) => a.kind === 'embroidery' && a.layers.length > 0);
+      const inkArt = art.filter((a) => (a.kind !== 'embroidery' && a.kind !== 'label') || a.id === sel);
+      const threadArt = art.filter((a) => (a.kind === 'embroidery' && a.layers.length > 0) || a.kind === 'label');
       const inkMat = rig.inkMats[e], threadMat = rig.threadMats[e];
 
       /* ink */
       const sig = JSON.stringify([inkArt, sel, accent, flip, own]);
-      let slot = rig.ink.get(panel);
+      let slot = rig.ink.get(slotKey);
       if (inkArt.length || slot) {
+        // gloss follows the last print that names a sheen; a glossy print also puffs up a little
+        const sh = [...inkArt].reverse().find((a) => a.kind === 'print' && a.sheen)?.sheen;
+        const puff = sh === 'glossy';
         if (!slot) {
           const k = Math.min(PX_PER_CM, MAX_PX / Math.max(b.w, b.h));
           const canvas = mkCanvas(b.w * k, b.h * k);
@@ -377,7 +494,7 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
           tex.colorSpace = THREE.SRGBColorSpace;
           tex.anisotropy = 4;
           slot = { canvas, tex, sig: '' };
-          rig.ink.set(panel, slot);
+          rig.ink.set(slotKey, slot);
           inkMat.map = tex;
           inkMat.needsUpdate = true;
         }
@@ -391,12 +508,25 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
           for (const a of inkArt) drawInk(ctx, a, a.id === own, a.id !== own && a.kind !== 'print', a.id === sel ? accent : null, flip);
           slot.tex.needsUpdate = true;
           inkMat.visible = inkArt.length > 0;
+          applyLook(inkMat, { ...sheenLook(sh, false), roughness: sh ? sheenLook(sh, false).roughness : 0.85 });
+          if (puff) {
+            if (!slot.hgt) { slot.hgt = mkCanvas(slot.canvas.width, slot.canvas.height); slot.hgtTex = new THREE.CanvasTexture(slot.hgt); slot.hgtTex.flipY = false; }
+            const hc = slot.hgt.getContext('2d')!;
+            hc.setTransform(1, 0, 0, 1, 0, 0);
+            hc.fillStyle = '#000'; hc.fillRect(0, 0, slot.hgt.width, slot.hgt.height);
+            hc.filter = 'blur(2.5px) brightness(0) invert(1)';
+            hc.drawImage(slot.canvas, 0, 0);
+            hc.filter = 'none';
+            slot.hgtTex!.needsUpdate = true;
+            inkMat.bumpMap = slot.hgtTex!; inkMat.bumpScale = 2.4;
+          } else inkMat.bumpMap = null;
+          inkMat.needsUpdate = true;
         }
       }
 
       /* thread */
       const tsig = JSON.stringify([threadArt, flip, own]);
-      let ts = rig.thread.get(panel);
+      let ts = rig.thread.get(slotKey);
       if (threadArt.length || ts) {
         const k = Math.min(THREAD_PX_CM, THREAD_PX_MAX / Math.max(b.w, b.h));
         if (!ts) {
@@ -405,7 +535,7 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
           for (const t of [colTex, hgtTex]) { t.flipY = false; t.anisotropy = 8; }
           colTex.colorSpace = THREE.SRGBColorSpace;
           ts = { col, hgt, colTex, hgtTex, sig: '', k };
-          rig.thread.set(panel, ts);
+          rig.thread.set(slotKey, ts);
           threadMat.map = colTex;
           threadMat.bumpMap = hgtTex;
           threadMat.needsUpdate = true;
@@ -417,10 +547,25 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
           for (const x of [cc, hc]) { x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, ts.col.width, ts.col.height); }
           hc.fillStyle = '#000'; hc.fillRect(0, 0, ts.hgt.width, ts.hgt.height);
           for (const x of [cc, hc]) x.setTransform(kk, 0, 0, kk, -b.x0 * kk, -b.y0 * kk);
-          for (const a of threadArt) drawThread(cc, hc, a, a.id === own, flip, kk);
+          for (const a of threadArt) {
+            if (a.kind === 'label') drawLabel(cc, hc, a, a.id === own, a.id !== own, flip);
+            else drawThread(cc, hc, a, a.id === own, flip, kk);
+          }
           ts.colTex.needsUpdate = true;
           ts.hgtTex.needsUpdate = true;
           threadMat.visible = threadArt.length > 0;
+          // material look: a tag by its type, thread by its sheen (default satin stitch)
+          const lab = threadArt.find((a) => a.kind === 'label');
+          if (lab) {
+            const look = labelLook(lab.label, lab.sheen);
+            applyLook(threadMat, look);
+            threadMat.bumpScale = Math.max(look.bump, look.art === 'raised' ? 1.6 : 0.8);
+          } else {
+            const sh = [...threadArt].reverse().find((a) => a.sheen)?.sheen;
+            if (sh) { const l = sheenLook(sh, false); applyLook(threadMat, { ...l, sheen: sh === 'matte' ? 0.3 : l.sheen || 1 }); }
+            else applyLook(threadMat, { roughness: 0.42, metalness: 0, clearcoat: 0, clearcoatRoughness: 0.5, sheen: 1, envMapIntensity: 1 });
+            threadMat.bumpScale = 2.2;
+          }
         }
       }
     });

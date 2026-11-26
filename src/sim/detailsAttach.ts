@@ -69,6 +69,8 @@ export function buildAttachmentDetails(G: Garment3D, attachments: Attachment[]):
   const palette: string[] = [];
   const dashTri: number[] = [], dashW: number[] = [], dashSign: number[] = [], dashCol: number[] = [];
 
+  // stitching on an attachment's inside face sits on the inner side of the cloth: the dash normal is flipped
+  let faceSign = 1;
   const line = (k: number, pts: Pt[], col: string, dash = DASH, gap = 0.15) => {
     if (dashCol.length >= MAX_DASHES || pts.length < 2) return;
     let ci = palette.indexOf(col);
@@ -96,7 +98,7 @@ export function buildAttachmentDetails(G: Garment3D, attachments: Attachment[]):
       if (!a || !b) continue;
       dashTri.push(...a.tri, ...b.tri);
       dashW.push(...a.w, ...b.w);
-      dashSign.push(signs[k], signs[k]);
+      dashSign.push(signs[k] * faceSign, signs[k] * faceSign);
       dashCol.push(ci);
     }
   };
@@ -136,6 +138,7 @@ export function buildAttachmentDetails(G: Garment3D, attachments: Attachment[]):
     const own = targets.length > 0;
     if (!own) targets = panels.map((P, k) => ({ P, k })).filter(({ P }) => !P.attach && P.piece.id === a.pieceId && (a.instance === undefined || P.instance === a.instance));
     const rings = attachmentRings(a);
+    faceSign = a.face === 'inside' ? -1 : 1;
     for (const [ti, { k }] of targets.entries()) {
       const c = own ? 1 : Math.cos(rad(a.rotation)), s = own ? 0 : Math.sin(rad(a.rotation));
       const ox = own ? 0 : a.x, oy = own ? 0 : a.y;
@@ -177,6 +180,19 @@ export function buildAttachmentDetails(G: Garment3D, attachments: Attachment[]):
               line(k, [{ x: cx - ty * 0.45, y: cy + tx * 0.45 }, { x: cx + ty * 0.45, y: cy - tx * 0.45 }].map(T), col, 0.45, 0);
             }
           }
+        }
+      } else if (a.kind === 'label') {
+        // a tag: stitched across its short ends (loop / folded loop), or all round when sewn flat
+        const sewn = a.label?.sewn ?? 'ends';
+        if (sewn === 'all-round') line(k, [...ring, ring[0]].map(T), col, 0.28, 0.12);
+        else {
+          let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+          for (const p of poly) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+          const long = x1 - x0 >= y1 - y0, i = 0.18;
+          const ends: Pt[][] = long
+            ? [[{ x: x0 + i, y: y0 + i }, { x: x0 + i, y: y1 - i }], [{ x: x1 - i, y: y0 + i }, { x: x1 - i, y: y1 - i }]]
+            : [[{ x: x0 + i, y: y0 + i }, { x: x1 - i, y: y0 + i }], [{ x: x0 + i, y: y1 - i }, { x: x1 - i, y: y1 - i }]];
+          for (const e of ends) { line(k, e.map(T), col, 0.28, 0.1); line(k, e.map((p) => T({ x: p.x + (long ? (p.x < 0 ? 0.22 : -0.22) : 0), y: p.y + (long ? 0 : (p.y < 0 ? 0.22 : -0.22)) })), col, 0.28, 0.1); }
         }
       } else if (a.kind === 'strap') {
         const lw = Math.max(a.w, a.h), sw = Math.min(a.w, a.h);
