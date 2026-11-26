@@ -77,8 +77,8 @@ export const KINDS: { id: AttachKind; label: string }[] = [
   { id: 'print', label: 'Print' },
   { id: 'hardware', label: 'Hardware' },
 ];
-export const KIND_ICON: Record<AttachKind, string> = { pocket: 'pocket', patch: 'patch', applique: 'applique', strap: 'strap', embroidery: 'embroidery', print: 'print', hardware: 'hardware' };
-export const KIND_LABEL: Record<AttachKind, string> = { pocket: 'Pocket', patch: 'Patch', applique: 'Appliqué', strap: 'Strap', embroidery: 'Embroidery', print: 'Print', hardware: 'Hardware' };
+export const KIND_ICON: Record<AttachKind, string> = { pocket: 'pocket', patch: 'patch', applique: 'applique', strap: 'strap', embroidery: 'embroidery', print: 'print', hardware: 'hardware', label: 'patch' };
+export const KIND_LABEL: Record<AttachKind, string> = { pocket: 'Pocket', patch: 'Patch', applique: 'Appliqué', strap: 'Strap', embroidery: 'Embroidery', print: 'Print', hardware: 'Hardware', label: 'Tag' };
 export const KIND_BLURB: Record<AttachKind, string> = {
   pocket: 'Cloth sewn on three sides, top open.',
   patch: 'Cloth sewn on all round.',
@@ -87,6 +87,7 @@ export const KIND_BLURB: Record<AttachKind, string> = {
   applique: 'A shape or letters cut from fabric and stitched down all round.',
   embroidery: 'Thread stitched into the piece.',
   hardware: 'Metal trim fixed through the fabric.',
+  label: 'A clothing tag with your design, sewn inside or out.',
 };
 export const OUTLINE_LIST: { id: Exclude<Outline, 'custom'>; label: string }[] = [
   { id: 'rect', label: 'Square' },

@@ -34,7 +34,20 @@ export interface ShapeLayer {
  * print      = ink on the host piece, no extra cloth
  * hardware   = metal or plastic trim fixed through the fabric (see Hardware)
  */
-export type AttachKind = 'pocket' | 'patch' | 'applique' | 'strap' | 'embroidery' | 'print' | 'hardware';
+export type AttachKind = 'pocket' | 'patch' | 'applique' | 'strap' | 'embroidery' | 'print' | 'hardware' | 'label';
+
+/**
+ * label = a clothing tag: small cloth panel (Attachment.label) sewn at its two short ends (loop) or all round,
+ * usually on the inside at the back neck. Artwork layers are woven / printed onto it.
+ */
+export type LabelType = 'woven' | 'printed' | 'satin' | 'cotton' | 'leather' | 'rubber';
+export interface Label { type: LabelType; sewn: 'ends' | 'all-round' | 'folded-loop'; color: string }
+
+/** Surface look of a cloth attachment, tag, print or trim. */
+export type Sheen = 'matte' | 'satin' | 'glossy' | 'metallic';
+
+/** Which face of the host piece an attachment sits on. Inside = the side against the body (e.g. under collar, placket facing, neck tag). */
+export type Face = 'outside' | 'inside';
 
 /** Outline of a cloth attachment. 'shape' uses Attachment.shape (any ShapeId, including 'text' letters). */
 export type Outline = 'rect' | 'rounded' | 'pointed' | 'circle' | 'shield' | 'shape' | 'custom';
@@ -52,6 +65,30 @@ export interface Hardware {
   spacing?: number;
   /** zipper: open or closed (closed = the two sides are joined) */
   open?: boolean;
+  /** button / snap / stud drawn by the user: outline (cm, centred on 0,0); replaces the round shape */
+  outline?: Pt[];
+  /** button holes: 0 (none), 2, 4 or 'shank' (loop underneath) */
+  holes?: 0 | 2 | 4 | 'shank';
+  /** artwork on the trim's face (engraved / printed / enamel), same layer model as emblems, sized in cm */
+  layers?: ShapeLayer[];
+  sheen?: Sheen;
+  /** colour for plastic finishes ('black' / 'white' are presets; this overrides with any CSS colour) */
+  color?: string;
+  /** zipper design */
+  zipper?: ZipperDesign;
+}
+
+export interface ZipperDesign {
+  teeth: 'metal' | 'coil' | 'molded';
+  /** tape colour (CSS) */
+  tape: string;
+  /** teeth colour when not metal (CSS); metal teeth use Hardware.finish */
+  teethColor?: string;
+  puller: 'standard' | 'ring' | 'tab' | 'cord' | 'custom';
+  /** puller drawn by the user (cm, centred) when puller === 'custom' */
+  pullerOutline?: Pt[];
+  pullerLayers?: ShapeLayer[];
+  pullerFinish?: Finish;
 }
 
 export interface Attachment {
@@ -82,6 +119,12 @@ export interface Attachment {
   text?: string;
   /** thread colour for embroidery and for the stitching around cloth attachments (CSS colour) */
   thread?: string;
+  /** which face of the host it is on; default 'outside' */
+  face?: Face;
+  /** surface look; default matte for cloth, metallic for metal trims */
+  sheen?: Sheen;
+  /** kind === 'label' */
+  label?: Label;
   /** kind === 'hardware' */
   hardware?: Hardware;
   /**
@@ -159,6 +202,10 @@ export interface Edits {
   /** ids of built-in seams the user has detached (ids from builtinSeams in src/sim/seams.ts) */
   detachedSeams: string[];
   pleats: Pleat[];
+  /** collar worn folded down (default) or popped up */
+  collar?: 'down' | 'up';
+  /** fabric on the inside face of a piece (under collar, placket facing, lining look); key = piece id */
+  insideFabric?: Record<string, { id: string; color: number }>;
 }
 
 export const EMPTY_EDITS: Edits = { attachments: [], customSeams: [], detachedSeams: [], pleats: [] };
