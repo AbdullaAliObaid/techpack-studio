@@ -176,6 +176,8 @@ interface State {
   setCollar: (c: 'down' | 'up') => void;
   /** fabric on the inside face of a piece; null = same as the outside */
   setInsideFabric: (pieceId: string, fabric: { id: string; color: number } | null) => void;
+  /** the same inside fabric on every piece; null = every piece uses its outside fabric */
+  setInsideAll: (fabric: { id: string; color: number } | null) => void;
   updateAttachment: (id: string, patch: Partial<Attachment>) => void;
   removeAttachment: (id: string) => void;
   addCustomSeam: (s: Omit<CustomSeam, 'id'>) => string;
@@ -254,7 +256,7 @@ export const useStore = create<State>((set, get) => {
     units: 'cm',
     tool: 'select',
     symmetry: true,
-    showMeasure: true,
+    showMeasure: false,
     showStitch: true,
     selPiece: null,
     selPoint: null,
@@ -478,6 +480,10 @@ export const useStore = create<State>((set, get) => {
         if (fabric) m[pieceId] = fabric; else delete m[pieceId];
         return { ...e, insideFabric: m };
       });
+    },
+    setInsideAll: (fabric) => {
+      get().commit();
+      setEdits((e) => ({ ...e, insideFabric: fabric ? Object.fromEntries(get().project.pieces.map((p) => [p.id, fabric])) : {} }));
     },
     updateAttachment: (id, patch) => setEdits((e) => ({ ...e, attachments: e.attachments.map((a) => (a.id === id ? { ...a, ...patch } : a)) })),
     removeAttachment: (id) => {

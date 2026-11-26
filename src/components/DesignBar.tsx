@@ -1,4 +1,4 @@
-// The Add design bar under the Pattern title: a large primary button, what it will add to, and the face the chart shows.
+// The Insert design bar under the Pattern title: a large primary button, what it will add to, and the face the chart shows.
 import { useState } from 'react';
 import { useStore } from '../store';
 import { Seg } from './controls';
@@ -28,21 +28,23 @@ export default function DesignBar() {
         className={`btn primary add-design ${host ? '' : 'is-disabled'}`}
         aria-disabled={!host}
         aria-describedby="add-design-hint"
-        title={host ? `Add a design to ${name}` : 'Select a piece to add a design'}
+        title={host ? `Insert a design on ${name}` : 'Select a piece to insert a design'}
         onClick={() => { press(); if (!coachDone) dismissCoach(); }}
       >
         <Icon name="design" size={22} />
-        <span>Add design</span>
+        <span>Insert design</span>
       </button>
       <div id="add-design-hint" className={`design-hint ${host ? '' : 'none'} ${nudge ? 'flash' : ''}`} role="status">
         {host ? (
           <>
             <b>{name}</b>
-            <small>{designOpen ? 'Pick a design in the panel' : 'Prints, embroidery, appliques, trims and tags'}</small>
+            {host.attachment && !designOpen
+              ? <button className="linkish" onClick={() => openDesign('edit')}>Edit this design</button>
+              : <small>{designOpen ? 'Pick a design in the panel' : 'Prints, embroidery, appliques, trims and tags'}</small>}
           </>
         ) : (
           <>
-            <b>Select a piece to add a design</b>
+            <b>Select a piece to insert a design</b>
             <small>Tap a piece, a pocket or a tag on the pattern</small>
           </>
         )}
@@ -54,7 +56,7 @@ export default function DesignBar() {
       </div>
       {!coachDone && (
         <div className="coach" role="dialog" aria-label="Tip">
-          <p>Select any piece, then add a design: prints, embroidery, appliques, trims and tags.</p>
+          <p>Select any piece, then press Insert design: prints, embroidery, appliques, trims and tags.</p>
           <button className="btn small primary" onClick={dismissCoach}>Got it</button>
         </div>
       )}
