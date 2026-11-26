@@ -15,17 +15,24 @@ const hiddenMemo = new Map<string, number>();
 
 type Drag = { kind: 'move'; id: string; dx: number; dy: number } | { kind: 'scale'; id: string; ratio: number } | { kind: 'rotate'; id: string };
 
-export default function EmblemEditor({ att }: { att: Attachment }) {
+/**
+ * Layer editor. By default it edits the attachment's own layers; pass `layers` and `onLayers` to edit another list of
+ * layers (trim engraving, zipper puller artwork) and `fill` for the colour behind them.
+ */
+export default function EmblemEditor({ att: attIn, layers: layersProp, onLayers, fill, sectionId = 'design-layers', title = 'Artwork layers', defaultOpen = false }: {
+  att: Attachment; layers?: ShapeLayer[]; onLayers?: (l: ShapeLayer[]) => void; fill?: string; sectionId?: string; title?: string; defaultOpen?: boolean;
+}) {
+  const layers = layersProp ?? attIn.layers;
+  const att = layersProp ? { ...attIn, layers } : attIn;
   const { updateAttachment, selLayer, set, project, units } = useStore();
   const [picking, setPicking] = useState(false);
   const [lock, setLock] = useState(true);
-  const layers = att.layers;
   const sel = layers.find((l) => l.id === selLayer) ?? null;
 
-  const setLayers = (next: ShapeLayer[]) => updateAttachment(att.id, { layers: next });
+  const setLayers = (next: ShapeLayer[]) => (onLayers ? onLayers(next) : updateAttachment(att.id, { layers: next }));
   const patch = (id: string, p: Partial<ShapeLayer>) => setLayers(layers.map((l) => (l.id === id ? { ...l, ...p } : l)));
   const add = (shape: ShapeId) => {
-    const s = Math.max(2, Math.min(att.w, att.h) * 0.5);
+    const s = Math.max(0.3, Math.min(att.w, att.h) * 0.5);
     const l = layer(shape, { w: shape === 'stripe' ? att.w : s, h: shape === 'stripe' ? s * 0.4 : shape === 'text' ? Math.max(1.5, s * 0.6) : s, text: shape === 'text' ? 'TEXT' : undefined, color: PALETTE[(layers.length + 1) % PALETTE.length] });
     setLayers([...layers, l]);
     set({ selLayer: l.id });
@@ -54,8 +61,8 @@ export default function EmblemEditor({ att }: { att: Attachment }) {
   };
 
   return (
-    <Disclosure id="design-layers" title="Artwork layers" icon="layers" count={layers.length} defaultOpen={false}>
-        <Preview att={att} sel={sel} onPatch={patch} onSelect={(id) => set({ selLayer: id })} lock={lock} fabricHex={fabricHex(att, project.pieces.find((p) => p.id === att.pieceId)?.fabric)} />
+    <Disclosure id={sectionId} title={title} icon="layers" count={layers.length} defaultOpen={defaultOpen}>
+        <Preview att={att} sel={sel} onPatch={patch} onSelect={(id) => set({ selLayer: id })} lock={lock} fabricHex={fill ?? fabricHex(att, project.pieces.find((p) => p.id === att.pieceId)?.fabric)} />
         <div className="group-note" style={{ padding: '6px 0 0' }}>Drag a layer to move it. Use the corner handle to resize and the top handle to turn it.</div>
         <div className="row wrap">
           <button className="btn small" onClick={() => setPicking(!picking)} aria-expanded={picking}><Icon name="plus" size={14} /> Add shape</button>
@@ -107,8 +114,8 @@ export default function EmblemEditor({ att }: { att: Attachment }) {
           <Row label="Position X"><LenInput units={units} label="Layer position X" value={sel.x} onChange={(v) => patch(sel.id, { x: v })} /></Row>
           <Row label="Position Y"><LenInput units={units} label="Layer position Y" value={sel.y} onChange={(v) => patch(sel.id, { y: v })} /></Row>
           <Row label={<>Size <button className="icon-btn sm inline" aria-label={lock ? 'Unlock proportions' : 'Lock proportions'} aria-pressed={lock} title={lock ? 'Proportions locked' : 'Proportions free'} onClick={() => setLock(!lock)}><Icon name={lock ? 'lock' : 'unlock'} size={14} /></button></>}>
-            <LenInput units={units} label="Layer width" value={sel.w} min={0.2} onChange={(v) => patch(sel.id, lock && sel.w > 0 ? { w: v, h: (sel.h * v) / sel.w } : { w: v })} />
-            <LenInput units={units} label="Layer height" value={sel.h} min={0.2} onChange={(v) => patch(sel.id, lock && sel.h > 0 ? { h: v, w: (sel.w * v) / sel.h } : { h: v })} />
+            <LenInput units={units} label="Layer width" value={sel.w} min={0.1} onChange={(v) => patch(sel.id, lock && sel.w > 0 ? { w: v, h: (sel.h * v) / sel.w } : { w: v })} />
+            <LenInput units={units} label="Layer height" value={sel.h} min={0.1} onChange={(v) => patch(sel.id, lock && sel.h > 0 ? { h: v, w: (sel.w * v) / sel.h } : { h: v })} />
           </Row>
           <div className="frow stack">
             <label htmlFor="layer-rot">Rotation <b className="val">{Math.round(sel.rotation)}°</b></label>
@@ -138,7 +145,7 @@ function Preview({ att, sel, onPatch, onSelect, lock, fabricHex: fill }: {
 }) {
   const ref = useRef<SVGSVGElement>(null);
   const drag = useRef<Drag | null>(null);
-  const S = Math.max(att.w, att.h, 6) * 1.5;
+  const S = Math.max(att.w, att.h, att.kind === 'hardware' ? 0.8 : 6) * 1.5;
   const o = outlineD(att);
   const [wpx, setWpx] = useState(260);
   useEffect(() => {
@@ -211,7 +218,7 @@ function Preview({ att, sel, onPatch, onSelect, lock, fabricHex: fill }: {
       <defs>
         <clipPath id="emb-clip"><path d={o.d} transform={o.transform} /></clipPath>
       </defs>
-      <path d={o.d} transform={o.transform} fill={att.kind === 'print' ? 'var(--fill-2)' : fill} />
+      <path d={o.d} transform={o.transform} fill={att.kind === 'print' || att.kind === 'embroidery' ? 'var(--fill-2)' : fill} />
       <g clipPath={att.kind === 'print' ? undefined : 'url(#emb-clip)'}>
         {att.layers.map((l) => (
           <g key={l.id} data-layer={l.id} style={{ cursor: 'move' }}>

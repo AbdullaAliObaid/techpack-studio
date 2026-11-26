@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type React from 'react';
 import { useStore } from '../store';
 import type { Piece } from '../data/presets';
 import { fabricById } from '../data/fabrics';
@@ -12,10 +13,10 @@ import { pointInPoly } from '../lib/geometry';
 import { builtinSeams } from '../sim/seams';
 import type { Attachment, EdgeRef, Pleat } from '../data/edits';
 import { ArtworkGroup, isCloth, outlineD } from './Artwork';
-import { pleatMarks, runD, runIndices, runMid } from './editHelpers';
+import { canHostDesigns, pleatMarks, rootPiece, runD, runIndices, runMid, scaleAttachment, scaleLimits } from './editHelpers';
 import { pickSeamPoint } from './ConstructionPanel';
 import { ATTACHMENT_MIME, isAttachment } from './designLibrary';
-import { frameOn, instanceFor, layoutEntries, onCopy, toSource, toWorldPt, type Entry } from './sides';
+import { attWorld, frameOn, instanceFor, layoutEntries, onCopy, toSource, toWorldPt, worldToAtt, type Entry } from './sides';
 import { openPieceFlow } from './flow';
 import Icon from './Icon';
 
@@ -25,6 +26,8 @@ type Drag =
   | { mode: 'point'; pieceId: string; pointId: string; key: string; start: Pt; committed: boolean }
   | { mode: 'piece'; pieceId: string; start: Pt; startOffset: Pt; committed: boolean }
   | { mode: 'attach'; id: string; key: string; grab: Pt; start: Pt; committed: boolean }
+  | { mode: 'resize'; id: string; key: string; c: Pt; rot: number; d0: number; att0: Attachment; committed: boolean }
+  | { mode: 'rotate'; id: string; key: string; c: Pt; committed: boolean }
   | { mode: 'ghost'; pieceId: string; key: string; grab: Pt; start: Pt; committed: boolean }
   | { mode: 'pen'; startClient: Pt; smoothed: boolean }
   | { mode: 'pan'; startClient: Pt; startView: View }
@@ -133,7 +136,22 @@ export default function PatternEditor() {
   useEffect(() => {
     const onFit = () => fit();
     window.addEventListener('tps-fit', onFit);
-    return () => window.removeEventListener('tps-fit', onFit);
+    // zoom in on a small piece so a design can be placed on it
+    const onZoom = (e: Event) => {
+      const d = (e as CustomEvent<{ pieceId: string; inst?: number | null }>).detail;
+      const en = findEntry(d.pieceId, d.inst ?? 0);
+      const el = svgRef.current;
+      if (!en || !el) return;
+      const bb = bbox(en.piece.points.map((q) => ({ x: q.x + en.offset.x, y: q.y + en.offset.y })));
+      const r = el.getBoundingClientRect();
+      const cur = viewRef.current.k;
+      if (bb.w * cur > r.width * 0.45 && bb.h * cur > r.height * 0.3) return; // already big enough
+      const k = Math.min((r.width - 80) / bb.w, (r.height - 80) / bb.h, 9);
+      if (k <= cur * 1.15) return;
+      setView({ k, x: (r.width - bb.w * k) / 2 - bb.minX * k, y: (r.height - bb.h * k) / 2 - bb.minY * k });
+    };
+    window.addEventListener('tps-zoom', onZoom);
+    return () => { window.removeEventListener('tps-fit', onFit); window.removeEventListener('tps-zoom', onZoom); };
   }, []);
 
   // ---- coordinate helpers ------------------------------------------------
@@ -268,12 +286,30 @@ export default function PatternEditor() {
 
     if (kind === 'attach' && ent) {
       const id = target!.dataset.att!;
-      const att = st.project.edits?.attachments.find((a) => a.id === id);
+      const all = st.project.edits?.attachments ?? [];
+      const att = all.find((a) => a.id === id);
       if (att) {
-        const at = toWorldPt(ent, att);
-        st.set({ selAttachment: id, selPiece: att.pieceId, selPoint: null, selPleat: null, selLayer: null, inspectorTab: 'design' });
+        const at = attWorld(all, att, ent);
+        st.set({ selAttachment: id, selPiece: ent.src.id, selPoint: null, selPleat: null, selLayer: null });
+        st.openDesign('edit');
         pick(ent);
         drag.current = { mode: 'attach', id, key: ent.key, grab: { x: w.x - at.x, y: w.y - at.y }, start: w, committed: false };
+        return;
+      }
+    }
+
+    // handles on the selected design: corner resizes, top handle turns
+    if (kind === 'handle' && ent) {
+      const all = st.project.edits?.attachments ?? [];
+      const att = all.find((a) => a.id === target!.dataset.att);
+      if (att) {
+        const at = attWorld(all, att, ent);
+        if (target!.dataset.handle === 'rotate') drag.current = { mode: 'rotate', id: att.id, key: ent.key, c: { x: at.x, y: at.y }, committed: false };
+        else {
+          const r = (-at.rot * Math.PI) / 180, dx = w.x - at.x, dy = w.y - at.y;
+          const lx = dx * Math.cos(r) - dy * Math.sin(r), ly = dx * Math.sin(r) + dy * Math.cos(r);
+          drag.current = { mode: 'resize', id: att.id, key: ent.key, c: { x: at.x, y: at.y }, rot: at.rot, d0: Math.max(1e-3, Math.hypot(lx, ly)), att0: att, committed: false };
+        }
         return;
       }
     }
@@ -370,6 +406,32 @@ export default function PatternEditor() {
       return;
     }
     const w = toWorld(e.clientX, e.clientY);
+    if (d.mode === 'resize' || d.mode === 'rotate') {
+      if (!d.committed) {
+        if (Math.hypot(w.x - d.c.x, w.y - d.c.y) * viewRef.current.k < 3) return;
+        st.commit();
+        d.committed = true;
+      }
+      const all = st.project.edits?.attachments ?? [];
+      const att = all.find((a) => a.id === d.id);
+      const cur = entriesRef.current.find((en) => en.key === d.key);
+      if (!att || !cur) return;
+      if (d.mode === 'rotate') {
+        let deg = (Math.atan2(w.y - d.c.y, w.x - d.c.x) * 180) / Math.PI + 90;
+        if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+        const at = worldToAtt(all, att, cur, d.c, deg);
+        let rot = ((at.rotation + 540) % 360) - 180;
+        if (Math.abs(rot) < 2) rot = 0;
+        st.updateAttachment(d.id, { rotation: Math.round(rot * 10) / 10 });
+      } else {
+        const r = (-d.rot * Math.PI) / 180, dx = w.x - d.c.x, dy = w.y - d.c.y;
+        const lx = dx * Math.cos(r) - dy * Math.sin(r), ly = dx * Math.sin(r) + dy * Math.cos(r);
+        const [lo, hi] = scaleLimits(d.att0);
+        const sc = Math.min(hi, Math.max(lo, Math.hypot(lx, ly) / d.d0));
+        st.updateAttachment(d.id, scaleAttachment(d.att0, sc));
+      }
+      return;
+    }
     if (d.mode === 'attach' || d.mode === 'ghost') {
       if (!d.committed) {
         if (Math.hypot(w.x - d.start.x, w.y - d.start.y) * viewRef.current.k < 3) return;
@@ -380,8 +442,15 @@ export default function PatternEditor() {
       const cur = entriesRef.current.find((en) => en.key === d.key);
       if (!cur) return;
       if (d.mode === 'attach') {
-        const att = st.project.edits?.attachments.find((a) => a.id === d.id);
+        const all = st.project.edits?.attachments ?? [];
+        const att = all.find((a) => a.id === d.id);
         if (!att) return;
+        if (all.some((q) => q.id === att.pieceId)) {
+          // a design sewn onto a pocket or tag moves within it
+          const at = worldToAtt(all, att, cur, centre, attWorld(all, att, cur).rot);
+          st.updateAttachment(d.id, { x: round2(at.x), y: round2(at.y) });
+          return;
+        }
         const over = entryAt(w) ?? cur;
         const local = toSource(over, centre);
         const patch: Partial<Attachment> = { pieceId: over.src.id, x: round2(local.x), y: round2(local.y) };
@@ -450,6 +519,17 @@ export default function PatternEditor() {
           </pattern>
         );
       })}
+      {Object.entries(edits?.insideFabric ?? {}).map(([pid, fb]) => {
+        const f = fabricById(fb.id);
+        return (
+          <pattern key={'in-' + pid} id={'fab-in-' + pid} width="6" height="6" patternUnits="userSpaceOnUse">
+            <image href={fabricDataUrl(f, (f.colors[fb.color] ?? f.colors[0]).hex)} width="6" height="6" preserveAspectRatio="none" />
+          </pattern>
+        );
+      })}
+      <pattern id="inside-hatch" width="1.2" height="1.2" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="1.2" stroke="var(--grid-major)" strokeWidth={px(1)} />
+      </pattern>
       <marker id="arr" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
         <path d="M0 1L10 5L0 9z" fill="var(--dim-line)" />
       </marker>
@@ -480,10 +560,25 @@ export default function PatternEditor() {
     try {
       const t = JSON.parse(raw) as Partial<Attachment>;
       if (!isAttachment(t)) return;
+      const stNow = useStore.getState();
+      const all = stNow.project.edits?.attachments ?? [];
+      // dropped on a pocket, patch, applique or tag: the design goes onto that panel
+      const hostId = ((e.target as Element).closest?.('[data-kind="attach"]') as HTMLElement | null)?.dataset.att;
+      const host = hostId ? all.find((q) => q.id === hostId) : undefined;
+      if (host && canHostDesigns(host.kind) && ['print', 'embroidery', 'applique', 'hardware'].includes(String(t.kind))) {
+        const pose = attWorld(all, host, en);
+        const cr = Math.cos((-pose.rot * Math.PI) / 180), sr = Math.sin((-pose.rot * Math.PI) / 180);
+        const dx = w.x - pose.x, dy = w.y - pose.y;
+        stNow.addAttachment({ ...t, rotation: 0, layers: t.layers ?? [], pieceId: host.id, x: round2(cr * dx - sr * dy), y: round2(sr * dx + cr * dy), instance: undefined } as Omit<Attachment, 'id'>);
+        stNow.set({ selPiece: en.src.id, selInstance: en.both ? en.inst : null, selPoint: null });
+        stNow.openDesign('edit');
+        return;
+      }
       const l = toSource(en, w);
       const inst = instanceFor(en);
-      useStore.getState().addAttachment({ ...t, rotation: t.rotation ?? 0, layers: t.layers ?? [], pieceId: en.src.id, x: round2(l.x), y: round2(l.y), ...(inst !== undefined ? { instance: inst } : {}) } as Omit<Attachment, 'id'>);
-      useStore.getState().set({ selPiece: en.src.id, selInstance: en.both ? en.inst : null, inspectorTab: 'design', selPoint: null });
+      stNow.addAttachment({ ...t, rotation: t.rotation ?? 0, layers: t.layers ?? [], pieceId: en.src.id, x: round2(l.x), y: round2(l.y), ...(inst !== undefined ? { instance: inst } : {}) } as Omit<Attachment, 'id'>);
+      stNow.set({ selPiece: en.src.id, selInstance: en.both ? en.inst : null, selPoint: null });
+      stNow.openDesign('edit');
     } catch { /* not ours */ }
   };
 
@@ -631,11 +726,74 @@ function PieceView(props: {
   // a label wider than its piece breaks after the comma: "Front," over "right leg"
   const labelLines = entry.label.length * 6.8 > geo.bb.w * k * 0.92 && entry.label.includes(', ') ? entry.label.split(', ', 2) : [entry.label];
 
+  const allAtts = useStore((st) => st.project.edits?.attachments);
+  const viewFace = useStore((st) => st.viewFace);
+  const everyAtt = allAtts ?? [];
+  const insideOwn = useStore((st) => !!st.project.edits?.insideFabric?.[p.id]);
+
+  /** one attachment (and the designs sewn onto it) in its own frame */
+  const renderAtt = (a: Attachment, top: boolean): React.ReactNode => {
+    const o = outlineD(a);
+    const label = a.kind === 'label';
+    const fabric = a.fabric ?? p.fabric;
+    const hex = label ? a.label?.color ?? '#f2f2f2' : (fabricById(fabric.id).colors[fabric.color] ?? fabricById(fabric.id).colors[0]).hex;
+    const on = a.id === selAttachment;
+    const fr = top ? frameOn(entry, a) : { x: a.x, y: a.y, rotation: a.rotation }; // on the left copy the position and turn mirror, the artwork does not flip
+    const hw = a.kind === 'hardware';
+    const letters = a.outline === 'shape' && a.shape === 'text';
+    const hitW = Math.max(a.w, px(16)), hitH = Math.max(a.h, px(16));
+    const face = a.face ?? 'outside';
+    const inside = face === 'inside';
+    const dim = face !== viewFace;
+    const stroke = on ? 'var(--accent)' : 'var(--outline)';
+    const dash = inside ? `${px(1.5)} ${px(3.5)}` : `${px(6)} ${px(4)}`;
+    const kids = everyAtt.filter((c) => c.pieceId === a.id);
+    const showLine = (isCloth(a.kind) || on || a.kind !== 'hardware') && !(hw && !on);
+    const handleY = -a.h / 2 - px(30);
+    // handles sit just outside the box; on a small design their touch circles shrink so the middle stays free to drag
+    const gap = px(12);
+    const rx = a.w / 2 + gap, ry = a.h / 2 + gap;
+    const hitR = (dx: number, dy: number) => Math.min(px(22), Math.max(px(12), Math.hypot(dx, dy) - px(10)));
+    return (
+      <g key={a.id} transform={`translate(${fr.x},${fr.y}) rotate(${fr.rotation})`} data-kind="attach" data-att={a.id} data-piece={p.id} data-inst={inst} style={{ cursor: 'move' }}>
+        <g opacity={dim ? 0.5 : 1}>
+          {hw || letters ? <rect x={-hitW / 2} y={-hitH / 2} width={hitW} height={hitH} fill="transparent" /> : <path d={o.d} transform={o.transform} fill="transparent" />}
+          {!hw && !letters && (a.w < px(18) || a.h < px(18)) && <rect x={-hitW / 2} y={-hitH / 2} width={hitW} height={hitH} fill="transparent" />}
+          <ArtworkGroup a={a} fill={hex} />
+          {showLine && (
+            hw || letters
+              ? <rect x={-a.w / 2} y={-a.h / 2} width={a.w} height={a.h} fill="none" stroke={stroke} strokeWidth={px(on ? 2.2 : 1.2)} strokeDasharray={dash} strokeLinecap="round" pointerEvents="none" opacity={on ? 1 : 0.55} />
+              : <path d={o.d} transform={o.transform} fill="none" stroke={stroke} strokeWidth={px(on ? 2.2 : 1.4)} strokeDasharray={dash} strokeLinecap="round" vectorEffect="non-scaling-stroke" pointerEvents="none" opacity={isCloth(a.kind) || on ? 1 : 0.55} />
+          )}
+        </g>
+        {kids.map((c) => renderAtt(c, false))}
+        {inside && (
+          <g transform={`translate(${-a.w / 2},${-a.h / 2 - px(10)})`} pointerEvents="none">
+            <rect width={px(46)} height={px(16)} rx={px(8)} fill="var(--bg-elevated)" stroke="var(--accent)" strokeWidth={px(1)} />
+            <text x={px(23)} y={px(8)} fontSize={px(11)} textAnchor="middle" dominantBaseline="central" fill="var(--accent)" fontWeight={600}>Inside</text>
+          </g>
+        )}
+        {on && <circle r={px(3)} fill="var(--accent)" pointerEvents="none" />}
+        {(on || k > 6) && <text y={a.h / 2 + px(14)} fontSize={px(11)} textAnchor="middle" className="edge-len" pointerEvents="none">{a.name}</text>}
+        {on && (
+          <g>
+            <line x1={0} y1={-a.h / 2} x2={0} y2={handleY} stroke="var(--accent)" strokeWidth={px(1.5)} pointerEvents="none" />
+            <circle cx={0} cy={handleY} r={px(7)} fill="var(--bg-elevated)" stroke="var(--accent)" strokeWidth={px(2)} pointerEvents="none" />
+            <circle cx={0} cy={handleY} r={hitR(0, handleY)} fill="transparent" data-kind="handle" data-handle="rotate" data-att={a.id} data-piece={p.id} data-inst={inst} style={{ cursor: 'grab' }}><title>Turn</title></circle>
+            <rect x={rx - px(6)} y={ry - px(6)} width={px(12)} height={px(12)} rx={px(2)} fill="var(--accent)" stroke="var(--bg-elevated)" strokeWidth={px(1.5)} pointerEvents="none" />
+            <circle cx={rx} cy={ry} r={hitR(rx, ry)} fill="transparent" data-kind="handle" data-handle="resize" data-att={a.id} data-piece={p.id} data-inst={inst} style={{ cursor: 'nwse-resize' }}><title>Resize</title></circle>
+          </g>
+        )}
+      </g>
+    );
+  };
+
   return (
     <g transform={`translate(${p.offset.x},${p.offset.y})`}>
       {/* body */}
-      <path d={geo.d} fill={`url(#fab-${p.id})`} data-kind="piece" data-piece={p.id} data-inst={inst} style={{ cursor: picking ? 'crosshair' : 'move' }} />
+      <path d={geo.d} fill={viewFace === 'inside' && insideOwn ? `url(#fab-in-${p.id})` : `url(#fab-${p.id})`} data-kind="piece" data-piece={p.id} data-inst={inst} style={{ cursor: picking ? 'crosshair' : 'move' }} />
       <path d={geo.d} fill="var(--piece-sheen)" pointerEvents="none" />
+      {viewFace === 'inside' && <path d={geo.d} fill="url(#inside-hatch)" opacity={0.7} pointerEvents="none" />}
       {showStitch && <path d={geo.cut} fill="none" stroke="var(--cut-line)" strokeWidth={px(1)} pointerEvents="none" />}
       {/* the editable outline is the sewing line (finished size); the outer line is the cut line with seam allowance */}
       <path d={geo.d} fill="none" stroke={selected ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(selected ? 2 : 1.4)} strokeDasharray={showStitch ? `${px(6)} ${px(3)}` : undefined} pointerEvents="none" />
@@ -759,30 +917,8 @@ function PieceView(props: {
         );
       })}
 
-      {/* attachments sit on their host in the host's own coordinates */}
-      {attachments.map((a) => {
-        const o = outlineD(a);
-        const f = fabricById((a.fabric ?? p.fabric).id);
-        const hex = (f.colors[(a.fabric ?? p.fabric).color] ?? f.colors[0]).hex;
-        const on = a.id === selAttachment;
-        const fr = frameOn(entry, a); // on the left copy the position and turn mirror, the artwork does not flip
-        const hw = a.kind === 'hardware';
-        const letters = a.outline === 'shape' && a.shape === 'text';
-        const hitW = Math.max(a.w, px(16)), hitH = Math.max(a.h, px(16));
-        return (
-          <g key={a.id} transform={`translate(${fr.x},${fr.y}) rotate(${fr.rotation})`} data-kind="attach" data-att={a.id} data-inst={inst} style={{ cursor: 'move' }}>
-            {hw || letters ? <rect x={-hitW / 2} y={-hitH / 2} width={hitW} height={hitH} fill="transparent" /> : <path d={o.d} transform={o.transform} fill="transparent" />}
-            <ArtworkGroup a={a} fill={hex} />
-            {(isCloth(a.kind) || on || a.kind !== 'hardware') && !(hw && !on) && (
-              hw || letters
-                ? <rect x={-a.w / 2} y={-a.h / 2} width={a.w} height={a.h} fill="none" stroke={on ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(on ? 2.2 : 1.2)} strokeDasharray={`${px(6)} ${px(4)}`} pointerEvents="none" opacity={on ? 1 : 0.55} />
-                : <path d={o.d} transform={o.transform} fill="none" stroke={on ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(on ? 2.2 : 1.4)} strokeDasharray={`${px(6)} ${px(4)}`} vectorEffect="non-scaling-stroke" pointerEvents="none" opacity={isCloth(a.kind) || on ? 1 : 0.55} />
-            )}
-            {on && <circle r={px(3)} fill="var(--accent)" pointerEvents="none" />}
-            {(on || k > 6) && <text y={a.h / 2 + px(14)} fontSize={px(11)} textAnchor="middle" className="edge-len" pointerEvents="none">{a.name}</text>}
-          </g>
-        );
-      })}
+      {/* attachments sit on their host in the host's own coordinates; designs on a pocket or tag sit inside it */}
+      {attachments.map((a) => renderAtt(a, true))}
 
       {/* drawn pieces that are patched on: dashed placement, draggable */}
       {ghosts.map((g) => {

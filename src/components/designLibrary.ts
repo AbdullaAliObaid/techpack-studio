@@ -1,9 +1,10 @@
 // The design library: every tile is one simple thing (one shape, one word, one trim) that is cut and sewn on,
 // stitched in thread, printed, or fixed on as hardware. Nothing comes pre-combined; layers can be added
 // afterwards in the layer editor.
-import type { AttachKind, Attachment, Finish, Hardware, HardwareType, Outline, ShapeId } from '../data/edits';
+import type { AttachKind, Attachment, Finish, Hardware, HardwareType, LabelType, Outline, ShapeId, ShapeLayer, Sheen, ZipperDesign } from '../data/edits';
+import type { Pt } from '../lib/geometry';
 import { SHAPES } from '../lib/shapes';
-import { layer, type AttachTemplate } from './editHelpers';
+import { inkOn, LABEL_TYPES, layer, scaleOutline, type AttachTemplate } from './editHelpers';
 
 export const ATTACHMENT_MIME = 'application/x-techit-attachment';
 
@@ -106,18 +107,64 @@ export const HARDWARE: HwDef[] = [
   { type: 'zipper', label: 'Zipper', size: 2.5, count: 1, spacing: 0, length: 15, sizeRange: [1, 5] },
 ];
 
-export interface HwOpts { finish: Finish; size: number; count: number; spacing: number; length: number; open: boolean }
-export const hwDefaults = (d: HwDef, finish: Finish = 'silver'): HwOpts => ({ finish, size: d.size, count: d.count, spacing: d.spacing, length: d.length ?? 15, open: false });
+export const DEFAULT_ZIP: ZipperDesign = { teeth: 'metal', tape: '#3a3a3f', puller: 'standard' };
+
+export interface HwOpts { finish: Finish; size: number; count: number; spacing: number; length: number; open: boolean; sheen: Sheen; zipper: ZipperDesign }
+export const hwDefaults = (d: HwDef, finish: Finish = 'silver'): HwOpts => ({ finish, size: d.size, count: d.count, spacing: d.spacing, length: d.length ?? 15, open: false, sheen: 'metallic', zipper: { ...DEFAULT_ZIP } });
 
 export function hardwareAttachment(type: HardwareType, o: HwOpts): AttachTemplate {
   const def = HARDWARE.find((h) => h.type === type)!;
   const hw: Hardware = type === 'zipper'
-    ? { type, finish: o.finish, size: o.size, open: o.open }
-    : { type, finish: o.finish, size: o.size, count: o.count, spacing: o.spacing };
+    ? { type, finish: o.finish, size: o.size, open: o.open, sheen: o.sheen, zipper: { ...o.zipper } }
+    : { type, finish: o.finish, size: o.size, count: o.count, spacing: o.spacing, sheen: o.sheen };
   const n = type === 'zipper' ? 1 : o.count;
   const w = type === 'zipper' ? o.size : n > 1 ? (n - 1) * o.spacing + o.size : o.size;
   const h = type === 'zipper' ? o.length : o.size;
-  return { kind: 'hardware', name: n > 1 ? `${def.label}s, ${n}` : def.label, rotation: 0, w, h, outline: type === 'zipper' || n > 1 ? 'rect' : 'circle', layers: [], hardware: hw };
+  return { kind: 'hardware', name: n > 1 ? `${def.label}s, ${n}` : def.label, rotation: 0, w, h, outline: type === 'zipper' || n > 1 ? 'rect' : 'circle', layers: [], sheen: o.sheen, hardware: hw };
+}
+
+/** What the "Draw your own" sheet edits: a button, snap, stud or zipper puller drawn by the user. */
+export interface DrawDraft {
+  type: HardwareType | 'puller';
+  /** closed outline, longest side 1 (scaled by size) */
+  unit: Pt[];
+  /** longest side in cm */
+  size: number;
+  holes: 0 | 2 | 4 | 'shank';
+  finish: Finish;
+  /** plastic colour, when set it replaces the metal finish */
+  color?: string;
+  sheen: Sheen;
+  /** artwork, cm centred on the trim */
+  layers: ShapeLayer[];
+}
+
+/** A drawn button, snap or stud ready to place. Its outline lives on Hardware.outline and on the attachment. */
+export function drawnHardware(d: DrawDraft & { type: HardwareType }): AttachTemplate {
+  const def = HARDWARE.find((h) => h.type === d.type)!;
+  const outline = scaleOutline(d.unit, d.size);
+  const hw: Hardware = { type: d.type, finish: d.finish, size: d.size, count: 1, spacing: d.size * 2.2, outline, holes: d.type === 'button' ? d.holes : 0, layers: d.layers, sheen: d.sheen, ...(d.color ? { color: d.color } : {}) };
+  return { kind: 'hardware', name: `Drawn ${def.label.toLowerCase()}`, rotation: 0, w: d.size, h: d.size, outline: 'custom', points: outline, layers: [], sheen: d.sheen, hardware: hw };
+}
+
+/** Defaults for a new drawing. */
+export const newDraft = (type: HardwareType | 'puller'): DrawDraft => ({
+  type, unit: [], size: type === 'puller' ? 2 : type === 'button' ? 1.8 : type === 'snap' ? 1.3 : 1.2, holes: type === 'button' ? 2 : 0, finish: 'silver', sheen: 'metallic', layers: [],
+});
+
+/* ---------- tags ---------- */
+
+export interface TagOpts { type: LabelType; sewn: 'ends' | 'all-round' | 'folded-loop'; color: string; sheen: Sheen; w: number; h: number; text: string }
+export const TAG_DEFAULTS: TagOpts = { type: 'woven', sewn: 'ends', color: LABEL_TYPES[0].color, sheen: LABEL_TYPES[0].sheen, w: 5, h: 2.5, text: 'BRAND' };
+
+export function tagAttachment(o: TagOpts): AttachTemplate {
+  const t = LABEL_TYPES.find((x) => x.id === o.type)!;
+  const ink = inkOn(o.color);
+  return {
+    kind: 'label', name: `${t.name} tag`, rotation: 0, w: o.w, h: o.h, outline: o.type === 'leather' || o.type === 'rubber' ? 'rounded' : 'rect',
+    layers: [layer('text', { w: Math.max(1, o.w * 0.78), h: Math.max(0.6, o.h * 0.34), text: o.text, color: ink })],
+    label: { type: o.type, sewn: o.sewn, color: o.color }, sheen: o.sheen, face: 'inside', thread: ink === '#111111' ? '#6b6b70' : '#e6e6ea',
+  };
 }
 
 export const isAttachment = (a: Partial<Attachment>): a is AttachTemplate => typeof a.w === 'number' && typeof a.h === 'number' && !!a.kind;

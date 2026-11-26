@@ -780,3 +780,107 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .app.stacked .rail-btn span { display: block; }
 @container pane3d (max-width: 520px) { .pane.view3d .pane-meta { display: none; } .pane.view3d .pane-title .seg button { padding: 0 8px; } }
 .dsc-body .seg.full button { padding: 0 2px; font-size: 12px; }
+
+/* =====================================================================
+   Design: the Add design bar and the panel docked to the pattern
+   ===================================================================== */
+.design-bar {
+  position: relative; flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 8px 12px;
+  background: var(--bg-grouped); border-bottom: 0.5px solid var(--separator);
+}
+.btn.add-design {
+  min-height: 48px; padding: 0 22px 0 18px; gap: 10px; font-size: 16px; font-weight: 700; border-radius: 14px; letter-spacing: -0.01em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 6px 16px color-mix(in srgb, var(--accent-fill) 32%, transparent);
+}
+.btn.add-design.is-disabled {
+  background: var(--fill); color: var(--label-2); box-shadow: none; cursor: not-allowed; filter: none;
+}
+.btn.add-design.is-disabled:hover { background: var(--fill); filter: none; }
+.design-hint { display: flex; flex-direction: column; min-width: 0; flex: 1 1 140px; line-height: 1.25; }
+.design-hint b { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.design-hint small { font-size: 12px; color: var(--text-2); }
+.design-hint.none b { color: var(--text-2); }
+.design-hint.flash { animation: hintflash 1.4s ease; }
+@keyframes hintflash { 0%, 60% { background: color-mix(in srgb, var(--orange) 26%, transparent); } 100% { background: transparent; } }
+.design-hint.flash { border-radius: 8px; padding: 2px 6px; margin: -2px -6px; }
+.design-face { display: flex; align-items: center; gap: 8px; flex: none; }
+.design-face .lbl { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.design-face .seg button { font-size: 12px; }
+.coach {
+  position: absolute; z-index: 40; top: calc(100% + 12px); left: 20px; width: min(320px, calc(100% - 40px)); padding: 12px 14px; border-radius: 12px;
+  background: var(--bg-elevated); box-shadow: var(--shadow), 0 0 0 1.5px var(--accent); display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  animation: fade var(--ease);
+}
+.coach::before { content: ''; position: absolute; top: -7px; left: 44px; width: 12px; height: 12px; background: var(--bg-elevated); transform: rotate(45deg); box-shadow: -1.5px -1.5px 0 var(--accent); }
+.coach p { margin: 0; font-size: 13px; line-height: 1.4; }
+
+.pattern-main { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.pattern-main.bottom { flex-direction: column; }
+.design-dock { position: relative; flex: none; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--bg-grouped); }
+.design-dock.side { border-right: 0.5px solid var(--separator); }
+.design-dock.bottom { border-top: 0.5px solid var(--separator); }
+.design-dock.collapsed.side { width: 52px; align-items: stretch; }
+.design-dock.collapsed.bottom { height: 48px; }
+.dock-expand {
+  flex: 1; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 0; background: var(--bg-grouped); color: var(--accent-text); font-weight: 600; font-size: 12px;
+}
+.design-dock.collapsed.side .dock-expand { flex-direction: column; padding: 12px 0; justify-content: flex-start; }
+.design-dock.collapsed.side .dock-expand span { writing-mode: vertical-rl; transform: rotate(180deg); }
+.dock-expand:hover { background: var(--fill-2); }
+.dock-resize { position: absolute; z-index: 6; touch-action: none; }
+.design-dock.side .dock-resize { top: 0; bottom: 0; right: -6px; width: 12px; cursor: col-resize; }
+.design-dock.bottom .dock-resize { left: 0; right: 0; top: -6px; height: 12px; cursor: row-resize; }
+.dock-resize::after { content: ''; position: absolute; border-radius: 3px; background: var(--label-3); opacity: 0; transition: opacity var(--ease); }
+.design-dock.side .dock-resize::after { top: calc(50% - 20px); height: 40px; left: 4px; width: 4px; }
+.design-dock.bottom .dock-resize::after { left: calc(50% - 20px); width: 40px; top: 4px; height: 4px; }
+.dock-resize:hover::after, .dock-resize:focus-visible::after { opacity: 1; }
+.dock-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; background: var(--bg); border-bottom: 0.5px solid var(--separator); }
+.dock-title { display: flex; align-items: center; gap: 6px; color: var(--accent-text); }
+.dock-title h2 { margin: 0; font-size: 15px; font-weight: 700; color: var(--label); }
+.dock-head .seg button { font-size: 12px; }
+.dock-body { flex: 1; min-height: 0; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; overscroll-behavior: contain; }
+/* portrait iPad: the sheet floats over the bottom of the pattern */
+.app.stacked .design-dock.bottom:not(.collapsed) { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; max-height: 72%; box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18); border-top-left-radius: 14px; border-top-right-radius: 14px; overflow: hidden; }
+.app.stacked .design-dock.bottom.collapsed { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.14); }
+.app.stacked .design-dock.bottom .dock-resize { top: 0; z-index: 7; }
+
+.target-card { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: var(--radius-panel); background: var(--bg-elevated); box-shadow: 0 0 0 1.5px var(--accent); }
+.target-card.none { box-shadow: 0 0 0 0.5px var(--separator); background: var(--fill-2); }
+.target-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.att-text { display: flex; flex-direction: column; min-width: 0; }
+.att-text small { color: var(--text-2); font-size: 11px; }
+.btn.wide { width: 100%; }
+.btn.add-onto { width: 100%; justify-content: flex-start; min-height: 44px; background: var(--accent-soft); color: var(--accent-text); font-weight: 600; white-space: normal; text-align: left; }
+.btn.draw-btn { width: 100%; justify-content: flex-start; min-height: 44px; background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.btn.inline { min-height: 22px; margin-left: 6px; padding: 0 8px; }
+.type-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.type-grid button { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 52px; padding: 6px 2px; border: 0; border-radius: 8px; background: var(--fill-2); font-size: 11px; font-weight: 500; color: var(--label); }
+.type-grid button.on { box-shadow: 0 0 0 2px var(--accent); background: var(--accent-soft); }
+.type-sw { width: 28px; height: 14px; border-radius: 3px; box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.3); }
+.shape-tile.mini { min-height: 40px; width: 40px; padding: 6px; }
+.shape-tile.mini svg { width: 24px; height: 24px; }
+
+/* draw your own sheet */
+.draw-sheet { width: min(460px, calc(100vw - 32px)); }
+.draw-canvas { width: 100%; aspect-ratio: 1; max-height: 38vh; margin: 0 auto; display: block; border-radius: 12px; background: var(--bg-grouped); box-shadow: inset 0 0 0 0.5px var(--separator); touch-action: none; user-select: none; -webkit-user-select: none; cursor: crosshair; }
+.draw-sheet .row.wrap { align-items: center; margin-top: 0; }
+.draw-sheet .dsc { box-shadow: 0 0 0 0.5px var(--separator); }
+.btn.add-design.is-disabled:focus-visible, .btn.add-design:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.dock-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (pointer: coarse) { .btn.add-design { min-height: 52px; } }
+@media (max-width: 700px) { .design-face .lbl { display: none; } }
+@media (prefers-reduced-transparency: reduce) { .coach { background: var(--bg-elevated); } }
+
+.dock-body .editing-head { flex-wrap: wrap; row-gap: 4px; }
+.dock-body .editing-title { flex: 1 1 100%; order: -1; }
+.dock-body .editing-head .att-ico { display: none; }
+.dock-body .editing-head .btn.small { margin-left: auto; }
+
+.pane.pattern { container-type: inline-size; container-name: panepattern; }
+@container panepattern (max-width: 620px) {
+  .design-bar { gap: 6px 10px; padding: 6px 10px; }
+  .design-face .lbl, .design-hint small { display: none; }
+  .design-hint { flex: 1 1 56px; }
+  .btn.add-design { padding: 0 16px 0 12px; font-size: 15px; }
+  .design-face .seg button { padding: 0 8px; }
+}

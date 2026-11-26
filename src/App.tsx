@@ -7,6 +7,11 @@ import PieceFlow from './components/PieceFlow';
 import { openPieceFlow } from './components/flow';
 import { EMPTY_SEAM_DRAFT, useStore } from './store';
 import { useApplyTheme } from './components/theme';
+import { useDockMode } from './components/dock';
+import { copiesOf } from './components/sides';
+import { nudgePatch } from './components/editHelpers';
+
+let lastNudge = 0;
 
 export default function App() {
   useApplyTheme();
@@ -14,6 +19,11 @@ export default function App() {
   const [stacked, setStacked] = useState(() => window.matchMedia(STACK).matches);
   const [split, setSplit] = useState(() => (window.matchMedia(STACK).matches ? 52 : window.innerWidth < 1300 ? 56 : 52));
   const dragging = useRef(false);
+  const dock = useDockMode();
+  const dockOpen = useStore((s) => s.designOpen);
+  const dockCollapsed = useStore((s) => s.designCollapsed);
+  const dockW = useStore((s) => s.designSize.w);
+  const extra = !stacked && dock === 'side' && dockOpen ? (dockCollapsed ? 44 : dockW) : 0;
   // portrait iPad: Pattern on top, 3D view below, so both get the full width
   useEffect(() => {
     const m = window.matchMedia(STACK);
@@ -48,7 +58,21 @@ export default function App() {
         else if (k === 'f') window.dispatchEvent(new Event('tps-fit'));
         else if (k === 'enter' && st.tool === 'pen' && st.penDraft.length >= 3) openPieceFlow(st.penDraft);
         else if (k === 'backspace' && st.tool === 'pen' && st.penDraft.length) st.set({ penDraft: st.penDraft.slice(0, -1) });
-        else if (k === 'delete' || k === 'backspace') {
+        else if (k.startsWith('arrow') && st.selAttachment && st.tool === 'select') {
+          // nudge the selected design: 1 mm, or 1 cm with Shift
+          const a = st.project.edits?.attachments.find((q) => q.id === st.selAttachment);
+          if (!a) return;
+          e.preventDefault();
+          const atts = st.project.edits?.attachments ?? [];
+          const host = st.project.pieces.find((p) => p.id === a.pieceId);
+          const step = e.shiftKey ? 1 : 0.1;
+          const dx = k === 'arrowright' ? step : k === 'arrowleft' ? -step : 0, dy = k === 'arrowdown' ? step : k === 'arrowup' ? -step : 0;
+          const mirrored = !!host && copiesOf(st.project.garment, host) === 2 && st.showBothSides && (a.instance ?? st.selInstance ?? 0) === 1;
+          const now = performance.now();
+          if (now - lastNudge > 700) st.commit(); // one undo step per burst of key presses
+          lastNudge = now;
+          st.updateAttachment(a.id, nudgePatch(atts, a, dx, dy, mirrored));
+        } else if (k === 'delete' || k === 'backspace') {
           if (st.selAttachment) st.removeAttachment(st.selAttachment);
           else if (st.selPleat) st.removePleat(st.selPleat);
           else if (st.selPiece && st.selPoint) st.deletePoint(st.selPiece, st.selPoint);
@@ -76,7 +100,7 @@ export default function App() {
           }}
           onPointerUp={() => (dragging.current = false)}
         >
-          <div className="pane-slot" style={stacked ? { height: `${split}%` } : { width: `${split}%` }}>
+          <div className="pane-slot" style={stacked ? { height: `${split}%` } : { width: `min(calc(${split}% + ${extra}px), calc(100% - 340px))` }}>
             <PatternPane />
           </div>
           <div
