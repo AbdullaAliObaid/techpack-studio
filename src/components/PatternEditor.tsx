@@ -875,6 +875,11 @@ function PieceView(props: {
   const nm = layout.names.get(entry.key);
   const ms = layout.measures.get(entry.key) ?? [];
   const els = layout.edges.get(entry.key) ?? [];
+  // piece names sit on the fabric, so their colour follows the fabric (not the theme): dark text with a fabric halo on
+  // light cloth, light text on dark cloth
+  const fabHex = (fabricById(p.fabric.id).colors[p.fabric.color] ?? fabricById(p.fabric.id).colors[0]).hex;
+  const lum = (() => { const n = parseInt(fabHex.slice(1, 7), 16); const c = [n >> 16, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; })();
+  const onFabric = { fill: lum > 0.35 ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.95)', stroke: fabHex };
   const secondary = selected && k >= 4 ? (entry.both ? `Cut 1 of ${p.cut >= 2 ? p.cut : 2}` : `Cut ${p.cut} · ${fabricById(p.fabric.id).name}`) : null;
   const tr = `translate(${p.offset.x},${p.offset.y})`;
 
@@ -959,12 +964,12 @@ function PieceView(props: {
     {labelsEl && createPortal(
       <g transform={tr}>
         {nm?.show && (
-          <text x={nm.x} y={nm.y - (nm.lines.length - 1) * px(6.5) - (secondary ? px(6) : 0)} className="piece-label" strokeWidth={px(2.2)} fontSize={px(11)} textAnchor="middle" dominantBaseline="central" pointerEvents="none">
+          <text x={nm.x} y={nm.y - (nm.lines.length - 1) * px(6.5) - (secondary ? px(6) : 0)} className="piece-label" style={onFabric} strokeWidth={px(2.2)} fontSize={px(11)} textAnchor="middle" dominantBaseline="central" pointerEvents="none">
             {nm.lines.map((l, i) => <tspan key={i} x={nm.x} dy={i ? px(13) : 0}>{l}</tspan>)}
           </text>
         )}
         {nm?.show && secondary && (
-          <text x={nm.x} y={nm.y + (nm.lines.length - 1) * px(6.5) + px(14) - px(6)} className="piece-sub" strokeWidth={px(2.2)} fontSize={px(11)} textAnchor="middle" dominantBaseline="central" pointerEvents="none">{secondary}</text>
+          <text x={nm.x} y={nm.y + (nm.lines.length - 1) * px(6.5) + px(14) - px(6)} className="piece-sub" style={{ ...onFabric, fillOpacity: 0.75 }} strokeWidth={px(2.2)} fontSize={px(11)} textAnchor="middle" dominantBaseline="central" pointerEvents="none">{secondary}</text>
         )}
         {ms.map((m) => {
           const mx = (m.a.x + m.b.x) / 2, my = (m.a.y + m.b.y) / 2, tick = px(4);
