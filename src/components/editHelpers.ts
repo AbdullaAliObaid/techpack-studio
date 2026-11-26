@@ -74,12 +74,15 @@ export const KINDS: { id: AttachKind; label: string }[] = [
   { id: 'strap', label: 'Strap' },
   { id: 'print', label: 'Print' },
 ];
-export const KIND_LABEL: Record<AttachKind, string> = { pocket: 'Pocket', patch: 'Patch', strap: 'Strap', print: 'Print' };
+export const KIND_LABEL: Record<AttachKind, string> = { pocket: 'Pocket', patch: 'Patch', applique: 'Applique', strap: 'Strap', embroidery: 'Embroidery', print: 'Print', hardware: 'Hardware' };
 export const KIND_BLURB: Record<AttachKind, string> = {
   pocket: 'Cloth sewn on three sides, top open.',
   patch: 'Cloth sewn on all round.',
   strap: 'A strip sewn at both ends, like a belt loop.',
-  print: 'No extra cloth. Printed or embroidered onto the piece.',
+  print: 'No extra cloth. Ink printed onto the piece.',
+  applique: 'A shape or letter cut from fabric and stitched down all round.',
+  embroidery: 'Thread stitched into the piece.',
+  hardware: 'Metal trim fixed through the fabric.',
 };
 export const OUTLINE_LIST: { id: Exclude<Outline, 'custom'>; label: string }[] = [
   { id: 'rect', label: 'Square' },
@@ -88,7 +91,7 @@ export const OUTLINE_LIST: { id: Exclude<Outline, 'custom'>; label: string }[] =
   { id: 'circle', label: 'Circle' },
   { id: 'shield', label: 'Shield' },
 ];
-export const OUTLINE_LABEL: Record<Outline, string> = { rect: 'Square', rounded: 'Rounded', pointed: 'Pointed', circle: 'Circle', shield: 'Shield', custom: 'Custom' };
+export const OUTLINE_LABEL: Record<Outline, string> = { rect: 'Square', rounded: 'Rounded', pointed: 'Pointed', circle: 'Circle', shield: 'Shield', shape: 'Shape', custom: 'Custom' };
 
 /** Colours offered for artwork. They are user content, not interface colours. */
 export const PALETTE = ['#ffffff', '#f2c94c', '#f2994a', '#eb5757', '#bb6bd9', '#2f80ed', '#56ccf2', '#27ae60', '#828282', '#111111'];
@@ -119,7 +122,7 @@ export function templatesFor(kind: AttachKind): TemplateDef[] {
       { key: 'text', label: 'Name text', outline: 'rect', make: () => base('Name text', 'rect', 16, 4, () => [layer('text', { w: 14, h: 3, text: 'NAME', color: PALETTE[0] })]) },
     ];
   }
-  const size: Record<AttachKind, [number, number]> = { pocket: [14, 16], patch: [9, 9], strap: [2.5, 8], print: [10, 10] };
+  const size: Record<AttachKind, [number, number]> = { pocket: [14, 16], patch: [9, 9], applique: [8, 8], strap: [2.5, 8], embroidery: [8, 8], print: [10, 10], hardware: [1, 1] };
   const [w, h] = size[kind];
   const outlines = kind === 'strap' ? OUTLINE_LIST.slice(0, 3) : OUTLINE_LIST;
   return outlines.map((o) => ({

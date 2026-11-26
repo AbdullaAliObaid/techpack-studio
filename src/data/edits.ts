@@ -25,14 +25,34 @@ export interface ShapeLayer {
 }
 
 /**
- * pocket  = separate cloth piece sewn on three sides (top open)
- * patch   = separate cloth piece sewn all round
- * strap   = separate strip sewn at its two ends (belt strap, tab, loop)
- * print   = no extra cloth, printed / embroidered onto the host piece
+ * How each attachment is made, like on a real garment:
+ * pocket     = separate cloth piece sewn on three sides (top open)
+ * patch      = separate cloth piece sewn all round
+ * applique   = a shape or letter cut from fabric (outline = its shape) and sewn down all round with a satin or edge stitch
+ * strap      = separate strip sewn at its two ends (belt strap, tab, loop)
+ * embroidery = thread stitched into the host piece (raised satin stitch look), no extra cloth
+ * print      = ink on the host piece, no extra cloth
+ * hardware   = metal or plastic trim fixed through the fabric (see Hardware)
  */
-export type AttachKind = 'pocket' | 'patch' | 'strap' | 'print';
+export type AttachKind = 'pocket' | 'patch' | 'applique' | 'strap' | 'embroidery' | 'print' | 'hardware';
 
-export type Outline = 'rect' | 'rounded' | 'pointed' | 'circle' | 'shield' | 'custom';
+/** Outline of a cloth attachment. 'shape' uses Attachment.shape (any ShapeId, including 'text' letters). */
+export type Outline = 'rect' | 'rounded' | 'pointed' | 'circle' | 'shield' | 'shape' | 'custom';
+
+export type HardwareType = 'rivet' | 'eyelet' | 'stud' | 'button' | 'snap' | 'zipper';
+export type Finish = 'silver' | 'brass' | 'copper' | 'gunmetal' | 'black' | 'white';
+
+export interface Hardware {
+  type: HardwareType;
+  finish: Finish;
+  /** diameter for round trims (cm); zipper: tape width. Attachment.h is the zipper length, rotation its direction. */
+  size: number;
+  /** several in a row along the attachment's w (cm) direction, centre to centre spacing */
+  count?: number;
+  spacing?: number;
+  /** zipper: open or closed (closed = the two sides are joined) */
+  open?: boolean;
+}
 
 export interface Attachment {
   id: string;
@@ -53,6 +73,13 @@ export interface Attachment {
   layers: ShapeLayer[];
   /** fabric for cloth attachments; defaults to the host piece fabric */
   fabric?: { id: string; color: number };
+  /** outline === 'shape': the shape to cut (applique) and its text for 'text' */
+  shape?: ShapeId;
+  text?: string;
+  /** thread colour for embroidery and for the stitching around cloth attachments (CSS colour) */
+  thread?: string;
+  /** kind === 'hardware' */
+  hardware?: Hardware;
   /**
    * which placed copy of a piece cut more than once gets the attachment (see instanceCount in
    * src/sim/seams.ts: 0 = right side, 1 = left side; crown panels 0..5). Omitted: every copy.

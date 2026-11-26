@@ -45,7 +45,7 @@ export const SHAPES: Record<ShapeId, { name: string; d: string }> = {
   text: { name: 'Text', d: '' },
 };
 
-export const OUTLINES: Record<Exclude<Outline, 'custom'>, string> = {
+export const OUTLINES: Record<Exclude<Outline, 'custom' | 'shape'>, string> = {
   rect: SHAPES.rect.d,
   rounded: SHAPES.rounded.d,
   pointed: poly([[-0.5, -0.5], [0.5, -0.5], [0.5, 0.25], [0, 0.5], [-0.5, 0.25]]), // classic jeans back pocket
