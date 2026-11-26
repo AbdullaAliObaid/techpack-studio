@@ -60,7 +60,7 @@ function postAttachDetails() {
   }
   try {
     // hardware trims: anchors on the host cloth per copy (instance), drawn by src/three/Hardware.tsx
-    const hw = buildHardware(G, attachments, outwardSignsHosted(G.panels, G.sim.pos));
+    const hw = buildHardware(G, attachments, G.panelSign ? Array.from(G.panelSign) : outwardSignsHosted(G.panels, G.sim.pos));
     (self as unknown as Worker).postMessage(hw, hardwareTransfers(hw));
   } catch (err) {
     console.warn('hardware failed', err);
@@ -198,7 +198,26 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
   //                       instance (placed copy of a piece cut more than once: 0 right / 1 left, crown 0..5), mirror,
   //                       and for an attachment panel hostInstance (the host copy it sits on). A text applique has
   //                       one panel per letter, all with the attachment id. Labels: instanceLabel in src/sim/seams.ts
-  //   attachmentPanels    cloth attachment panels: attachment id, vertex range, kind, host piece id, host instance
+  //   attachmentPanels    cloth attachment panels: attachment id, vertex range, kind (pocket, patch, applique, strap,
+  //                       label), host piece id, host instance, face (the host face it sits on: 'outside', or 'inside'
+  //                       = between the host and the body)
+  // ---- faces (Face in src/data/edits.ts; names and rules in src/sim/seams.ts: faceOf, visibleFace, faceLabel) ----
+  //   panelSign[k]        +1 / -1: which side of panel k's mesh triangle order (P.mesh.tris, NOT the swapped render
+  //                       order of a mirrored copy) is the 'outside' face. Fixed by the pattern, not by the drape:
+  //                       - body pieces, sleeves, cuffs, plackets, bands: the right side of the fabric, away from the
+  //                         body (mirrored copies included); the placket's other side is its facing
+  //                       - brim: the top of the brim
+  //                       - collar: the TOP COLLAR. On the stand it faces the neck; it rolls over the fold line and is
+  //                         the visible top of the fall when the collar is down. The other side ('inside') is the
+  //                         under collar, which shows when the collar is up (visibleFace)
+  //                       - attachment panels: the attachment's own show face, the side away from its host cloth. For
+  //                         face 'inside' that side faces the body
+  //                       In render order: front = panelSign[k] * (panels[k].mirror ? -1 : 1)
+  //   panels[k].role      pattern role of the piece ('custom' for an attachment panel)
+  //   panels[k].face      attachment panels only: the host face it is on ('outside' | 'inside')
+  //   insideFabrics[k]    fabric of panel k's 'inside' face (Edits.insideFabric by piece id; under collar, placket
+  //                       facing, lining look), or null when it is the same as the outside (panel fabric = fabrics[k])
+  //   collar              'down' | 'up': how the collar was arranged in this build
   const pieceIds: string[] = [];
   const pieceIndex = (id: string) => { let k = pieceIds.indexOf(id); if (k < 0) { k = pieceIds.length; pieceIds.push(id); } return k; };
   const vertexPiece = new Uint16Array(G.sim.n), vertexPatternUv = new Float32Array(G.sim.n * 2);
@@ -206,17 +225,18 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
     const k = pieceIndex(p.attach?.id ?? p.piece.id);
     p.mesh.uv.forEach((q, i) => { vertexPiece[p.offset + i] = k; vertexPatternUv[(p.offset + i) * 2] = q.x; vertexPatternUv[(p.offset + i) * 2 + 1] = q.y; });
     // an attachment panel also says which copy of its host it sits on (0 right, 1 left)
-    return { start: p.offset, count: p.mesh.uv.length, pieceIndex: k, instance: p.instance, mirror: p.mirror, ...(p.attach ? { hostInstance: G!.panels[p.attach.host].instance } : {}) };
+    return { start: p.offset, count: p.mesh.uv.length, pieceIndex: k, instance: p.instance, mirror: p.mirror, role: p.piece.role, ...(p.attach ? { hostInstance: G!.panels[p.attach.host].instance, face: p.attach.face } : {}) };
   });
   const attachmentPanels = G.panels.flatMap((p) => p.attach ? [{
     attachmentId: p.attach.id, start: p.offset, count: p.mesh.uv.length, kind: p.attach.kind,
-    hostPieceId: G!.panels[p.attach.host].piece.id, hostInstance: G!.panels[p.attach.host].instance,
+    hostPieceId: G!.panels[p.attach.host].piece.id, hostInstance: G!.panels[p.attach.host].instance, face: p.attach.face,
   }] : []);
+  const insideFabrics = G.panels.map((p) => (p.attach ? null : m.edits?.insideFabric?.[p.piece.id] ?? null));
   (self as unknown as Worker).postMessage({
     type: 'built', n: G.sim.n, index: new Uint32Array(index), groups, uv, pos,
     fabrics: G.panels.map((p) => p.piece.fabric),
     pieceIds, vertexPiece, vertexPatternUv, panels, attachmentPanels,
-    panelSign: outwardSignsHosted(G.panels, G.sim.pos),
+    panelSign: Array.from(G.panelSign), insideFabrics, collar: G.collar,
   }, [vertexPiece.buffer, vertexPatternUv.buffer]);
   try {
     const det = buildDetails(G, styleById(migrateGarment(m.garment)).details);

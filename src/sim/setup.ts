@@ -8,8 +8,9 @@ import { migrateGarment, styleById, type Style } from '../data/catalog';
 import { frontOffset, RIB } from '../data/draft';
 import { bezAt, bbox, pointInPoly, samplePoly, sliceSpan, toBeziers, type PPoint, type Pt } from '../lib/geometry';
 import { attachmentPolygons } from '../lib/shapes';
-import { EMPTY_EDITS, type EdgeRef, type Edits, type Hardware, type Pleat } from '../data/edits';
-import { builtinSeams } from './seams';
+import { EMPTY_EDITS, type EdgeRef, type Edits, type Face, type Hardware, type Pleat } from '../data/edits';
+import { labelMaterial, labelSewing, labelSize, type LabelMaterial } from '../data/labels';
+import { builtinSeams, collarRoll, collarState, faceOf } from './seams';
 import { pleatIntake } from '../lib/specs';
 import { bodyFrame, ellipseCirc, ellipseFromCirc, hullAt, type Body, type BodyFrame } from '../three/body';
 import { BodyCollider } from './collider';
@@ -28,12 +29,12 @@ export interface PanelInst {
    * user piece id), how it is sewn on, and the index of the host panel it is pinned to.
    * mesh.uv of an attachment is in the attachment's own coords (cm, centred, before rotation).
    */
-  attach?: { id: string; kind: ClothKind; host: number };
+  attach?: { id: string; kind: ClothKind; host: number; face: Face };
 }
 
 /** attachments that are cloth of their own (embroidery, prints and hardware add no cloth) */
-export type ClothKind = 'pocket' | 'patch' | 'applique' | 'strap';
-const CLOTH_KINDS = new Set<string>(['pocket', 'patch', 'applique', 'strap']);
+export type ClothKind = 'pocket' | 'patch' | 'applique' | 'strap' | 'label';
+const CLOTH_KINDS = new Set<string>(['pocket', 'patch', 'applique', 'strap', 'label']);
 /** gap kept between an attachment and the outer face of its host cloth (cm): about two fabric thicknesses */
 export const LAYER_GAP = 0.2;
 
@@ -41,8 +42,41 @@ export const LAYER_GAP = 0.2;
 const TRIM_GRAMS: Record<Exclude<Hardware['type'], 'zipper'>, [number, number]> = {
   rivet: [1.0, 0.9], eyelet: [0.4, 1.0], stud: [1.2, 1.2], button: [1.5, 1.8], snap: [1.6, 1.5],
 };
-/** a closed metal or coil zip, tape included (grams per cm of length) */
+/** a closed zip, tape included (grams per cm of length) */
 const ZIP_GRAMS_PER_CM = 0.3;
+/**
+ * zip by teeth (ZipperDesign.teeth): grams per cm of length, and the compliance of the links that stiffen the cloth
+ * along it (0 = rigid, in units of 1 / substep^2). Metal teeth are the heaviest and stiffest, a nylon coil the
+ * lightest and bends most. A zip without a design keeps the plain values (0.3 g/cm, rigid).
+ */
+export const ZIP_TEETH: Record<'metal' | 'molded' | 'coil', { grams: number; compliance: number }> = {
+  metal: { grams: 0.36, compliance: 0 },
+  molded: { grams: 0.24, compliance: 2e-3 },
+  coil: { grams: 0.14, compliance: 1.5e-2 },
+};
+/** plastic trims (finish black or white) weigh about half what metal ones do */
+const PLASTIC = new Set(['black', 'white']);
+
+/** Grams of one trim and the radius (cm) of cloth it is fixed through: by type, size, a drawn outline and the finish. */
+export function trimWeight(h: Hardware): { grams: number; radius: number } {
+  if (h.type === 'zipper') return { grams: 0, radius: 0 };
+  const [g0, s0] = TRIM_GRAMS[h.type] ?? [1, 1];
+  const mat = (h.type === 'button' || h.type === 'snap' || h.type === 'stud') && PLASTIC.has(h.finish) ? 0.5 : 1;
+  if (h.outline && h.outline.length >= 3) {
+    // a drawn button: mass by its area against the round one at the reference size, spread over its footprint
+    let A = 0;
+    for (let i = 0; i < h.outline.length; i++) { const p = h.outline[i], q = h.outline[(i + 1) % h.outline.length]; A += p.x * q.y - q.x * p.y; }
+    A = Math.abs(A) / 2;
+    const ref = Math.PI * (s0 / 2) ** 2;
+    const reach = Math.max(...h.outline.map((q) => Math.hypot(q.x, q.y)));
+    return { grams: g0 * mat * Math.min(4, Math.max(0.25, A / ref)) * (h.holes === 'shank' ? 1.15 : 1), radius: Math.max(0.1, reach) };
+  }
+  return { grams: g0 * mat * Math.min(4, Math.max(0.25, ((h.size || s0) / s0) ** 2)) * (h.holes === 'shank' ? 1.15 : 1), radius: (h.size || s0) / 2 };
+}
+/** a button on a collar point and one on another piece closer than this at the start are buttoned together (cm) */
+const FASTEN_REACH = 6;
+/** snap halves on two pieces closer than this at the start are snapped together (cm) */
+const SNAP_REACH = 2;
 
 /** Centres of the trims of a hardware attachment, in its own coords (cm): count in a row along w, spacing apart. */
 export function hardwarePoints(h: Hardware): Pt[] {
@@ -63,7 +97,15 @@ export interface Garment3D {
    * display check of cloth layers: per attachment particle, the host triangles near it (corner particle
    * triples) and the sign that turns each triangle's winding normal outward
    */
-  layerNear?: { a: number; tris: Int32Array; sign: Int8Array }[];
+  layerNear?: { a: number; tris: Int32Array; sign: Int8Array; inside?: boolean }[];
+  /**
+   * +1 / -1 per panel: the side of the mesh triangle order (P.mesh.tris, not the mirrored render order) that is the
+   * piece's 'outside' face (Face, src/data/edits.ts). Collar: the top collar (see faceOf / visibleFace in seams.ts).
+   * Attachment panels: the side facing away from the host cloth, the attachment's own show face.
+   */
+  panelSign: Int8Array;
+  /** collar worn down or up in this build */
+  collar: 'down' | 'up';
 }
 
 type Hit = { nx: number; ny: number; nz: number; depth: number; vx?: number; vy?: number; vz?: number };
@@ -80,6 +122,8 @@ const CHORD_MARGIN = 0.1;
 const NEAR = 1.0;
 
 const TAU = Math.PI * 2;
+/** mesh spacing of a collar (cm) */
+const COLLAR_SPACING = 1.0;
 const SUB = 10;
 const H2 = (1 / 60 / SUB) ** 2;
 
@@ -95,6 +139,26 @@ function torsoPoint(f: BodyFrame, h: number, th: number, C: number): [number, nu
   const m = r.shape(th);
   const k = Math.max(C / r.C, 1) + 1.2 / Math.min(r.a, r.b);
   return [r.a * m * Math.cos(th) * k, h, r.b * m * Math.sin(th) * k];
+}
+
+/** Height of a collar's sewn (neckline) edge at pattern x: the edge from tip to tip through collar.0, as a lookup. */
+function collarEdge(c: Piece): (u: number) => number {
+  const bz = toBeziers(c.points);
+  const i0 = c.points.findIndex((q) => q.key === 'collar.0');
+  const t1 = c.points.findIndex((q) => q.key === 'collar.1'), t1m = c.points.findIndex((q) => q.key === 'collar.1m');
+  if (i0 < 0 || t1 < 0 || t1m < 0) return () => 0;
+  const pts: Pt[] = [];
+  for (let i = i0; i !== t1; i = (i + 1) % bz.length) for (let k = 0; k <= 24; k++) pts.push(bezAt(bz[i], k / 24));
+  for (let i = t1m; i !== i0; i = (i + 1) % bz.length) for (let k = 0; k <= 24; k++) pts.push(bezAt(bz[i], k / 24));
+  pts.sort((p, q) => p.x - q.x);
+  return (u) => {
+    if (u <= pts[0].x) return pts[0].y;
+    if (u >= pts[pts.length - 1].x) return pts[pts.length - 1].y;
+    let lo = 0, hi = pts.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (pts[m].x <= u) lo = m; else hi = m; }
+    const t = (u - pts[lo].x) / ((pts[hi].x - pts[lo].x) || 1);
+    return pts[lo].y + (pts[hi].y - pts[lo].y) * t;
+  };
 }
 
 const key = (p: Piece, k: string) => p.points.find((q) => q.key === k)?.id;
@@ -260,9 +324,14 @@ interface Mech {
   gather: number;
 }
 
-function mechanics(p: Piece, style: Style): Mech {
+function mechanics(p: Piece, style: Style, opts: { collarUp?: boolean; legacyCollar?: boolean; label?: LabelMaterial; layers?: number } = {}): Mech {
   const fab = fabricById(p.fabric.id);
   let stretch = fab.stretch, bend = fab.bend, scK = 1, shaped = false, plate = false, gather = 1, foldBend = false;
+  if (opts.label) {
+    // a tag: its own material; a folded loop is two layers
+    const L = opts.label, k = opts.layers ?? 1;
+    return { stretch: L.stretch, sc: L.stretch * 0.3 * H2, bc: (0.05 / (L.bend * L.bend * k * k)) * H2, shaped: false, plate: false, gather: 1, foldBend: false };
+  }
   const knit = !!style.details.rib;
   const ribTrim = fab.id === 'rib' || (knit && (p.role === 'neckband' || p.role === 'cuff' || (p.role === 'collar' && style.family === 'polo')));
   if (ribTrim) {
@@ -289,6 +358,10 @@ function mechanics(p: Piece, style: Style): Mech {
   if (p.role === 'crown' && style.family === 'cap') bend = Math.max(bend, 1) * 2; // structured crown (buckram front)
   if (p.role === 'collar' && style.family === 'shirt') bend *= 2; // interfaced collar
   if (p.role === 'collar' && style.family === 'polo') { foldBend = true; bend = Math.max(bend, 0.4); } // knit collar with a pressed fold
+  // a woven collar keeps the shape it is pressed into: folded over at the roll line when worn down
+  if (p.role === 'collar' && (style.family === 'shirt' || style.family === 'jacket') && !opts.legacyCollar) foldBend = true;
+  // popped up: the stand and fall are pressed flat in line, so the collar holds itself up round the neck
+  if (p.role === 'collar' && opts.collarUp) { foldBend = true; bend *= style.family === 'polo' ? 4 : 2; }
   return { stretch, sc: stretch * 0.3 * scK * H2, bc: (0.05 / (bend * bend)) * H2, shaped, plate, gather, foldBend };
 }
 
@@ -303,7 +376,13 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   const crown = pieces.find((p) => p.role === 'crown');
   if (hat ? !crown : !front || !back) return null;
 
-  const insts: (PanelInst & { place: Placer; shape?: Placer })[] = [];
+  const collarIs = collarState(edits);
+  // no collar option chosen (a project from before it): the collar is arranged exactly as it always was, so old saves
+  // drape bit for bit the same (tests/fixtures/sew-baseline.json). That start stands the collar up (woven) or folds it
+  // on a mesh too coarse to hold the fold; choosing 'down' or 'up' gives the arranged collar
+  const legacyCollar = edits.collar === undefined;
+  /** mech: a tag's own material (weight, stiffness), two layers for a folded loop */
+  const insts: (PanelInst & { place: Placer; shape?: Placer; mech?: { label: LabelMaterial; layers: number } })[] = [];
   let count = 0;
   /** place: where each pattern point starts; shape: the rest shape of a pre-shaped part (defaults to place) */
   const add = (piece: Piece, mirror: boolean, place: Placer, mesh?: PanelMesh, shape?: Placer) => {
@@ -395,16 +474,36 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     if (collar) {
       const L = Math.max(...collar.points.map((p) => p.x)) * 2;
       const knit = fam === 'polo';
+      const roll = collarRoll(style.id, collar);
+      const edgeY = collarEdge(collar);
+      // a fine mesh: the stand is only 2 to 3 cm tall, and a fold needs a few rows of triangles to turn over
+      const cm = legacyCollar ? undefined : meshPanel(collar.points, Math.min(spacing, COLLAR_SPACING));
       add(collar, false, (u, v) => {
         const th = Math.PI / 2 - ((L / 2 - u) / L) * TAU; // tips at centre front, centre of the collar at centre back
         const r0 = Math.max(L / TAU, Math.max(nr.a, nr.b) + 1.2);
-        if (!knit) return [(r0 + 0.15 * v) * Math.cos(th), f.neckH - neckDepth(th) + v * 0.9, (nr.cz ?? 0) + (r0 + 0.15 * v) * Math.sin(th)];
+        const base = f.neckH - neckDepth(th), cz = nr.cz ?? 0;
+        if (legacyCollar && !knit) return [(r0 + 0.15 * v) * Math.cos(th), f.neckH - neckDepth(th) + v * 0.9, (nr.cz ?? 0) + (r0 + 0.15 * v) * Math.sin(th)];
+        if (collarIs === 'up') {
+          // popped: stand and fall in line, standing up round the neck, flaring out a little and lightly rolled
+          // outward along the top edge
+          const s = Math.max(0, v - (knit ? 0 : edgeY(u)));
+          const r = r0 + 0.12 * s + 0.25 * Math.max(0, s - roll - 1);
+          return [r * Math.cos(th), base + 0.95 * s, cz + r * Math.sin(th)];
+        }
+        if (!knit) {
+          // woven collar worn down: the stand rises to the roll line, the fall folds over and lies down over it
+          const s = Math.max(0, v - edgeY(u));
+          const stand = Math.min(s, roll), fall = Math.max(0, s - roll);
+          const fold = Math.min(1, fall / 0.8);
+          const r = r0 + 0.1 * stand + 0.6 * fold + 0.15 * fall;
+          return [r * Math.cos(th), base + stand + 0.3 * fold - 0.95 * fall, cz + r * Math.sin(th)];
+        }
         // knit collar: a short stand, then it folds over and the fall lies down over the stand and the neckline
         const stand = Math.min(v, 2.5), fall = Math.max(0, v - 2.5);
         const fold = Math.min(1, fall / 0.8); // round over the fold line
         const r = r0 + 0.1 * stand + 0.6 * fold + 0.15 * fall;
         return [r * Math.cos(th), f.neckH - neckDepth(th) + stand + 0.3 * fold - 0.95 * fall, (nr.cz ?? 0) + r * Math.sin(th)];
-      });
+      }, cm);
     }
     const cuff = pieces.find((p) => p.role === 'cuff');
     if (fam === 'shirt' && cuff && sleeve) {
@@ -581,16 +680,57 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     }
     return c;
   };
-  /** start position on a host panel at pattern point hp, lifted off its outer face, with the outward normal */
-  const onHost = (H: PanelInst & { place: Placer }, hp: Pt, lift: number): { p: V3; n: V3 } => {
+  /**
+   * +1 / -1: which side of the panel's triangle winding (mesh order) is its 'outside' face, from the start shape.
+   * Most pieces: the side facing away from the panel's middle (a tube's axis, a half shell's middle), a brim: up.
+   * A collar: the top collar, which faces the neck on the stand (it rolls over to be the top of the fall).
+   */
+  const signs = new Map<PanelInst, number>();
+  const signOf = (P: PanelInst & { place: Placer }) => {
+    let sg = signs.get(P);
+    if (sg !== undefined) return sg;
+    const { uv, tris } = P.mesh;
+    const X = uv.map((q) => P.place(q.x, q.y));
+    const collarP = P.piece.role === 'collar' && !P.attach;
+    const roll = collarP ? collarRoll(style.id, P.piece) : 0;
+    const c = centreOf(P), cz = f.neckRing(f.neckH + 1).cz ?? 0;
+    let vote = 0, any = false;
+    for (const pass of collarP ? [0, 1] : [1]) {
+      for (let t = 0; t < tris.length; t += 3) {
+        const a = X[tris[t]], b = X[tris[t + 1]], d = X[tris[t + 2]];
+        if (pass === 0 && Math.max(uv[tris[t]].y, uv[tris[t + 1]].y, uv[tris[t + 2]].y) > roll) continue; // the stand only
+        const n = cross(sub3(b, a), sub3(d, a)), L = len3(n) || 1;
+        const m: V3 = [(a[0] + b[0] + d[0]) / 3, (a[1] + b[1] + d[1]) / 3, (a[2] + b[2] + d[2]) / 3];
+        if (collarP) { const r: V3 = [m[0], 0, m[2] - cz]; vote -= dot3(n, r) / (L * (len3(r) || 1)); } // neck side
+        else if (P.piece.role === 'brim') vote += n[1] / L;
+        else { const r = sub3(m, c); vote += dot3(n, r) / (L * (len3(r) || 1)); }
+        any = true;
+      }
+      if (any) break;
+    }
+    sg = vote >= 0 ? 1 : -1;
+    signs.set(P, sg);
+    return sg;
+  };
+  /**
+   * start position on a host panel at pattern point hp, lifted off the given face (outside: away from the body,
+   * inside: towards it), and the normal pointing off that face
+   */
+  const onHost = (H: PanelInst & { place: Placer }, hp: Pt, lift: number, face: Face = 'outside'): { p: V3; n: V3 } => {
     const L = locate(H.mesh, hp);
     const P = L.v.map((i) => H.place(H.mesh.uv[i].x, H.mesh.uv[i].y));
     const p: V3 = [0, 1, 2].map((k) => P[0][k] * L.w[0] + P[1][k] * L.w[1] + P[2][k] * L.w[2]) as V3;
     let n = cross(sub3(P[1], P[0]), sub3(P[2], P[0]));
     const out = sub3(p, centreOf(H));
-    if (len3(n) < 1e-6) n = out;
-    n = scale3(n, 1 / (len3(n) || 1));
-    if (dot3(n, out) < 0) n = scale3(n, -1);
+    if (H.piece.role === 'collar' && len3(n) >= 1e-6) {
+      // a collar folds over itself: the side comes from the winding, not from the middle of the panel
+      n = scale3(n, signOf(H) / len3(n));
+    } else {
+      if (len3(n) < 1e-6) n = out;
+      n = scale3(n, 1 / (len3(n) || 1));
+      if (dot3(n, out) < 0) n = scale3(n, -1);
+    }
+    if (face === 'inside') n = scale3(n, -1);
     return { p: [p[0] + n[0] * lift, p[1] + n[1] * lift, p[2] + n[2] * lift], n };
   };
 
@@ -639,7 +779,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   // the placement is the mirror image in 3D but the attachment itself is not flipped (letters still read the right way),
   // so its own coords are mirrored into the host's before placing.
   interface Pin { v: number; hp: Pt } // attachment vertex and the host pattern point it is sewn to
-  const pins: { A: PanelInst; H: PanelInst; pins: Pin[]; layer: { v: number; hp: Pt }[] }[] = [];
+  const pins: { A: PanelInst; H: PanelInst; face: Face; pins: Pin[]; layer: { v: number; hp: Pt }[] }[] = [];
   const toHost = (x: number, y: number, rot: number) => {
     const c = Math.cos((rot * Math.PI) / 180), s = Math.sin((rot * Math.PI) / 180);
     return (q: Pt): Pt => ({ x: x + q.x * c - q.y * s, y: y + q.x * s + q.y * c });
@@ -647,11 +787,15 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   /** host copies an edit goes on: the chosen copy, or every copy when none is chosen */
   const hostsOf = (pieceId: string, instance?: number) => instance !== undefined ? [instOf(pieceId, instance)].filter((q): q is (typeof insts)[number] => !!q) : copiesOf(pieceId);
   const mirrorLocal = (H: PanelInst, q: Pt): Pt => (H.mirror ? { x: -q.x, y: q.y } : q);
-  const attachSpecs: { id: string; kind: ClothKind; piece: Piece; local: Pt; host: string; instance?: number; xf: (q: Pt) => Pt; w: number; h: number }[] = [];
-  for (const a of edits.attachments) {
+  const attachSpecs: { id: string; kind: ClothKind; piece: Piece; local: Pt; host: string; instance?: number; xf: (q: Pt) => Pt; w: number; h: number; face: Face; tag?: { mat: LabelMaterial; sew: ReturnType<typeof labelSewing> } }[] = [];
+  for (const a0 of edits.attachments) {
+    // a tag without a size gets the standard 5 x 2.5 cm
+    const a = a0.kind === 'label' ? { ...a0, ...labelSize(a0) } : a0;
     if (!CLOTH_KINDS.has(a.kind) || !(a.w > 0 && a.h > 0)) continue;
     const host = pieces.find((q) => q.id === a.pieceId);
     if (!host) continue;
+    const face = faceOf(a);
+    const tag = a.kind === 'label' ? { mat: labelMaterial(a), sew: labelSewing(a, host) } : undefined;
     // an applique cut from a shape: one piece per letter for text, all in the attachment's own coords
     const rings = attachmentPolygons(a);
     rings.forEach((poly, ri) => {
@@ -659,12 +803,12 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
       const bb = bbox(poly);
       const piece: Piece = { id: a.id, name: a.name, role: 'custom', cut: 1, offset: { x: 0, y: 0 }, symmetric: false, points: pts, fabric: a.fabric ?? host.fabric, specs: [] };
       // a letter's size for meshing is its own box; its position stays in the attachment's coords
-      attachSpecs.push({ id: a.id, kind: a.kind as ClothKind, piece, local: { x: 0, y: 0 }, host: host.id, instance: a.instance, xf: toHost(a.x, a.y, a.rotation), w: rings.length > 1 ? bb.w : a.w, h: rings.length > 1 ? bb.h : a.h });
+      attachSpecs.push({ id: a.id, kind: a.kind as ClothKind, piece, local: { x: 0, y: 0 }, host: host.id, instance: a.instance, xf: toHost(a.x, a.y, a.rotation), w: rings.length > 1 ? bb.w : a.w, h: rings.length > 1 ? bb.h : a.h, face, ...(tag ? { tag } : {}) });
     });
   }
   for (const up of pieces.filter((q) => q.role === 'custom' && q.placement?.mode === 'patch' && q.placement.hostPieceId)) {
     const pl = up.placement!, bb = bbox(up.points);
-    attachSpecs.push({ id: up.id, kind: 'patch', piece: up, local: { x: bb.minX + bb.w / 2, y: bb.minY + bb.h / 2 }, host: pl.hostPieceId!, instance: pl.instance, xf: toHost(pl.x ?? 0, pl.y ?? 0, pl.rotation ?? 0), w: bb.w, h: bb.h });
+    attachSpecs.push({ id: up.id, kind: 'patch', piece: up, local: { x: bb.minX + bb.w / 2, y: bb.minY + bb.h / 2 }, host: pl.hostPieceId!, instance: pl.instance, xf: toHost(pl.x ?? 0, pl.y ?? 0, pl.rotation ?? 0), w: bb.w, h: bb.h, face: 'outside' });
   }
   for (const at of attachSpecs) {
     const hosts = hostsOf(at.host, at.instance);
@@ -684,10 +828,14 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
       const tx = top.map((i) => mesh.uv[i].x);
       const lo = Math.min(...tx), hi = Math.max(...tx);
       sewnIdx = mesh.boundary.filter((i, k) => !(ys[k] < minY + tol && mesh.uv[i].x > lo + 1e-3 && mesh.uv[i].x < hi - 1e-3));
-    } else if (at.kind === 'strap') {
-      // stitched across both short ends only; the middle is free and stands off as a loop
+    } else if (at.kind === 'strap' || (at.tag && at.tag.sew.method === 'ends')) {
+      // stitched across both short ends only; the middle is free (a strap stands off as a loop)
       const tol = Math.max(0.05, Math.min(1, 0.1 * Lh * 2));
       sewnIdx = mesh.boundary.filter((i) => Math.abs((long === 'x' ? mesh.uv[i].x - at.local.x : mesh.uv[i].y - at.local.y)) >= Lh - tol);
+    } else if (at.tag?.sew.open) {
+      // folded loop caught in a seam: only the open end is held, the fold hangs free
+      const o = at.tag.sew.open, tol = Math.max(0.1, Math.min(0.5, 0.15 * o.half * 2));
+      sewnIdx = mesh.boundary.filter((i) => (mesh.uv[i].x - at.local.x) * o.dir.x + (mesh.uv[i].y - at.local.y) * o.dir.y >= o.half - tol);
     }
     // a strap's ends are sewn a little closer together than its length, so it forms a loop
     const SLACK = at.kind === 'strap' ? 0.9 : 1;
@@ -704,29 +852,67 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
           const t = (long === 'x' ? u - at.local.x : v - at.local.y) / (Lh || 1); // -1..1 along the strap
           bump = 0.19 * 2 * Lh * SLACK * Math.cos((Math.max(-1, Math.min(1, t)) * Math.PI) / 2);
         }
-        return onHost(H, hpOf({ x: u, y: v }), LAYER_GAP + 0.3 + bump).p;
+        return onHost(H, hpOf({ x: u, y: v }), LAYER_GAP + 0.3 + bump, at.face).p;
       }, mesh);
-      A.attach = { id: at.id, kind: at.kind, host: hostIdx };
-      pins.push({ A, H, pins: sewnIdx.map((v) => ({ v, hp: hpOf(mesh.uv[v]) })), layer: mesh.uv.map((q, v) => ({ v, hp: hpOf(q) })) });
+      A.attach = { id: at.id, kind: at.kind, host: hostIdx, face: at.face };
+      if (at.tag) A.mech = { label: at.tag.mat, layers: at.tag.sew.method === 'loop' ? 2 : 1 };
+      // its show face: the side of its winding that faces away from the host cloth
+      {
+        let nx = 0, ny = 0, nz = 0;
+        const X = mesh.uv.map((q) => A.place(q.x, q.y));
+        for (let t = 0; t < mesh.tris.length; t += 3) { const n = cross(sub3(X[mesh.tris[t + 1]], X[mesh.tris[t]]), sub3(X[mesh.tris[t + 2]], X[mesh.tris[t]])); nx += n[0]; ny += n[1]; nz += n[2]; }
+        const off = onHost(H, hpOf(at.local), 0, at.face).n;
+        signs.set(A, nx * off[0] + ny * off[1] + nz * off[2] >= 0 ? 1 : -1);
+      }
+      pins.push({ A, H, face: at.face, pins: sewnIdx.map((v) => ({ v, hp: hpOf(mesh.uv[v]) })), layer: mesh.uv.map((q, v) => ({ v, hp: hpOf(q) })) });
     }
   }
 
   // hardware: rivets, buttons, studs, snaps and eyelets weigh the cloth down under them; a zip stiffens the
   // cloth along its line (and an open zip on a seam leaves that stretch of the seam unsewn)
   const trimGrams: { H: PanelInst; at: Pt; r: number; g: number }[] = [];
-  const zips: { H: PanelInst; a: Pt; b: Pt; half: number; open: boolean }[] = [];
+  const zips: { H: PanelInst; a: Pt; b: Pt; half: number; open: boolean; grams: number; compliance: number }[] = [];
+  /** buttons and snaps that can fasten to another piece: attachment id, host panel, pattern point, start position */
+  const fasteners: { id: string; type: string; H: PanelInst & { place: Placer }; at: Pt; p: V3 }[] = [];
   for (const a of edits.attachments) {
     if (a.kind !== 'hardware' || !a.hardware) continue;
     const hw = a.hardware, xf = toHost(a.x, a.y, a.rotation);
     for (const H of hostsOf(a.pieceId, a.instance)) {
       if (hw.type === 'zipper') {
         const L = a.h > 0 ? a.h : 10;
-        zips.push({ H, a: xf(mirrorLocal(H, { x: 0, y: -L / 2 })), b: xf(mirrorLocal(H, { x: 0, y: L / 2 })), half: Math.max(0.3, (hw.size || 1) / 2), open: !!hw.open });
+        const teeth = hw.zipper ? ZIP_TEETH[hw.zipper.teeth] ?? ZIP_TEETH.metal : { grams: ZIP_GRAMS_PER_CM, compliance: 0 };
+        zips.push({ H, a: xf(mirrorLocal(H, { x: 0, y: -L / 2 })), b: xf(mirrorLocal(H, { x: 0, y: L / 2 })), half: Math.max(0.3, (hw.size || 1) / 2), open: !!hw.open, ...teeth });
         continue;
       }
-      const [g0, s0] = TRIM_GRAMS[hw.type] ?? [1, 1];
-      const g = g0 * Math.min(4, Math.max(0.25, ((hw.size || s0) / s0) ** 2));
-      for (const q of hardwarePoints(hw)) trimGrams.push({ H, at: xf(mirrorLocal(H, q)), r: Math.max((hw.size || s0) / 2, 0.75 * spacing), g });
+      const w = trimWeight(hw);
+      for (const q of hardwarePoints(hw)) {
+        const at = xf(mirrorLocal(H, q));
+        trimGrams.push({ H, at, r: Math.max(w.radius, 0.75 * spacing), g: w.grams });
+        if (hw.type === 'button' || hw.type === 'snap') fasteners.push({ id: a.id, type: hw.type, H, at, p: onHost(H, at, 0, faceOf(a)).p });
+      }
+    }
+  }
+  // fastened: with the collar down, a button on a collar point buttons onto the nearest button on another piece within
+  // FASTEN_REACH at the start (a button-down collar; a popped collar is worn unbuttoned); snap halves on two pieces
+  // within SNAP_REACH snap together. Each pair is sewn shut like a seam point ('fasten:<id>+<id>').
+  const fastenSew: { id: string; a: number; b: number }[] = [];
+  {
+    const used = new Set<number>();
+    const vertexAt = (F: (typeof fasteners)[number]) => { const L = locate(F.H.mesh, F.at); return F.H.offset + L.v[L.w.indexOf(Math.max(...L.w))]; };
+    const cand: { i: number; j: number; d: number }[] = [];
+    fasteners.forEach((A, i) => fasteners.forEach((B, j) => {
+      if (j <= i || A.H === B.H || A.H.piece === B.H.piece && A.H.instance === B.H.instance) return;
+      // a popped collar is worn unbuttoned
+      const collarPair = collarIs === 'down' && (A.H.piece.role === 'collar') !== (B.H.piece.role === 'collar');
+      const d = len3(sub3(A.p, B.p));
+      if ((collarPair && d < FASTEN_REACH) || (A.type === 'snap' && B.type === 'snap' && d < SNAP_REACH)) cand.push({ i, j, d });
+    }));
+    cand.sort((p, q) => p.d - q.d);
+    for (const c of cand) {
+      if (used.has(c.i) || used.has(c.j)) continue;
+      used.add(c.i); used.add(c.j);
+      const A = fasteners[c.i], B = fasteners[c.j];
+      fastenSew.push({ id: `fasten:${A.id}+${B.id}`, a: vertexAt(A), b: vertexAt(B) });
     }
   }
   /** host vertices within d of a pattern segment */
@@ -821,7 +1007,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   const band = pieces.find((p) => p.role === 'waistband' && p.elastic);
   const bandGather = band ? Math.min(1, band.elastic! / (Math.max(...band.points.map((q) => q.x)) * 2)) : 1;
   for (const pi of insts) {
-    const M = mechanics(pi.piece, style);
+    const M = mechanics(pi.piece, style, { collarUp: collarIs === 'up', legacyCollar, ...(pi.mech ?? {}) });
     const { uv, tris } = pi.mesh;
     const o = pi.offset;
     const legTop = Math.min(...pi.piece.points.map((q) => q.y));
@@ -873,7 +1059,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   const layerIdx: number[] = [], layerW: number[] = [];
   const layerNear: NonNullable<Garment3D['layerNear']> = [];
   const skipPanel = pins.length ? new Int32Array(count).fill(-1) : null;
-  for (const { A, H, pins: list, layer: lay } of pins) {
+  for (const { A, H, face, pins: list, layer: lay } of pins) {
     for (const { v, hp } of list) {
       const L = locate(H.mesh, hp);
       L.v.forEach((c) => {
@@ -886,10 +1072,12 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     const Hp = H as (typeof insts)[number];
     const HT = H.mesh.tris, Huv = H.mesh.uv;
     const cH = centreOf(Hp);
+    const fs = face === 'inside' ? -1 : 1;
     const triSign = (t: number) => {
+      if (H.piece.role === 'collar') return signOf(Hp) * fs; // a collar folds over itself: the side comes from its winding
       const P = [HT[t], HT[t + 1], HT[t + 2]].map((c) => [init[(H.offset + c) * 3], init[(H.offset + c) * 3 + 1], init[(H.offset + c) * 3 + 2]] as V3);
       const mid: V3 = [(P[0][0] + P[1][0] + P[2][0]) / 3, (P[0][1] + P[1][1] + P[2][1]) / 3, (P[0][2] + P[1][2] + P[2][2]) / 3];
-      return dot3(cross(sub3(P[1], P[0]), sub3(P[2], P[0])), sub3(mid, cH)) >= 0 ? 1 : -1;
+      return (dot3(cross(sub3(P[1], P[0]), sub3(P[2], P[0])), sub3(mid, cH)) >= 0 ? 1 : -1) * fs;
     };
     const signs = new Map<number, number>();
     const tc = new Float32Array((HT.length / 3) * 2);
@@ -899,7 +1087,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
       const L = locate(H.mesh, hp);
       const P = L.v.map((c) => [init[(H.offset + c) * 3], init[(H.offset + c) * 3 + 1], init[(H.offset + c) * 3 + 2]] as V3);
       const nw = cross(sub3(P[1], P[0]), sub3(P[2], P[0]));
-      const out = onHost(Hp, hp, 0).n;
+      const out = onHost(Hp, hp, 0, face).n;
       layerIdx.push(A.offset + v, H.offset + L.v[0], H.offset + L.v[1], H.offset + L.v[2]);
       layerW.push(L.w[0], L.w[1], L.w[2], LAYER_GAP, dot3(nw, out) >= 0 ? 1 : -1);
       const tris: number[] = [], sg: number[] = [];
@@ -909,17 +1097,47 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
         if (!signs.has(t)) signs.set(t, triSign(t));
         tris.push(H.offset + HT[t], H.offset + HT[t + 1], H.offset + HT[t + 2]); sg.push(signs.get(t)!);
       }
-      layerNear.push({ a: A.offset + v, tris: Int32Array.from(tris), sign: Int8Array.from(sg) });
+      layerNear.push({ a: A.offset + v, tris: Int32Array.from(tris), sign: Int8Array.from(sg), ...(face === 'inside' ? { inside: true } : {}) });
     }
   }
 
-  // a zip: long links along its line hold the cloth there straight and stiff, like the zip tape
+  // a collar worn down: the roll line holds and the fall lies outside the stand. Every point of the fall within a
+  // stand height of the roll line is tied to the stand point it lies over (the same distance below the roll line), at
+  // the start distance, and kept on the stand's outer side (the under collar side, away from the neck) like a cloth
+  // layer; the rest of the fall hangs past the neckline seam, kept on the outer side of the foot of the stand.
+  // Without the side rule a fold may turn either way: a fall folded in against the neck climbs up it.
+  if (collarIs === 'down' && !legacyCollar) for (const P of insts) {
+    if (P.piece.role !== 'collar' || P.attach) continue;
+    const roll = collarRoll(style.id, P.piece), edgeY = collarEdge(P.piece), uv = P.mesh.uv;
+    const knitC = fam === 'polo';
+    const sOf = (q: Pt) => q.y - (knitC ? 0 : edgeY(q.x));
+    const away = -signOf(P); // winding sign of the under collar face
+    const X = (i: number): V3 => [init[i * 3], init[i * 3 + 1], init[i * 3 + 2]];
+    uv.forEach((q, i) => {
+      const s = sOf(q), d = s - roll;
+      if (d < 0.4) return;
+      const vi = P.offset + i;
+      // the stand point under it: mirrored about the roll line, or at the foot of the stand for the fall past the seam
+      const target = { x: q.x, y: q.y - Math.min(2 * d, s - 0.3) };
+      if (d <= roll) {
+        let bj = -1, bd = (0.7 * spacing) ** 2;
+        uv.forEach((r, j) => { const e = (r.x - target.x) ** 2 + (r.y - target.y) ** 2; if (e < bd && sOf(r) < roll) { bd = e; bj = j; } });
+        if (bj >= 0) bend.push([vi, P.offset + bj, len3(sub3(X(vi), X(P.offset + bj))), 0]);
+      }
+      const L = locate(P.mesh, target);
+      layerIdx.push(vi, P.offset + L.v[0], P.offset + L.v[1], P.offset + L.v[2]);
+      layerW.push(L.w[0], L.w[1], L.w[2], LAYER_GAP, away);
+    });
+  }
+
+  // a zip: long links along its line hold the cloth there straight and stiff, like the zip tape (metal teeth rigid,
+  // a coil bends a little)
   for (const z of zips) {
     const vs = nearLine(z.H, z.a, z.b, z.half + 0.35 * spacing);
     const uv = z.H.mesh.uv, o = z.H.offset;
     for (let i = 0; i < vs.length; i++) for (let j = i + 1; j < vs.length; j++) {
       const d = Math.hypot(uv[vs[i]].x - uv[vs[j]].x, uv[vs[i]].y - uv[vs[j]].y);
-      if (d > 1.2 * spacing && d < 3.4 * spacing) bend.push([o + vs[i], o + vs[j], d, 0]);
+      if (d > 1.2 * spacing && d < 3.4 * spacing) bend.push([o + vs[i], o + vs[j], d, z.compliance * H2]);
     }
   }
 
@@ -995,7 +1213,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   };
   // built-in sewing lines, in their fixed order, minus the ones the user detached
   const detached = new Set(edits.detachedSeams);
-  for (const bs of builtinSeams(style.id, pieces)) {
+  for (const bs of builtinSeams(style.id, pieces, edits)) {
     if (detached.has(bs.id)) continue;
     const a = sideOf(bs.a), b = sideOf(bs.b);
     if (a && b) sewSides(bs.id, a, b);
@@ -1013,6 +1231,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     const out = (seamLinks[id] ??= []);
     for (const [i, j] of links) link(i, j, out);
   }
+  for (const { id, a, b } of fastenSew) link(a, b, (seamLinks[id] ??= []));
 
   const sim = new ClothSim(count, stretch, bend, sew, { sewCompliance: 0, friction: 0.35, damping: 0.985 });
   maxStrain.forEach((v, i) => (sim.maxStrain[i] = v));
@@ -1055,11 +1274,11 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   const panelOf = new Uint16Array(count), uvs = new Float32Array(count * 2);
   let heaviest = 0;
   insts.forEach((pi, k) => {
-    const fab = fabricById(pi.piece.fabric.id);
-    heaviest = Math.max(heaviest, fab.gsm);
+    const gsm = pi.mech ? pi.mech.label.gsm * pi.mech.layers : fabricById(pi.piece.fabric.id).gsm;
+    if (!pi.mech) heaviest = Math.max(heaviest, gsm); // a small tag does not set the layer spacing of the garment
     pi.mesh.uv.forEach((q, i) => {
       const v = pi.offset + i;
-      sim.invMass[v] = Math.min(2, 250 / fab.gsm);
+      sim.invMass[v] = Math.min(2, 250 / gsm);
       panelOf[v] = k; uvs[v * 2] = q.x; uvs[v * 2 + 1] = q.y;
     });
   });
@@ -1103,7 +1322,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
       if (!vs.length) vs = [locate(t.H.mesh, t.at).v[0]];
       addGrams(t.H, vs, t.g);
     }
-    for (const z of zips) addGrams(z.H, nearLine(z.H, z.a, z.b, z.half + 0.35 * spacing), ZIP_GRAMS_PER_CM * Math.hypot(z.b.x - z.a.x, z.b.y - z.a.y));
+    for (const z of zips) addGrams(z.H, nearLine(z.H, z.a, z.b, z.half + 0.35 * spacing), z.grams * Math.hypot(z.b.x - z.a.x, z.b.y - z.a.y));
   }
   const nearSeam = new Uint8Array(count);
   const sewn = new Set<number>();
@@ -1118,7 +1337,8 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   for (let i = 0; i < count; i++) if (contact[i] === 2) nearSeam[i] = 1;
   sim.nearSeam = nearSeam;
   sim.selfRadius = Math.min(spacing * 0.45, 0.5 + heaviest / 1500); // thicker cloth keeps layers further apart
-  return { sim, panels: insts.map(({ place: _p, shape: _s, ...rest }) => rest), limits, seamLinks, body: body3d, contact, ...(layerNear.length ? { layerNear } : {}) };
+  const panelSign = Int8Array.from(insts, (P) => signOf(P));
+  return { sim, panels: insts.map(({ place: _p, shape: _s, mech: _m, ...rest }) => rest), limits, seamLinks, body: body3d, contact, panelSign, collar: collarIs, ...(layerNear.length ? { layerNear } : {}) };
 }
 
 /**
@@ -1135,8 +1355,12 @@ export function displayPositions(G: Garment3D, out: Float32Array) {
   if (G.layerNear) for (const L of G.layerNear) liftOffHost(out, L);
 }
 
-/** Display: an attachment point keeps LAYER_GAP over the nearest of the host triangles around it. */
-function liftOffHost(out: Float32Array, L: { a: number; tris: Int32Array; sign: Int8Array }) {
+/**
+ * Display: an attachment point keeps LAYER_GAP over the nearest of the host triangles around it. An attachment on the
+ * inside face lies between the host and the skin, so there the host cloth is lifted off it instead (the attachment
+ * is already off the skin).
+ */
+function liftOffHost(out: Float32Array, L: { a: number; tris: Int32Array; sign: Int8Array; inside?: boolean }) {
   const a = L.a * 3, x = out[a], y = out[a + 1], z = out[a + 2];
   let best = Infinity, bt = -1, bq: V3 = [0, 0, 0];
   for (let t = 0; t < L.tris.length; t += 3) {
@@ -1153,6 +1377,10 @@ function liftOffHost(out: Float32Array, L: { a: number; tris: Int32Array; sign: 
   const d = (x - bq[0]) * n[0] * k + (y - bq[1]) * n[1] * k + (z - bq[2]) * n[2] * k;
   if (d >= LAYER_GAP) return;
   const c = (LAYER_GAP - d) * k;
+  if (L.inside) {
+    for (const i of [i0, i1, i2]) { out[i] -= n[0] * c; out[i + 1] -= n[1] * c; out[i + 2] -= n[2] * c; }
+    return;
+  }
   out[a] += n[0] * c; out[a + 1] += n[1] * c; out[a + 2] += n[2] * c;
 }
 

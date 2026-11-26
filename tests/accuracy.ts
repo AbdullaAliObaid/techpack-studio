@@ -13,11 +13,14 @@ import { buildGarment } from '../src/three/garment';
 import { samplePoly, sliceSpan } from '../src/lib/geometry';
 import { findTag, pieceSpecs } from '../src/lib/specs';
 import { readFileSync } from 'node:fs';
-import { builtinSeams, instanceLabel } from '../src/sim/seams';
+import { builtinSeams, faceLabel, faceOf, instanceLabel, visibleFace } from '../src/sim/seams';
+import { labelSewing, labelSize } from '../src/data/labels';
+import { outwardSignsHosted } from '../src/sim/detailsAttach';
+import { piecesToDxf } from '../src/lib/exportDxf';
 import { shapePolygon, attachmentPolygons, SHAPE_IDS } from '../src/lib/shapes';
-import { attachmentReport, cutList, pleatReport, trimsReport } from '../src/lib/specs';
-import type { Attachment } from '../src/data/edits';
-import { assemble } from '../src/sim/setup';
+import { attachmentReport, cutList, labelReport, pleatReport, trimsReport } from '../src/lib/specs';
+import type { Attachment, Hardware, Label } from '../src/data/edits';
+import { assemble, trimWeight, ZIP_TEETH } from '../src/sim/setup';
 import { meshPanel, seamPath } from '../src/sim/panels';
 import { EMPTY_EDITS, type Edits } from '../src/data/edits';
 import { NO_COLLIDER, sewSignature } from './sewSnapshot';
@@ -417,6 +420,145 @@ console.log('\n== left / right, appliques, hardware ==');
     const a = useStore.getState().project.edits?.attachments.find((q) => q.id === id);
     pass(a?.instance === 0, 'store: new attachment on a piece cut twice defaults to the right side (instance 0)');
   } else pass(false, 'store: jeans project has a back leg');
+}
+
+// ---- collar up / down, faces, labels, drawn buttons and zips ----
+console.log('\n== collar, faces, labels, trims ==');
+{
+  const E2 = (e: Partial<Edits>): Edits => ({ ...EMPTY_EDITS, ...e });
+  for (const st of ['polo', 'collared-tee', 'button-up', 'jacket']) {
+    const pieces = makePreset(st as never, DEFAULT_BODY);
+    const def = sewSignature(st, undefined, pieces), down = sewSignature(st, E2({ collar: 'down' }), pieces), up = sewSignature(st, E2({ collar: 'up' }), pieces);
+    // no collar option (old saves): exactly as before, see the sew snapshot above; down and up sew the same, arranged apart
+    pass(up.sew === down.sew && up.n === down.n && up.pos !== down.pos && down.pos !== def.pos, `${st}: collar down and up sew the same (${down.n} links) and only arrange the collar differently`);
+  }
+  {
+    // the polo collar runs round the neck on both sides (it used to run down the placket opening on one side)
+    const pieces = makePreset('polo', DEFAULT_BODY);
+    const slitOf = (e: Edits) => {
+      const G = build('polo', pieces, e);
+      const front = G.panels.find((p) => p.piece.role === 'front')!;
+      return (G.seamLinks.collar ?? []).filter(([, j]) => j >= front.offset && j < front.offset + front.mesh.uv.length && front.mesh.uv[j - front.offset].y > 12).length;
+    };
+    const legacy = slitOf(EMPTY_EDITS), down = slitOf(E2({ collar: 'down' }));
+    pass(down === 0 && legacy > 0, `polo collar with the collar option is sewn to the neckline only (old saves: ${legacy} links down the placket opening, kept bit for bit)`);
+  }
+  {
+    // faces: named for the UI, collar top / under, and which one shows in each state
+    const pieces = makePreset('button-up', DEFAULT_BODY);
+    const collar = pieces.find((p) => p.role === 'collar')!, front = pieces.find((p) => p.role === 'front')!;
+    const vf = visibleFace('button-up', collar), vb = visibleFace('button-up', front);
+    pass(vf.down === 'outside' && vf.up === 'inside' && vb.down === 'outside' && vb.up === 'outside', 'visibleFace: collar down shows the top collar, up shows the under collar; body pieces always outside');
+    const polo = makePreset('polo', DEFAULT_BODY), placket = polo.find((p) => p.role === 'placket')!;
+    const jk = makePreset('jacket', DEFAULT_BODY);
+    pass(faceLabel('button-up', collar, 'outside') === 'Top collar' && faceLabel('button-up', collar, 'inside') === 'Under collar' && faceLabel('polo', placket, 'inside') === 'Placket facing'
+      && faceLabel('jacket', jk[0], 'inside') === 'Lining side' && faceLabel('basic-tee', front, 'outside') === 'Outside' && faceLabel('basic-tee', front, 'inside') === 'Inside',
+    'faceLabel: Top collar, Under collar, Placket facing, Lining side, Outside, Inside');
+    // the 'built' panelSign: the setup's sides agree with the old vote on every plain panel of every style
+    let bad = 0, n = 0;
+    for (const s2 of CATALOG) {
+      const G = build(s2.id, makePreset(s2.id, DEFAULT_BODY), EMPTY_EDITS);
+      const old = outwardSignsHosted(G.panels, G.sim.pos);
+      G.panels.forEach((P, k) => { if (P.piece.role === 'collar') return; n++; if (old[k] !== G.panelSign[k]) bad++; });
+    }
+    pass(bad === 0, `panelSign matches the outward vote on all ${n} plain panels of every style, mirrored copies included`);
+    // collar: the top collar faces the neck on the stand, in both states
+    for (const cs of ['down', 'up'] as const) {
+      const G = build('button-up', pieces, E2({ collar: cs }));
+      const k = G.panels.findIndex((P) => P.piece.role === 'collar'), P = G.panels[k], pos = G.sim.pos;
+      let vote = 0;
+      for (let t = 0; t < P.mesh.tris.length; t += 3) {
+        const [a, b, c] = [0, 1, 2].map((e) => (P.offset + P.mesh.tris[t + e]) * 3);
+        if (Math.max(...[0, 1, 2].map((e) => P.mesh.uv[P.mesh.tris[t + e]].y)) > 2) continue;
+        const u = [pos[b] - pos[a], pos[b + 1] - pos[a + 1], pos[b + 2] - pos[a + 2]], v = [pos[c] - pos[a], pos[c + 1] - pos[a + 1], pos[c + 2] - pos[a + 2]];
+        const nx = u[1] * v[2] - u[2] * v[1], nz = u[0] * v[1] - u[1] * v[0];
+        vote += (nx * pos[a] + nz * pos[a + 2]) * G.panelSign[k] < 0 ? 1 : -1;
+      }
+      pass(vote > 0, `collar ${cs}: panelSign points at the top collar (faces the neck on the stand, ${vote} triangle vote)`);
+    }
+  }
+  {
+    // an inside patch starts between the host and the body, an outside one over the host
+    const pieces = makePreset('basic-tee', DEFAULT_BODY);
+    const back = pieces.find((p) => p.role === 'back')!;
+    const mk = (face: 'inside' | 'outside'): Attachment => ({ id: face, kind: 'patch', name: 'p', pieceId: back.id, x: 0, y: 22, rotation: 0, w: 8, h: 8, outline: 'rect', layers: [], face });
+    const G = build('basic-tee', pieces, E2({ attachments: [mk('inside'), mk('outside')] }));
+    const hostP = G.panels.find((p) => p.piece.id === back.id && !p.attach)!;
+    const zOf = (P: (typeof G.panels)[number]) => { let z = 0; for (let i = 0; i < P.mesh.uv.length; i++) z += G.sim.pos[(P.offset + i) * 3 + 2]; return z / P.mesh.uv.length; };
+    const hostZ = (() => { let z = 0, n = 0; hostP.mesh.uv.forEach((q, i) => { if (Math.abs(q.x) < 4 && Math.abs(q.y - 22) < 4) { z += G.sim.pos[(hostP.offset + i) * 3 + 2]; n++; } }); return z / n; })();
+    const ins = G.panels.find((p) => p.attach?.id === 'inside')!, out = G.panels.find((p) => p.attach?.id === 'outside')!;
+    // the back faces -z: inside is towards the body (larger z), outside away (smaller z)
+    pass(zOf(ins) > hostZ && zOf(out) < hostZ && ins.attach!.face === 'inside' && out.attach!.face === 'outside', `inside patch starts under the back (${(zOf(ins) - hostZ).toFixed(2)} cm in), outside patch over it (${(hostZ - zOf(out)).toFixed(2)} cm out)`);
+    // show face (panelSign side) of each: the inside patch faces the body (+z here), the outside one faces out (-z)
+    const showZ = (P: (typeof G.panels)[number]) => {
+      const k = G.panels.indexOf(P), pos = G.sim.pos;
+      let nz = 0;
+      for (let t = 0; t < P.mesh.tris.length; t += 3) {
+        const [a, b, c] = [0, 1, 2].map((e) => (P.offset + P.mesh.tris[t + e]) * 3);
+        nz += (pos[b] - pos[a]) * (pos[c + 1] - pos[a + 1]) - (pos[b + 1] - pos[a + 1]) * (pos[c] - pos[a]);
+      }
+      return nz * G.panelSign[k];
+    };
+    pass(showZ(ins) > 0 && showZ(out) < 0, 'attachment panelSign: the inside patch shows towards the body, the outside one away from it');
+  }
+  {
+    // labels: default size and face, sewing by method, BOM / cut list / DXF
+    const pieces = makePreset('basic-tee', DEFAULT_BODY);
+    const back = pieces.find((p) => p.role === 'back')!;
+    const tag = (id: string, type: Label['type'], sewn: Label['sewn'], y: number, extra: Partial<Attachment> = {}): Attachment => ({ id, kind: 'label', name: `Tag ${id}`, pieceId: back.id, x: 0, y, rotation: 0, w: 0, h: 0, outline: 'rect', layers: [], label: { type, sewn, color: '#111111' }, ...extra });
+    const near = tag('n', 'woven', 'folded-loop', 3.4), far = tag('f', 'woven', 'folded-loop', 12), lea = tag('l', 'leather', 'all-round', 30, { w: 6, h: 4 });
+    const sw = labelSewing({ ...near, ...labelSize(near) }, back), sf = labelSewing({ ...far, ...labelSize(far) }, back);
+    pass(labelSize(near).w === 5 && labelSize(near).h === 2.5 && faceOf(near) === 'inside' && faceOf({ kind: 'patch' }) === 'outside', 'tag: 5 x 2.5 cm and inside by default, other attachments outside');
+    pass(sw.method === 'loop' && sw.open!.dir.y === -1 && sw.cut.h === 5 && sf.method === 'ends', `folded loop near the back neck is caught in the seam (open end up, cut ${sw.cut.w} x ${sw.cut.h} cm); far from a seam it is sewn at both ends`);
+    const edits = E2({ attachments: [near, far, lea] });
+    const rows = labelReport(pieces, edits, 'basic-tee');
+    const rn = rows.find((r) => r.id === 'n')!;
+    pass(/neckband seam/.test(rn.sewn) && rn.placement === 'Back, inside' && rows.find((r) => r.id === 'l')!.purchased, `label report: "${rn.sewn}", "${rn.placement}", leather is bought finished`);
+    const trims = trimsReport(pieces, edits, 'basic-tee').filter((t) => t.kind === 'label');
+    pass(trims.length === 3 && trims.some((t) => /leather/.test(t.item) && /bought finished/.test(t.detail)), `BOM lists 3 labels: ${trims.map((t) => t.item).join(', ')}`);
+    const cuts = cutList(pieces, edits, 'basic-tee');
+    pass(cuts.some((c) => c.name === 'Tag n' && /cut 5 x 5 cm/.test(c.note ?? '')) && !cuts.some((c) => c.name === 'Tag l'), 'cut list: woven tags are cut (the loop twice as long), the leather tag is not');
+    const dxf = piecesToDxf(pieces, { project: 't', size: 'M' }, 1, edits, 'basic-tee');
+    pass(dxf.includes('TAG N LABEL') && !dxf.includes('TAG L LABEL') && dxf.includes('BOUGHT TRIM'), 'DXF: woven tags are cut pieces, the leather one is a placement mark for a bought trim');
+    const G = build('basic-tee', pieces, edits);
+    const tp = G.panels.filter((p) => p.attach?.kind === 'label');
+    pass(tp.length === 3 && tp.every((p) => p.attach!.face === 'inside'), `${tp.length} tag panels in the sim, all on the inside`);
+    const sn = attachmentReport(pieces, edits, 'basic-tee');
+    pass(sn.find((r) => r.id === 'n')!.sewnLength === 5 && Math.abs(sn.find((r) => r.id === 'f')!.sewnLength - 5) < 1e-6, 'tag stitching length: the loop is caught along its 5 cm open end, ends-sewn: two 2.5 cm ends');
+  }
+  {
+    // drawn buttons and designed zips: weight and BOM
+    const round = trimWeight({ type: 'button', finish: 'silver', size: 1.8 });
+    const sq = (s2: number) => [{ x: -s2, y: -s2 }, { x: s2, y: -s2 }, { x: s2, y: s2 }, { x: -s2, y: s2 }];
+    const big = trimWeight({ type: 'button', finish: 'silver', size: 1.8, outline: sq(1.4) }), plastic = trimWeight({ type: 'button', finish: 'black', size: 1.8 });
+    pass(big.grams > round.grams * 1.5 && big.radius > 1.9 && plastic.grams < round.grams, `drawn 2.8 cm square button ${big.grams.toFixed(2)} g vs round 18 mm ${round.grams.toFixed(2)} g, plastic ${plastic.grams.toFixed(2)} g`);
+    pass(ZIP_TEETH.metal.grams > ZIP_TEETH.molded.grams && ZIP_TEETH.molded.grams > ZIP_TEETH.coil.grams && ZIP_TEETH.metal.compliance < ZIP_TEETH.coil.compliance, 'zip teeth: metal heavier and stiffer than moulded, moulded than coil');
+    const pieces = makePreset('jacket', DEFAULT_BODY);
+    const fr = pieces.find((p) => p.role === 'front')!;
+    const hw = (id: string, h: Hardware, extra: Partial<Attachment> = {}): Attachment => ({ id, kind: 'hardware', name: id, pieceId: fr.id, x: 5, y: 30, rotation: 0, w: 1, h: 20, outline: 'rect', layers: [], hardware: h, ...extra });
+    const edits = E2({ attachments: [
+      hw('b1', { type: 'button', finish: 'brass', size: 2, outline: sq(1), holes: 2, sheen: 'glossy', layers: [{ id: 'l', shape: 'star', x: 0, y: 0, w: 1, h: 1, rotation: 0, color: '#000' }] }),
+      hw('b2', { type: 'button', finish: 'white', size: 1.5, holes: 'shank', color: '#ff0000' }),
+      hw('z1', { type: 'zipper', finish: 'gunmetal', size: 1, zipper: { teeth: 'coil', tape: '#222222', teethColor: '#ffffff', puller: 'ring' } }),
+    ] });
+    const t = trimsReport(pieces, edits, 'jacket');
+    const d = (id: string) => t.find((r) => r.detail && edits.attachments.find((a) => a.id === id) && r.item === (id[0] === 'z' ? 'Zip' : 'Button') && (id === 'b1' ? /custom/.test(r.detail) : id === 'b2' ? /shank/.test(r.detail) : true))?.detail ?? '';
+    pass(/custom drawn shape/.test(d('b1')) && /Brass/.test(d('b1')) && /glossy/.test(d('b1')) && /2 hole/.test(d('b1')) && /artwork 1 layer/.test(d('b1')), `drawn button BOM: ${d('b1')}`);
+    pass(/round/.test(d('b2')) && /white plastic/.test(d('b2')) && /colour #ff0000/.test(d('b2')) && /shank/.test(d('b2')) && /matte/.test(d('b2')), `plastic button BOM: ${d('b2')}`);
+    pass(/Nylon coil #ffffff/.test(d('z1')) && /tape #222222/.test(d('z1')) && /ring puller/.test(d('z1')), `zip BOM: ${d('z1')}`);
+    const plain = build('jacket', pieces, E2({ attachments: [hw('z', { type: 'zipper', finish: 'silver', size: 1, zipper: { teeth: 'metal', tape: '#000', puller: 'standard' } })] }));
+    const coil = build('jacket', pieces, E2({ attachments: [hw('z', { type: 'zipper', finish: 'silver', size: 1, zipper: { teeth: 'coil', tape: '#000', puller: 'standard' } })] }));
+    const massOf = (G: typeof plain) => { let m = 0; for (let i = 0; i < G.sim.n; i++) m += 1 / G.sim.invMass[i]; return m; };
+    pass(massOf(plain) > massOf(coil), `metal zip weighs the front down more than a coil zip (${(massOf(plain) - massOf(coil)).toFixed(3)} mass units)`);
+  }
+  {
+    // inside fabric shows in the cut list
+    const pieces = makePreset('button-up', DEFAULT_BODY);
+    const collar = pieces.find((p) => p.role === 'collar')!;
+    const rows = cutList(pieces, E2({ insideFabric: { [collar.id]: { id: 'denim', color: 0 } } }), 'button-up');
+    const r = rows.find((q) => q.name === collar.name)!;
+    pass(r.note === 'Inside: Denim, Indigo (under collar)', `cut list: ${r.name} "${r.note}"`);
+  }
 }
 
 // regrade keeps user edits

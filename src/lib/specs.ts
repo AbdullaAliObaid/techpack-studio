@@ -1,8 +1,9 @@
 import type { Piece, SpecDef, GarmentType } from '../data/presets';
 import { bbox, bezAt, bezTangent, dist, outlineLength, samplePoly, sliceSpan, toBeziers, type Pt } from './geometry';
-import type { Attachment, Edits, Pleat } from '../data/edits';
+import type { Attachment, Edits, Hardware, Pleat } from '../data/edits';
 import { attachmentPolygons, outlinePolygon, SHAPES } from './shapes';
-import { instanceLabel } from '../sim/seams';
+import { builtinSeams, faceLabel, faceOf, instanceLabel } from '../sim/seams';
+import { labelMaterial, labelSewing, labelSize } from '../data/labels';
 import { fabricById } from '../data/fabrics';
 import type { StyleId } from '../data/catalog';
 import { derivedGirths, EASE, RIB, frontOffset, neckBase } from '../data/draft';
@@ -344,6 +345,44 @@ export interface AttachmentRow {
   side: string;
   /** cloth pieces cut per copy (an applique of text: one per letter); 0 when it adds no cloth */
   cutPieces: number;
+  /** set when it sits on the inside face of its host (between the host and the body) */
+  face?: 'inside';
+}
+
+/**
+ * The built-in seam a point on a piece edge is sewn into: the seam whose edge on that piece passes nearest the point,
+ * within `within` cm. Plain label ('Collar', 'Right side seam') or null.
+ */
+export function seamNear(style: StyleId | undefined, pieces: Piece[], host: Piece, at: Pt, within = 2): string | null {
+  if (!style) return null;
+  let best: { label: string; d: number } | null = null;
+  for (const bs of builtinSeams(style, pieces, { collar: 'down' })) {
+    for (const r of [...bs.a, ...bs.b]) {
+      if (r.pieceId !== host.id) continue;
+      const pts = host.points, n = pts.length, bz = toBeziers(pts);
+      const ia = pts.findIndex((q) => q.id === r.fromId), ib = pts.findIndex((q) => q.id === r.toId);
+      if (ia < 0 || ib < 0) continue;
+      const fwd = (ib - ia + n) % n, back = (ia - ib + n) % n;
+      const [s0, s1] = fwd <= back ? [ia, ib] : [ib, ia];
+      for (let i = s0; i !== s1; i = (i + 1) % n) for (let k = 0; k <= 24; k++) {
+        const d = dist(bezAt(bz[i], k / 24), at);
+        if (d <= within && (!best || d < best.d)) best = { label: bs.label, d };
+      }
+    }
+  }
+  return best?.label ?? null;
+}
+
+/** How a tag is sewn on, in plain words for the spec sheet. */
+function labelStitched(a: Attachment, tag: ReturnType<typeof labelSewing>, host: Piece | undefined, pieces: Piece[], style?: StyleId) {
+  if (tag.method === 'all-round') return 'sewn all round';
+  if (tag.method === 'loop') {
+    const c = Math.cos((a.rotation * Math.PI) / 180), s = Math.sin((a.rotation * Math.PI) / 180), o = tag.open!;
+    const q = { x: o.dir.x * o.half, y: o.dir.y * o.half };
+    const seam = host ? seamNear(style, pieces, host, { x: a.x + q.x * c - q.y * s, y: a.y + q.x * s + q.y * c }) : null;
+    return `folded loop, caught in the ${seam ? seam.toLowerCase() + ' seam' : 'edge seam'}`;
+  }
+  return a.label?.sewn === 'folded-loop' ? 'folded loop sewn at both ends (more than 1.5 cm from a seam)' : 'sewn at both ends';
 }
 
 const perimeter = (pts: Pt[]) => pts.reduce((s, q, i) => s + dist(q, pts[(i + 1) % pts.length]), 0);
@@ -364,7 +403,8 @@ function sideLabel(style: StyleId | undefined, host: Piece | undefined, instance
 /** Attachments (pockets, patches, appliques, straps, embroidery, prints, hardware) and user pieces patched on, for the spec sheet. */
 export function attachmentReport(pieces: Piece[], edits?: Edits, style?: StyleId): AttachmentRow[] {
   const rows: AttachmentRow[] = [];
-  for (const a of edits?.attachments ?? []) {
+  for (const a0 of edits?.attachments ?? []) {
+    const a = a0.kind === 'label' ? { ...a0, ...labelSize(a0) } : a0;
     const host = pieces.find((p) => p.id === a.pieceId);
     const rings = attachmentPolygons(a);
     const poly = rings[0] ?? outlinePolygon(a.outline, a.w, a.h, a.points);
@@ -372,18 +412,21 @@ export function attachmentReport(pieces: Piece[], edits?: Edits, style?: StyleId
     const top = poly.filter((q) => q.y < Math.min(...poly.map((r) => r.y)) + 0.05);
     const mouth = top.length >= 2 ? Math.max(...top.map((q) => q.x)) - Math.min(...top.map((q) => q.x)) : 0;
     const short = Math.min(a.w, a.h);
-    const [stitched, sewn] = a.kind === 'pocket' ? ['3 sides, top open', P - mouth]
+    const tag = a.kind === 'label' ? labelSewing(a, host) : null;
+    const [stitched, sewn] = tag ? [labelStitched(a, tag, host, pieces, style), tag.method === 'all-round' ? P : tag.method === 'loop' ? tag.open!.along : 2 * short]
+      : a.kind === 'pocket' ? ['3 sides, top open', P - mouth]
       : a.kind === 'strap' ? ['both ends', 2 * short]
       : a.kind === 'patch' ? ['all round', P]
       : a.kind === 'applique' ? ['satin stitch all round', P]
       : a.kind === 'embroidery' ? ['embroidered into the piece', 0]
       : a.kind === 'hardware' ? [a.hardware?.type === 'zipper' ? 'zip sewn in' : 'set through the fabric', a.hardware?.type === 'zipper' ? 2 * a.h : 0]
       : ['printed', 0];
-    const cloth = a.kind === 'pocket' || a.kind === 'patch' || a.kind === 'applique' || a.kind === 'strap';
+    const cloth = a.kind === 'pocket' || a.kind === 'patch' || a.kind === 'applique' || a.kind === 'strap' || (a.kind === 'label' && !labelMaterial(a).purchased);
     rows.push({
       id: a.id, name: a.name, kind: a.kind, host: host?.name ?? 'missing piece', w: a.w, h: a.h, x: a.x, y: a.y, rotation: a.rotation,
       layers: a.layers.length, stitched, sewnLength: sewn, copies: a.instance !== undefined ? 1 : hostCopies(style, host),
       side: sideLabel(style, host, a.instance), cutPieces: cloth ? rings.length : 0,
+      ...(faceOf(a) === 'inside' ? { face: 'inside' as const } : {}),
     });
   }
   for (const p of pieces) {
@@ -401,7 +444,7 @@ export function attachmentReport(pieces: Piece[], edits?: Edits, style?: StyleId
 }
 
 export interface TrimRow {
-  /** 'hardware' | 'embroidery' | 'applique' */
+  /** 'hardware' | 'embroidery' | 'applique' | 'label' */
   kind: string;
   item: string;
   detail: string;
@@ -412,6 +455,84 @@ export interface TrimRow {
 
 const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 const HW_NAME: Record<string, string> = { rivet: 'Rivet', eyelet: 'Eyelet', stud: 'Stud', button: 'Button', snap: 'Snap fastener', zipper: 'Zip' };
+const PLASTIC_FINISH = new Set(['black', 'white']);
+const TEETH: Record<string, string> = { metal: 'metal teeth', coil: 'nylon coil', molded: 'moulded plastic teeth' };
+const PULLER: Record<string, string> = { standard: 'standard puller', ring: 'ring puller', tab: 'tab puller', cord: 'cord pull', custom: 'custom drawn puller' };
+
+/** Trim detail for the BOM: shape (round or custom drawn), holes, finish, surface, colour and size; a zip's teeth, tape and puller. */
+export function hardwareDetail(h: Hardware, a: Pick<Attachment, 'h' | 'sheen'>): string {
+  const sheen = a.sheen ?? h.sheen ?? (PLASTIC_FINISH.has(h.finish) ? 'matte' : 'metallic');
+  if (h.type === 'zipper') {
+    const z = h.zipper;
+    const parts = [`${round1(a.h)} cm long`, `${round1(h.size * 10)} mm tape`, h.open ? 'open' : 'closed'];
+    if (z) {
+      parts.unshift(z.teeth === 'metal' ? `${cap(h.finish)} metal teeth` : `${cap(TEETH[z.teeth] ?? z.teeth)}${z.teethColor ? ` ${z.teethColor}` : ''}`);
+      parts.push(`tape ${z.tape}`, PULLER[z.puller] ?? z.puller);
+      if (z.puller === 'custom' && z.pullerFinish) parts.push(`puller ${z.pullerFinish}`);
+      if (z.pullerLayers?.length) parts.push(`puller artwork ${z.pullerLayers.length} layer${z.pullerLayers.length > 1 ? 's' : ''}`);
+    } else parts.unshift(cap(h.finish));
+    return parts.join(', ');
+  }
+  const parts: string[] = [];
+  const designed = h.type === 'button' || h.type === 'snap' || h.type === 'stud';
+  if (designed) parts.push(h.outline && h.outline.length >= 3 ? 'custom drawn shape' : 'round');
+  const plastic = PLASTIC_FINISH.has(h.finish);
+  parts.push(plastic ? `${h.finish} plastic` : cap(h.finish));
+  if (h.color) parts.push(`colour ${h.color}`);
+  if (designed || a.sheen || h.sheen) parts.push(sheen); // rivets and eyelets: only a chosen surface
+  if (h.type === 'button') parts.push(h.holes === 'shank' ? 'shank' : h.holes === 0 ? 'no holes' : `${h.holes ?? 4} hole`);
+  if (h.outline && h.outline.length >= 3) {
+    const bb = bbox(h.outline);
+    parts.push(`${round1(bb.w * 10)} x ${round1(bb.h * 10)} mm`);
+  } else parts.push(`${round1(h.size * 10)} mm`);
+  if (h.layers?.length) parts.push(`artwork ${h.layers.length} layer${h.layers.length > 1 ? 's' : ''}`);
+  return parts.join(', ');
+}
+
+export interface LabelRow {
+  id: string;
+  name: string;
+  /** material name and type */
+  material: string;
+  type: string;
+  /** finished size (cm) and the cut size of the strip (a folded loop is cut twice as long) */
+  w: number;
+  h: number;
+  cutW: number;
+  cutH: number;
+  sewn: string;
+  /** host copy and face: 'Back, inside' */
+  placement: string;
+  x: number;
+  y: number;
+  color: string;
+  sheen: string;
+  /** artwork layers woven or printed on it */
+  layers: number;
+  /** bought finished (leather, rubber): a trim, not a cut piece */
+  purchased: boolean;
+  qty: number;
+}
+
+/** Clothing tags for the spec sheet, PDF and DXF: material, size, how they are sewn on and where. */
+export function labelReport(pieces: Piece[], edits?: Edits, style?: StyleId): LabelRow[] {
+  const rows: LabelRow[] = [];
+  for (const a0 of edits?.attachments ?? []) {
+    if (a0.kind !== 'label') continue;
+    const a = { ...a0, ...labelSize(a0) };
+    const host = pieces.find((p) => p.id === a.pieceId);
+    const mat = labelMaterial(a), sew = labelSewing(a, host);
+    const face = faceOf(a);
+    const faceName = host && style ? faceLabel(style, host, face).toLowerCase() : face;
+    rows.push({
+      id: a.id, name: a.name, material: mat.name, type: a.label?.type ?? 'woven', w: a.w, h: a.h, cutW: sew.cut.w, cutH: sew.cut.h,
+      sewn: labelStitched(a, sew, host, pieces, style), placement: `${sideLabel(style, host, a.instance)}, ${faceName}`, x: a.x, y: a.y,
+      color: a.label?.color ?? 'white', sheen: a.sheen ?? 'matte', layers: a.layers.length, purchased: mat.purchased,
+      qty: a.instance !== undefined ? 1 : hostCopies(style, host),
+    });
+  }
+  return rows;
+}
 
 /**
  * Trims from the edits for the bill of materials: hardware by type, finish, size, count and placement;
@@ -430,11 +551,15 @@ export function trimsReport(pieces: Piece[], edits?: Edits, style?: StyleId): Tr
     const copies = a.instance !== undefined ? 1 : hostCopies(style, host);
     if (a.kind === 'hardware' && a.hardware) {
       const h = a.hardware;
+      const where = faceOf(a) === 'inside' && host && style ? `${placement}, ${faceLabel(style, host, 'inside').toLowerCase()}` : placement;
       if (h.type === 'zipper') {
-        push({ kind: 'hardware', item: 'Zip', detail: `${cap(h.finish)}, ${round1(a.h)} cm long, ${round1(h.size * 10)} mm tape, ${h.open ? 'open' : 'closed'}`, placement, qty: copies });
+        push({ kind: 'hardware', item: 'Zip', detail: hardwareDetail(h, a), placement: where, qty: copies });
       } else {
-        push({ kind: 'hardware', item: HW_NAME[h.type] ?? cap(h.type), detail: `${cap(h.finish)}, ${round1(h.size * 10)} mm`, placement, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
+        push({ kind: 'hardware', item: HW_NAME[h.type] ?? cap(h.type), detail: hardwareDetail(h, a), placement: where, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
       }
+    } else if (a.kind === 'label') {
+      const r = labelReport(pieces, { ...edits!, attachments: [a] }, style)[0];
+      push({ kind: 'label', item: `Label (${r.material.toLowerCase()})`, detail: `${round1(r.w)} x ${round1(r.h)} cm, ${r.sewn}, ${r.color}, ${r.sheen}${r.layers ? `, artwork ${r.layers} layer${r.layers > 1 ? 's' : ''}` : ''}${r.purchased ? ', bought finished' : ''}`, placement: r.placement, qty: r.qty });
     } else if (a.kind === 'embroidery') {
       push({ kind: 'embroidery', item: 'Embroidery', detail: `Thread ${a.thread ?? 'colour matched'}, ${round1(a.w)} x ${round1(a.h)} cm${a.text ? `, "${a.text}"` : ''}`, placement, qty: copies });
     } else if (a.kind === 'applique') {
@@ -451,10 +576,20 @@ export interface CutRow { name: string; fabric: string; cut: number; note?: stri
 
 /** Cut list: every pattern piece with its cut count, then the cloth attachments (pockets, patches, straps, appliques). */
 export function cutList(pieces: Piece[], edits?: Edits, style?: StyleId): CutRow[] {
-  const rows: CutRow[] = pieces.filter((p) => !(p.role === 'custom' && p.placement?.mode === 'patch')).map((p) => ({ name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut }));
+  const rows: CutRow[] = pieces.filter((p) => !(p.role === 'custom' && p.placement?.mode === 'patch')).map((p) => {
+    const inner = edits?.insideFabric?.[p.id];
+    if (!inner) return { name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut };
+    // the inside face in its own fabric (under collar, placket facing, lining look)
+    const f = fabricById(inner.id), col = f.colors[inner.color]?.name;
+    const what = style ? faceLabel(style, p, 'inside') : 'Inside';
+    return { name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut, note: `Inside: ${f.name}${col ? `, ${col}` : ''}${what !== 'Inside' ? ` (${what.toLowerCase()})` : ''}` };
+  });
+  const tags = labelReport(pieces, edits, style);
   for (const r of attachmentReport(pieces, edits, style)) {
     if (!r.cutPieces) continue;
     const a = edits?.attachments.find((q) => q.id === r.id);
+    const tag = tags.find((t) => t.id === r.id);
+    if (tag) { rows.push({ name: r.name, fabric: tag.material, cut: r.copies, note: `Label on ${tag.placement}, cut ${round1(tag.cutW)} x ${round1(tag.cutH)} cm` }); continue; }
     const up = pieces.find((p) => p.id === r.id);
     const fab = fabricById((a?.fabric ?? up?.fabric ?? pieces.find((p) => p.name === r.host)?.fabric)?.id ?? 'cotton');
     rows.push({ name: r.name, fabric: fab.name, cut: r.cutPieces * r.copies, note: `${cap(r.kind)} on ${r.side}${r.cutPieces > 1 ? `, ${r.cutPieces} letters each` : ''}` });
@@ -599,7 +734,7 @@ export function placementMarks(p: Piece, pieces: Piece[], edits?: Edits) {
   for (const a of edits?.attachments ?? []) {
     if (a.pieceId !== p.id) continue;
     if (a.kind === 'hardware') continue; // hardware is marked as points (hardwareMarks), not an outline
-    attachmentOutlines(a).forEach((pts, i) => outlines.push({ name: i ? '' : a.name, kind: a.kind, pts, centre: { x: a.x, y: a.y } }));
+    attachmentOutlines(a.kind === 'label' ? { ...a, ...labelSize(a) } : a).forEach((pts, i) => outlines.push({ name: i ? '' : a.name, kind: a.kind, pts, centre: { x: a.x, y: a.y } }));
   }
   for (const q of pieces) {
     const po = patchOutline(q);
