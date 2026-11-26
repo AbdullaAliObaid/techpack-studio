@@ -32,6 +32,19 @@ export class ClothSim {
   substeps = 10;
   staticFriction = 0.5;
   maxMove = 1.2; // cm per substep, keeps early sewing from exploding
+  /**
+   * Blow-up guards. No cloth point moves faster than maxSpeed (cm/s, about 17 cm per substep) between substeps: a drape, a seam closing (peaks about 6000 cm/s on baggy jeans) or a
+   * running body stays well under it, so it only acts on a point that something is throwing (a constraint fight).
+   * Once sewn, a cloth layer (attachment on its host, the fall of a collar on its stand) is pushed back out by at most
+   * layerStep per substep: a host triangle that twists can not fling the point lying on it. If a frame still ends with a
+   * position that is not a finite number or is absurdly far off (any coordinate past maxCoord cm), the cloth is put
+   * back where it was at the end of the last good frame, at rest (recoveries counts how often).
+   */
+  maxSpeed = 10000;
+  layerStep = 0.1;
+  maxCoord = 2000;
+  recoveries = 0;
+  private good: Float32Array | null = null;
   collider: { project(p: Float32Array, i: number, out: { nx: number; ny: number; nz: number; depth: number; vx?: number; vy?: number; vz?: number }): boolean } | null = null;
   // self collision
   selfRadius = 0;
@@ -94,6 +107,8 @@ export class ClothSim {
     const grav = sewing ? 0 : this.gravity;
     const sfr = sewing ? 0 : this.staticFriction;
     let maxV = 0;
+    const vMax = this.maxSpeed, vMax2 = vMax * vMax;
+    if (!this.good) this.good = pos.slice();
     for (let s = 0; s < this.substeps; s++) {
       if (this.substepHook) this.substepHook(s, this.substeps);
       for (let i = 0; i < n; i++) {
@@ -157,16 +172,35 @@ export class ClothSim {
           }
         }
       }
-      if (this.layerIdx) this.layers(pos);
+      // while sewing (no gravity) a layer may be put right in one go, so folds and pockets start on the right side
+      if (this.layerIdx) this.layers(pos, sewing ? Infinity : this.layerStep);
       for (let i = 0; i < n; i++) {
         const j = i * 3;
-        vel[j] = ((pos[j] - prev[j]) / h) * damp;
-        vel[j + 1] = ((pos[j + 1] - prev[j + 1]) / h) * damp;
-        vel[j + 2] = ((pos[j + 2] - prev[j + 2]) / h) * damp;
+        let vx = (pos[j] - prev[j]) / h, vy = (pos[j + 1] - prev[j + 1]) / h, vz = (pos[j + 2] - prev[j + 2]) / h;
+        const v2 = vx * vx + vy * vy + vz * vz;
+        if (v2 > vMax2) {
+          // thrown: keep the direction, limit the step (and the speed it carries into the next substep)
+          const k = vMax / Math.sqrt(v2);
+          vx *= k; vy *= k; vz *= k;
+          pos[j] = prev[j] + vx * h; pos[j + 1] = prev[j + 1] + vy * h; pos[j + 2] = prev[j + 2] + vz * h;
+        }
+        vel[j] = vx * damp;
+        vel[j + 1] = vy * damp;
+        vel[j + 2] = vz * damp;
         if (s === this.substeps - 1) maxV = Math.max(maxV, Math.abs(vel[j]) + Math.abs(vel[j + 1]) + Math.abs(vel[j + 2]));
       }
     }
     this.frames++;
+    // a frame that went wrong (not a number, or flung absurdly far): back to the last good frame, at rest
+    let ok = true;
+    const M = this.maxCoord;
+    for (let j = 0; j < pos.length; j++) { const p = pos[j]; if (!(p > -M && p < M)) { ok = false; break; } }
+    if (ok) this.good!.set(pos);
+    else {
+      this.recoveries++;
+      pos.set(this.good!); prev.set(pos); vel.fill(0);
+      maxV = 0;
+    }
     if (!this.awake && this.frames > this.sewFrames + 60 && maxV < 1.5) this.sleeping = true;
     if (!this.awake && this.frames > this.sewFrames + 330) this.sleeping = true;
     return maxV;
@@ -216,10 +250,14 @@ export class ClothSim {
     }
   }
 
-  /** Keep every attachment particle on the outer side of its host cloth (moves the attachment only). */
-  layers(pos: Float32Array) {
+  /**
+   * Keep every attachment particle on the outer side of its host cloth (moves the attachment only), by at most `step`
+   * cm; entries from..to (default all).
+   */
+  layers(pos: Float32Array, step = Infinity, from = 0, to = Infinity) {
     const I = this.layerIdx!, W = this.layerW!;
-    for (let e = 0, k = 0; e < I.length; e += 4, k += 5) {
+    const end = Math.min(I.length, to * 4);
+    for (let e = from * 4, k = from * 5; e < end; e += 4, k += 5) {
       const a = I[e] * 3, h0 = I[e + 1] * 3, h1 = I[e + 2] * 3, h2 = I[e + 3] * 3;
       const ux = pos[h1] - pos[h0], uy = pos[h1 + 1] - pos[h0 + 1], uz = pos[h1 + 2] - pos[h0 + 2];
       const vx = pos[h2] - pos[h0], vy = pos[h2 + 1] - pos[h0 + 1], vz = pos[h2 + 2] - pos[h0 + 2];
@@ -231,8 +269,9 @@ export class ClothSim {
       const w0 = W[k], w1 = W[k + 1], w2 = W[k + 2];
       const px = pos[h0] * w0 + pos[h1] * w1 + pos[h2] * w2, py = pos[h0 + 1] * w0 + pos[h1 + 1] * w1 + pos[h2 + 1] * w2, pz = pos[h0 + 2] * w0 + pos[h1 + 2] * w1 + pos[h2 + 2] * w2;
       const d = (pos[a] - px) * nx + (pos[a + 1] - py) * ny + (pos[a + 2] - pz) * nz;
-      const c = W[k + 3] - d;
+      let c = W[k + 3] - d;
       if (c <= 0) continue;
+      if (c > step) c = step;
       pos[a] += nx * c; pos[a + 1] += ny * c; pos[a + 2] += nz * c;
     }
   }

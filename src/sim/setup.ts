@@ -4,9 +4,9 @@
 
 import type { GarmentType, Piece } from '../data/presets';
 import { fabricById } from '../data/fabrics';
-import { migrateGarment, styleById, type Style } from '../data/catalog';
-import { frontOffset, RIB } from '../data/draft';
-import { bezAt, bbox, pointInPoly, samplePoly, sliceSpan, toBeziers, type PPoint, type Pt } from '../lib/geometry';
+import { migrateGarment, styleById, type Style, type StyleId } from '../data/catalog';
+import { COLLAR_TIP, frontOffset, RIB } from '../data/draft';
+import { bezAt, bbox, outlineLength, pointInPoly, samplePoly, sliceSpan, toBeziers, type PPoint, type Pt } from '../lib/geometry';
 import { attachmentPolygons } from '../lib/shapes';
 import { EMPTY_EDITS, type EdgeRef, type Edits, type Face, type Hardware, type Pleat } from '../data/edits';
 import { labelMaterial, labelSewing, labelSize, type LabelMaterial } from '../data/labels';
@@ -106,6 +106,8 @@ export interface Garment3D {
   panelSign: Int8Array;
   /** collar worn down or up in this build */
   collar: 'down' | 'up';
+  /** sim layer entries before this index are attachments on their host; from it on, the fall of a collar on its stand */
+  foldLayers?: number;
 }
 
 type Hit = { nx: number; ny: number; nz: number; depth: number; vx?: number; vy?: number; vz?: number };
@@ -161,6 +163,31 @@ function collarEdge(c: Piece): (u: number) => number {
   };
 }
 
+/** below this mismatch (share of the neckline) a collar's sewn edge counts as walked to the neckline */
+const COLLAR_MATCH = 0.01;
+
+/**
+ * How a collar wraps round the neckline, from its own sewn edge as drawn. L: the circumference (cm of pattern x) the
+ * collar is wrapped over, the sewn edge from tip to tip plus the drafted tip run-out (COLLAR_TIP) at each end; g: the
+ * neckline length over the collar's sewn edge length. A drafted collar is walked to the neckline (g = 1, the wrap
+ * is the pattern width at the tips, as it always was). A sewn edge longer than the neckline (g < 1) is eased in, its
+ * extra length spread evenly round the neck like the seam spreads it; a shorter one is stretched on.
+ */
+export function collarFit(style: StyleId, collar: Piece, knit: boolean, pieces: Piece[], edits?: Pick<Edits, 'collar'>) {
+  const p1 = collar.points.find((q) => q.key === 'collar.1'), p1m = collar.points.find((q) => q.key === 'collar.1m');
+  const X1 = p1 && p1m ? (Math.abs(p1.x) + Math.abs(p1m.x)) / 2 : Math.max(...collar.points.map((q) => q.x)) - (knit ? COLLAR_TIP.knit : COLLAR_TIP.woven);
+  const Lc = p1 && p1m ? outlineLength(collar.points, p1.id, p1m.id) : 0;
+  const seam = builtinSeams(style, pieces, edits).find((s) => s.id === 'collar');
+  let N = 0;
+  for (const r of seam?.b ?? []) { const P = pieces.find((q) => q.id === r.pieceId); if (P) N += outlineLength(P.points, r.fromId, r.toId); }
+  let g = Lc > 0 && N > 0 ? N / Lc : 1;
+  if (Math.abs(g - 1) < COLLAR_MATCH) g = 1;
+  // past what a seam can sensibly ease in or stretch on, the start shape stops following (the seam spreads the rest)
+  g = Math.max(0.6, Math.min(1.25, g));
+  const L = 2 * (X1 * g + (knit ? COLLAR_TIP.knit : COLLAR_TIP.woven));
+  return { L, g, Lc, N };
+}
+
 const key = (p: Piece, k: string) => p.points.find((q) => q.key === k)?.id;
 const tag = (p: Piece, t: string) => p.points.find((q) => q.tag === t);
 
@@ -172,8 +199,8 @@ const len3 = (a: V3) => Math.sqrt(dot3(a, a));
 const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
 /** Triangle of a panel mesh under a pattern point, with barycentric weights (nearest triangle when outside). */
-export function locate(m: PanelMesh, p: Pt): { v: [number, number, number]; w: [number, number, number] } {
-  let best = { v: [0, 0, 0] as [number, number, number], w: [1, 0, 0] as [number, number, number] }, bestMin = -Infinity;
+export function locate(m: PanelMesh, p: Pt): { v: [number, number, number]; w: [number, number, number]; out: number } {
+  let best = { v: [0, 0, 0] as [number, number, number], w: [1, 0, 0] as [number, number, number], out: 0 }, bestMin = -Infinity;
   for (let t = 0; t < m.tris.length; t += 3) {
     const a = m.uv[m.tris[t]], b = m.uv[m.tris[t + 1]], c = m.uv[m.tris[t + 2]];
     const det = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
@@ -184,12 +211,13 @@ export function locate(m: PanelMesh, p: Pt): { v: [number, number, number]; w: [
     const mn = Math.min(wa, wb, wc);
     if (mn > bestMin) {
       bestMin = mn;
-      best = { v: [m.tris[t], m.tris[t + 1], m.tris[t + 2]], w: [wa, wb, wc] };
+      best = { v: [m.tris[t], m.tris[t + 1], m.tris[t + 2]], w: [wa, wb, wc], out: 0 };
       if (mn >= 0) break;
     }
   }
   if (bestMin < 0) {
-    // outside the piece: clamp onto the nearest triangle
+    // outside the piece: clamp onto the nearest triangle (out: how far outside, in barycentric units)
+    best.out = -bestMin;
     const w = best.w.map((x) => Math.max(0, x)) as [number, number, number];
     const s = w[0] + w[1] + w[2] || 1;
     best.w = [w[0] / s, w[1] / s, w[2] / s];
@@ -472,38 +500,49 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     }
     const collar = pieces.find((p) => p.role === 'collar');
     if (collar) {
-      const L = Math.max(...collar.points.map((p) => p.x)) * 2;
       const knit = fam === 'polo';
       const roll = collarRoll(style.id, collar);
       const edgeY = collarEdge(collar);
-      // a fine mesh: the stand is only 2 to 3 cm tall, and a fold needs a few rows of triangles to turn over
-      const cm = legacyCollar ? undefined : meshPanel(collar.points, Math.min(spacing, COLLAR_SPACING));
-      add(collar, false, (u, v) => {
-        const th = Math.PI / 2 - ((L / 2 - u) / L) * TAU; // tips at centre front, centre of the collar at centre back
-        const r0 = Math.max(L / TAU, Math.max(nr.a, nr.b) + 1.2);
-        const base = f.neckH - neckDepth(th), cz = nr.cz ?? 0;
-        if (legacyCollar && !knit) return [(r0 + 0.15 * v) * Math.cos(th), f.neckH - neckDepth(th) + v * 0.9, (nr.cz ?? 0) + (r0 + 0.15 * v) * Math.sin(th)];
-        if (collarIs === 'up') {
-          // popped: stand and fall in line, standing up round the neck, flaring out a little and lightly rolled
-          // outward along the top edge
-          const s = Math.max(0, v - (knit ? 0 : edgeY(u)));
-          const r = r0 + 0.12 * s + 0.25 * Math.max(0, s - roll - 1);
-          return [r * Math.cos(th), base + 0.95 * s, cz + r * Math.sin(th)];
-        }
-        if (!knit) {
-          // woven collar worn down: the stand rises to the roll line, the fall folds over and lies down over it
+      if (legacyCollar) {
+        // projects from before the collar option: exactly the old start (tests/fixtures/sew-baseline.json)
+        const L = Math.max(...collar.points.map((p) => p.x)) * 2;
+        add(collar, false, (u, v) => {
+          const th = Math.PI / 2 - ((L / 2 - u) / L) * TAU;
+          const r0 = Math.max(L / TAU, Math.max(nr.a, nr.b) + 1.2);
+          if (!knit) return [(r0 + 0.15 * v) * Math.cos(th), f.neckH - neckDepth(th) + v * 0.9, (nr.cz ?? 0) + (r0 + 0.15 * v) * Math.sin(th)];
+          const stand = Math.min(v, 2.5), fall = Math.max(0, v - 2.5);
+          const fold = Math.min(1, fall / 0.8);
+          const r = r0 + 0.1 * stand + 0.6 * fold + 0.15 * fall;
+          return [r * Math.cos(th), f.neckH - neckDepth(th) + stand + 0.3 * fold - 0.95 * fall, (nr.cz ?? 0) + r * Math.sin(th)];
+        });
+      } else {
+        // the wrap round the neck comes from the collar's own sewn edge as drawn (collarFit), so a collar edited longer,
+        // taller or with a neck edge that no longer matches the neckline starts in a shape its seam can close without
+        // pulling: a neck edge longer than the neckline starts eased in (spread evenly), as the sewing will hold it
+        const fit = collarFit(style.id, collar, knit, pieces, edits);
+        const { L, g } = fit;
+        // a fine mesh: the stand is only 2 to 3 cm tall, and a fold needs a few rows of triangles to turn over
+        const cm = meshPanel(collar.points, Math.min(spacing, COLLAR_SPACING));
+        add(collar, false, (u, v) => {
+          const th = Math.PI / 2 - ((L / 2 - u * g) / L) * TAU; // tips at centre front, centre of the collar at centre back
+          const r0 = Math.max(L / TAU, Math.max(nr.a, nr.b) + 1.2);
+          const base = f.neckH - neckDepth(th), cz = nr.cz ?? 0;
+          // height over the sewn edge: the stand rises from it to the roll line, the fall is beyond
           const s = Math.max(0, v - edgeY(u));
+          if (collarIs === 'up') {
+            // popped: stand and fall in line, standing up round the neck, flaring out a little and lightly rolled
+            // outward along the top edge
+            const r = r0 + 0.12 * s + 0.25 * Math.max(0, s - roll - 1);
+            return [r * Math.cos(th), base + 0.95 * s, cz + r * Math.sin(th)];
+          }
+          // worn down: the stand rises to the roll line, the fall folds over (round over the fold line) and lies down
+          // over the stand and the neckline
           const stand = Math.min(s, roll), fall = Math.max(0, s - roll);
           const fold = Math.min(1, fall / 0.8);
           const r = r0 + 0.1 * stand + 0.6 * fold + 0.15 * fall;
           return [r * Math.cos(th), base + stand + 0.3 * fold - 0.95 * fall, cz + r * Math.sin(th)];
-        }
-        // knit collar: a short stand, then it folds over and the fall lies down over the stand and the neckline
-        const stand = Math.min(v, 2.5), fall = Math.max(0, v - 2.5);
-        const fold = Math.min(1, fall / 0.8); // round over the fold line
-        const r = r0 + 0.1 * stand + 0.6 * fold + 0.15 * fall;
-        return [r * Math.cos(th), f.neckH - neckDepth(th) + stand + 0.3 * fold - 0.95 * fall, (nr.cz ?? 0) + r * Math.sin(th)];
-      }, cm);
+        }, cm);
+      }
     }
     const cuff = pieces.find((p) => p.role === 'cuff');
     if (fam === 'shirt' && cuff && sleeve) {
@@ -1106,11 +1145,16 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   // the start distance, and kept on the stand's outer side (the under collar side, away from the neck) like a cloth
   // layer; the rest of the fall hangs past the neckline seam, kept on the outer side of the foot of the stand.
   // Without the side rule a fold may turn either way: a fall folded in against the neck climbs up it.
+  // Everything here comes from the collar as drawn: the sewn edge (collarEdge), the roll line over it (collarRoll),
+  // and only where the collar really has a stand under the fall. A point that runs out past the stand (a collar tip
+  // drawn longer than its sewn edge) has nothing to lie on and hangs free: tied to the nearest triangle instead, its
+  // side rule swings with every twist of that triangle and shakes the fall. The solver pushes a layer back out by at
+  // most ClothSim.layerStep per substep, so a host triangle that does twist can not fling the fall about.
+  const foldLayers = layerIdx.length / 4; // collar fold entries follow the attachment ones
   if (collarIs === 'down' && !legacyCollar) for (const P of insts) {
     if (P.piece.role !== 'collar' || P.attach) continue;
     const roll = collarRoll(style.id, P.piece), edgeY = collarEdge(P.piece), uv = P.mesh.uv;
-    const knitC = fam === 'polo';
-    const sOf = (q: Pt) => q.y - (knitC ? 0 : edgeY(q.x));
+    const sOf = (q: Pt) => q.y - edgeY(q.x); // height over the sewn edge as drawn
     const away = -signOf(P); // winding sign of the under collar face
     const X = (i: number): V3 => [init[i * 3], init[i * 3 + 1], init[i * 3 + 2]];
     uv.forEach((q, i) => {
@@ -1125,6 +1169,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
         if (bj >= 0) bend.push([vi, P.offset + bj, len3(sub3(X(vi), X(P.offset + bj))), 0]);
       }
       const L = locate(P.mesh, target);
+      if (L.out > 0.05) return;
       layerIdx.push(vi, P.offset + L.v[0], P.offset + L.v[1], P.offset + L.v[2]);
       layerW.push(L.w[0], L.w[1], L.w[2], LAYER_GAP, away);
     });
@@ -1338,7 +1383,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   sim.nearSeam = nearSeam;
   sim.selfRadius = Math.min(spacing * 0.45, 0.5 + heaviest / 1500); // thicker cloth keeps layers further apart
   const panelSign = Int8Array.from(insts, (P) => signOf(P));
-  return { sim, panels: insts.map(({ place: _p, shape: _s, mech: _m, ...rest }) => rest), limits, seamLinks, body: body3d, contact, panelSign, collar: collarIs, ...(layerNear.length ? { layerNear } : {}) };
+  return { sim, panels: insts.map(({ place: _p, shape: _s, mech: _m, ...rest }) => rest), limits, seamLinks, body: body3d, contact, panelSign, collar: collarIs, foldLayers, ...(layerNear.length ? { layerNear } : {}) };
 }
 
 /**
@@ -1349,9 +1394,13 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
 export function displayPositions(G: Garment3D, out: Float32Array) {
   G.sim.display(out);
   const B = G.body, contact = G.contact;
+  const nL = G.sim.layerIdx ? G.sim.layerIdx.length / 4 : 0, fold = Math.min(nL, G.foldLayers ?? nL);
+  // the fall of a collar laid out over its stand first, so the skin rule below has the last word on the collar (a stand
+  // that twists near a collar point could otherwise push the fall into the neck)
+  if (fold < nL) G.sim.layers(out, Infinity, fold, nL);
   if (B && B.thickness > 0) liftOffSkin(G, B, contact, out);
   // attachments last: always on the outer face of their host as drawn
-  if (G.sim.layerIdx) G.sim.layers(out);
+  if (fold > 0) G.sim.layers(out, Infinity, 0, fold);
   if (G.layerNear) for (const L of G.layerNear) liftOffHost(out, L);
 }
 

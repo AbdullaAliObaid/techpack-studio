@@ -240,5 +240,26 @@ for (const [bname, body] of BODIES.slice(0, 1)) {
   }
 }
 
+// collars edited the way a user drags points in the 2D editor (symmetry on): the points 4 cm longer and the neck edge
+// 3 cm longer than the neckline (eased in), worn down and up, standing
+console.log('\n== edited collars ==');
+for (const [bname, body] of BODIES.slice(0, 1)) {
+  const w = world(bname, body);
+  const mv = (p: Piece, k: string, dx: number) => {
+    const pt = p.points.find((q) => q.key === k)!, nx = pt.x + dx;
+    p.points = p.points.map((q) => (q.id === pt.id ? { ...q, x: nx } : q.id === pt.mirror ? { ...q, x: -nx } : q));
+  };
+  for (const style of ['polo', 'collared-tee', 'button-up', 'jacket'] as StyleId[]) for (const collar of ['down', 'up'] as const) {
+    const pieces = makePreset(style, body);
+    const c = pieces.find((q) => q.role === 'collar')!;
+    mv(c, 'collar.2', 2); mv(c, 'collar.1', 1.5);
+    const { G, M0 } = standing(w, style, pieces, { ...EMPTY_EDITS, collar });
+    const r = clipOf(G, posed(w, M0));
+    const ok = r.inside / r.samples < STAND_MAX / 100 && r.maxDepth <= STAND_DEPTH && G.sim.recoveries === 0;
+    if (!ok) fails++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${bname.padEnd(6)} ${style.padEnd(12)} edited collar ${collar.padEnd(4)}  inside ${pct(r.inside, r.samples).padStart(6)} of ${r.samples} samples, max depth ${(r.maxDepth * 10).toFixed(1)} mm${r.inside && (process.env.V || !ok) ? `  (${r.worst})` : ''}`);
+  }
+}
+
 console.log(fails ? `\n${fails} FAILED` : '\nall clip checks passed');
 process.exit(fails ? 1 : 0);
