@@ -8,9 +8,43 @@
 
 import type { Attachment } from '../data/edits';
 import type { Pt } from '../lib/geometry';
-import { outlinePolygon } from '../lib/shapes';
+import { attachmentPolygon } from '../lib/trims';
 import { DASH, Locator, outwardSigns, panelHex, threadTone, type DetailsMsg } from './details';
-import type { Garment3D } from './setup';
+import type { Garment3D, PanelInst } from './setup';
+
+/**
+ * +1 or -1 per panel: which way the triangle normals (mesh order) face outward. Cloth attachment panels take the side
+ * of the host cloth under them, which is more reliable than a vote on a small flat piece.
+ */
+export function outwardSignsHosted(panels: PanelInst[], pos: Float32Array): number[] {
+  const s = outwardSigns(panels, pos);
+  const nrm = (P: PanelInst, t: number, out: number[]) => {
+    const { tris } = P.mesh, o = P.offset;
+    const a = (o + tris[t]) * 3, b = (o + tris[t + 1]) * 3, c = (o + tris[t + 2]) * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+    out[0] = uy * vz - uz * vy; out[1] = uz * vx - ux * vz; out[2] = ux * vy - uy * vx;
+    out[3] = (pos[a] + pos[b] + pos[c]) / 3; out[4] = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3; out[5] = (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3;
+  };
+  panels.forEach((P, k) => {
+    const H = P.attach ? panels[P.attach.host] : null;
+    if (!P.attach || !H) return;
+    const q = [0, 0, 0, 0, 0, 0];
+    let cx = 0, cy = 0, cz = 0, nx = 0, ny = 0, nz = 0;
+    for (let t = 0; t < P.mesh.tris.length; t += 3) { nrm(P, t, q); cx += q[3]; cy += q[4]; cz += q[5]; nx += q[0]; ny += q[1]; nz += q[2]; }
+    const nt = Math.max(1, P.mesh.tris.length / 3);
+    cx /= nt; cy /= nt; cz /= nt;
+    let best = Infinity, hx = 0, hy = 0, hz = 0;
+    for (let t = 0; t < H.mesh.tris.length; t += 3) {
+      nrm(H, t, q);
+      const d = (q[3] - cx) ** 2 + (q[4] - cy) ** 2 + (q[5] - cz) ** 2;
+      if (d < best) { best = d; hx = q[0]; hy = q[1]; hz = q[2]; }
+    }
+    const hs = s[P.attach.host];
+    if (best < Infinity) s[k] = (nx * hx + ny * hy + nz * hz) * hs >= 0 ? 1 : -1;
+  });
+  return s;
+}
 
 const INSET = 0.3; // stitch line distance from the attachment edge, cm
 const MAX_DASHES = 20000;
@@ -29,7 +63,7 @@ function inset(poly: Pt[], by: number): Pt[] {
 
 export function buildAttachmentDetails(G: Garment3D, attachments: Attachment[]): AttachDetailsMsg {
   const { sim, panels } = G;
-  const signs = outwardSigns(panels, sim.pos);
+  const signs = outwardSignsHosted(panels, sim.pos);
   const locs = new Map<number, Locator>();
   const loc = (k: number) => { let l = locs.get(k); if (!l) { l = new Locator(panels[k]); locs.set(k, l); } return l; };
   const palette: string[] = [];
@@ -67,57 +101,91 @@ export function buildAttachmentDetails(G: Garment3D, attachments: Attachment[]):
     }
   };
 
-  for (const a of attachments) {
-    if (a.kind === 'print') continue;
-    const own = panels.findIndex((P) => P.piece.id === a.id);
-    const k = own >= 0 ? own : panels.findIndex((P) => P.piece.id === a.pieceId);
-    if (k < 0) continue;
-    const c = own >= 0 ? 1 : Math.cos(rad(a.rotation)), s = own >= 0 ? 0 : Math.sin(rad(a.rotation));
-    const ox = own >= 0 ? 0 : a.x, oy = own >= 0 ? 0 : a.y;
-    const T = (p: Pt): Pt => ({ x: ox + c * p.x - s * p.y, y: oy + s * p.x + c * p.y });
-    const col = threadTone(panelHex(panels[k]));
-    const ring = inset(outlinePolygon(a.outline, a.w, a.h, a.points), INSET);
+  const zigzag = (k: number, ring: Pt[], col: string, T: (p: Pt) => Pt) => {
+    // resample the closed outline and swing the needle +-AMP across it
+    const pts = [...ring, ring[0]];
+    const acc = [0];
+    for (let i = 1; i < pts.length; i++) acc.push(acc[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+    const L = acc[acc.length - 1];
+    if (L < 1) return;
+    const N = Math.max(8, Math.round(L / 0.22)), AMP = 0.14;
+    const at = (s: number) => {
+      let j = 0;
+      while (j < pts.length - 2 && acc[j + 1] < s) j++;
+      const f = Math.max(0, Math.min(1, (s - acc[j]) / ((acc[j + 1] - acc[j]) || 1)));
+      const dx = pts[j + 1].x - pts[j].x, dy = pts[j + 1].y - pts[j].y, dl = Math.hypot(dx, dy) || 1;
+      return { x: pts[j].x + dx * f, y: pts[j].y + dy * f, nx: -dy / dl, ny: dx / dl };
+    };
+    let prev: Pt | null = null;
+    for (let i = 0; i <= N; i++) {
+      const q = at((i / N) * L), sg = i % 2 ? 1 : -1;
+      const p = { x: q.x + q.nx * AMP * sg, y: q.y + q.ny * AMP * sg };
+      if (prev) {
+        const len = Math.hypot(p.x - prev.x, p.y - prev.y);
+        line(k, [T(prev), T(p)], col, len * 0.97, 0);
+      }
+      prev = p;
+    }
+  };
 
-    if (a.kind === 'patch') {
-      line(k, [...ring, ring[0]].map(T), col);
-    } else if (a.kind === 'pocket') {
-      // drop the top edge: vertices on the minimum y form one run; the stitch runs from the end of that run round to its start
-      const minY = Math.min(...ring.map((p) => p.y));
-      const top = ring.map((p) => p.y <= minY + 1e-3);
-      const N = ring.length;
-      let start = -1;
-      for (let i = 0; i < N; i++) if (top[i] && !top[(i + 1) % N]) start = i; // last top vertex of the run
-      if (start >= 0) {
-        const path: Pt[] = [ring[start]];
-        for (let j = 1; j <= N; j++) {
-          const i = (start + j) % N;
-          path.push(ring[i]);
-          if (top[i]) break;
-        }
-        line(k, path.map(T), col);
-        // bar tacks across the seam at both ends: three short bars stepping into the pocket
-        for (const [e, f] of [[path[0], path[1]], [path[path.length - 1], path[path.length - 2]]] as [Pt, Pt][]) {
-          const tl = Math.hypot(f.x - e.x, f.y - e.y) || 1;
-          const tx = (f.x - e.x) / tl, ty = (f.y - e.y) / tl; // along the seam, into the pocket
-          for (let b = 0; b < 3; b++) {
-            const cx = e.x + tx * 0.25 * b, cy = e.y + ty * 0.25 * b;
-            line(k, [{ x: cx - ty * 0.45, y: cy + tx * 0.45 }, { x: cx + ty * 0.45, y: cy - tx * 0.45 }].map(T), col, 0.45, 0);
+  for (const a of attachments) {
+    if (a.kind === 'print' || a.kind === 'embroidery' || a.kind === 'hardware') continue;
+    // the attachment's own cloth panels (one per host copy); without any, the host copies it is meant for
+    let targets = panels.map((P, k) => ({ P, k })).filter(({ P }) => P.attach?.id === a.id);
+    if (a.instance !== undefined) targets = targets.filter(({ P }) => panels[P.attach!.host]?.instance === a.instance);
+    const own = targets.length > 0;
+    if (!own) targets = panels.map((P, k) => ({ P, k })).filter(({ P }) => !P.attach && P.piece.id === a.pieceId && (a.instance === undefined || P.instance === a.instance));
+    for (const { k } of targets) {
+      const c = own ? 1 : Math.cos(rad(a.rotation)), s = own ? 0 : Math.sin(rad(a.rotation));
+      const ox = own ? 0 : a.x, oy = own ? 0 : a.y;
+      const T = (p: Pt): Pt => ({ x: ox + c * p.x - s * p.y, y: oy + s * p.x + c * p.y });
+      const col = a.thread || threadTone(panelHex(panels[k]));
+      const poly = attachmentPolygon(a);
+      const ring = inset(poly, INSET);
+
+      if (a.kind === 'applique') {
+        zigzag(k, inset(poly, 0.15), col, T);
+      } else if (a.kind === 'patch') {
+        line(k, [...ring, ring[0]].map(T), col);
+      } else if (a.kind === 'pocket') {
+        // drop the top edge: vertices on the minimum y form one run; the stitch runs from the end of that run round to its start
+        const minY = Math.min(...ring.map((p) => p.y));
+        const top = ring.map((p) => p.y <= minY + 1e-3);
+        const N = ring.length;
+        let start = -1;
+        for (let i = 0; i < N; i++) if (top[i] && !top[(i + 1) % N]) start = i; // last top vertex of the run
+        if (start >= 0) {
+          const path: Pt[] = [ring[start]];
+          for (let j = 1; j <= N; j++) {
+            const i = (start + j) % N;
+            path.push(ring[i]);
+            if (top[i]) break;
+          }
+          line(k, path.map(T), col);
+          // bar tacks across the seam at both ends: three short bars stepping into the pocket
+          for (const [e, f] of [[path[0], path[1]], [path[path.length - 1], path[path.length - 2]]] as [Pt, Pt][]) {
+            const tl = Math.hypot(f.x - e.x, f.y - e.y) || 1;
+            const tx = (f.x - e.x) / tl, ty = (f.y - e.y) / tl; // along the seam, into the pocket
+            for (let b = 0; b < 3; b++) {
+              const cx = e.x + tx * 0.25 * b, cy = e.y + ty * 0.25 * b;
+              line(k, [{ x: cx - ty * 0.45, y: cy + tx * 0.45 }, { x: cx + ty * 0.45, y: cy - tx * 0.45 }].map(T), col, 0.45, 0);
+            }
           }
         }
+      } else if (a.kind === 'strap') {
+        const lw = Math.max(a.w, a.h), sw = Math.min(a.w, a.h);
+        const horiz = a.w >= a.h; // long axis along x in local coords
+        const P = (u: number, v: number): Pt => (horiz ? { x: u, y: v } : { x: v, y: u });
+        const hl = lw / 2 - INSET, hs = sw / 2 - INSET;
+        const bx = Math.min(sw * 0.9, lw / 3); // box length along the strap
+        for (const e of [-1, 1]) {
+          const u0 = e * hl, u1 = e * (hl - bx);
+          line(k, [P(u0, -hs), P(u0, hs), P(u1, hs), P(u1, -hs), P(u0, -hs)].map(T), col);
+          line(k, [P(u0, -hs), P(u1, hs)].map(T), col);
+          line(k, [P(u0, hs), P(u1, -hs)].map(T), col);
+        }
+        if (lw > 3 * bx) for (const v of [-hs, hs]) line(k, [P(-hl + bx, v), P(hl - bx, v)].map(T), col);
       }
-    } else if (a.kind === 'strap') {
-      const lw = Math.max(a.w, a.h), sw = Math.min(a.w, a.h);
-      const horiz = a.w >= a.h; // long axis along x in local coords
-      const P = (u: number, v: number): Pt => (horiz ? { x: u, y: v } : { x: v, y: u });
-      const hl = lw / 2 - INSET, hs = sw / 2 - INSET;
-      const bx = Math.min(sw * 0.9, lw / 3); // box length along the strap
-      for (const e of [-1, 1]) {
-        const u0 = e * hl, u1 = e * (hl - bx);
-        line(k, [P(u0, -hs), P(u0, hs), P(u1, hs), P(u1, -hs), P(u0, -hs)].map(T), col);
-        line(k, [P(u0, -hs), P(u1, hs)].map(T), col);
-        line(k, [P(u0, hs), P(u1, -hs)].map(T), col);
-      }
-      if (lw > 3 * bx) for (const v of [-hs, hs]) line(k, [P(-hl + bx, v), P(hl - bx, v)].map(T), col);
     }
   }
 

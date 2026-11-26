@@ -6,7 +6,8 @@ import { calibratedField } from '../three/bodyField';
 import { meshField, PosedCollider } from '../three/mesher';
 import { bodyFrame, type BodyFrame } from '../three/body';
 import { buildDetails, detailTransfers } from './details';
-import { buildAttachmentDetails } from './detailsAttach';
+import { buildAttachmentDetails, outwardSignsHosted } from './detailsAttach';
+import { buildHardware, hardwareTransfers } from './detailsHardware';
 import type { Attachment } from '../data/edits';
 import { migrateGarment, styleById } from '../data/catalog';
 import { boneMatrices, clampPose, invert, lerpPose, poseAt, poseDistance, stepPose, type Mode } from './pose';
@@ -56,6 +57,13 @@ function postAttachDetails() {
     (self as unknown as Worker).postMessage(det, detailTransfers(det as never));
   } catch (err) {
     console.warn('attachment details failed', err);
+  }
+  try {
+    // hardware trims: anchors on the host cloth per copy (instance), drawn by src/three/Hardware.tsx
+    const hw = buildHardware(G, attachments, outwardSignsHosted(G.panels, G.sim.pos));
+    (self as unknown as Worker).postMessage(hw, hardwareTransfers(hw));
+  } catch (err) {
+    console.warn('hardware failed', err);
   }
 }
 
@@ -205,6 +213,7 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
     type: 'built', n: G.sim.n, index: new Uint32Array(index), groups, uv, pos,
     fabrics: G.panels.map((p) => p.piece.fabric),
     pieceIds, vertexPiece, vertexPatternUv, panels, attachmentPanels,
+    panelSign: outwardSignsHosted(G.panels, G.sim.pos),
   }, [vertexPiece.buffer, vertexPatternUv.buffer]);
   try {
     const det = buildDetails(G, styleById(migrateGarment(m.garment)).details);

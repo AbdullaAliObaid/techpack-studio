@@ -11,6 +11,26 @@ export interface VertexPattern {
   /** x, y per vertex, piece local pattern coords (cm) */
   vUV: Float32Array;
   pieceIds: string[];
+  /** per placed panel (same order as the cloth geometry groups); absent when the worker did not send them */
+  panels?: PanelInfo[];
+  /** per vertex: index into panels */
+  vPanel?: Uint16Array;
+  /** per pieceIds entry: how many placed copies of that piece there are (cloth attachment panels count as one) */
+  copies?: number[];
+}
+
+export interface PanelInfo {
+  start: number;
+  count: number;
+  pieceIndex: number;
+  /** placed copy of a piece cut more than once (0 right, 1 left); for an attachment panel, its host's copy */
+  instance: number;
+  /** pattern x runs the other way round on this panel's outside: artwork must be flipped to read correctly */
+  flip: boolean;
+  /** +1 when the front faces of the cloth geometry are the outside, -1 when the back faces are (from the worker) */
+  front: number;
+  /** attachment id for a cloth attachment panel */
+  attachId?: string;
 }
 
 export const NONE = 0xffff;
@@ -26,11 +46,15 @@ interface BuiltMsg {
   vertexPiece?: Uint16Array;
   vertexPatternUv?: Float32Array;
   pieceIds?: string[];
+  panels?: { start: number; count: number; pieceIndex: number; instance: number; mirror: boolean }[];
+  attachmentPanels?: { attachmentId: string; start: number; count: number; hostPieceId: string; hostInstance: number }[];
+  /** +1 / -1 per panel: outward side relative to the mesh triangle order (not the mirrored render order) */
+  panelSign?: number[];
 }
 
 export function vertexPattern(m: BuiltMsg, pieces: Piece[]): VertexPattern {
   if (m.vertexPiece && m.vertexPatternUv && m.pieceIds && m.vertexPiece.length === m.n && m.vertexPatternUv.length === m.n * 2) {
-    return { vPiece: m.vertexPiece, vUV: m.vertexPatternUv, pieceIds: m.pieceIds };
+    return withPanels({ vPiece: m.vertexPiece, vUV: m.vertexPatternUv, pieceIds: m.pieceIds }, m);
   }
   if (m.vPiece && m.vUV && m.pieceIds && m.vPiece.length === m.n && m.vUV.length === m.n * 2) {
     return { vPiece: m.vPiece, vUV: m.vUV, pieceIds: m.pieceIds };
@@ -73,4 +97,31 @@ function fallback(m: BuiltMsg, pieces: Piece[]): VertexPattern {
     }
   }
   return { vPiece, vUV, pieceIds };
+}
+
+function withPanels(v: VertexPattern, m: BuiltMsg): VertexPattern {
+  if (!m.panels) return v;
+  const att = new Map((m.attachmentPanels ?? []).map((a) => [a.start, a]));
+  const hostMirror = (pieceId: string, instance: number) => {
+    const k = v.pieceIds.indexOf(pieceId);
+    return !!m.panels!.find((q) => q.pieceIndex === k && q.instance === instance && !att.has(q.start))?.mirror;
+  };
+  const vPanel = new Uint16Array(m.n);
+  const copies = v.pieceIds.map(() => 0);
+  const panels: PanelInfo[] = m.panels.map((q, k) => {
+    const a = att.get(q.start);
+    for (let i = q.start; i < q.start + q.count; i++) vPanel[i] = k;
+    if (!a) copies[q.pieceIndex]++;
+    else copies[q.pieceIndex] = 1;
+    const mirror = a ? hostMirror(a.hostPieceId, a.hostInstance) : q.mirror;
+    const sign = m.panelSign?.[k] ?? 0;
+    return {
+      start: q.start, count: q.count, pieceIndex: q.pieceIndex,
+      instance: a ? a.hostInstance : q.instance, flip: mirror,
+      // the render index order is swapped on mirrored cloth panels (attachment panels are never swapped)
+      front: sign === 0 ? 0 : sign * (q.mirror ? -1 : 1),
+      attachId: a?.attachmentId,
+    };
+  });
+  return { ...v, panels, vPanel, copies };
 }

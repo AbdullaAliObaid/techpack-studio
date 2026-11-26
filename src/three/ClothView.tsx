@@ -9,6 +9,8 @@ import { useStore } from '../store';
 import Details, { type DetailUpdater } from './Details';
 import type { DetailsMsg } from '../sim/details';
 import Prints from './Prints';
+import Hardware from './Hardware';
+import type { HardwareMsg } from '../sim/detailsHardware';
 import { vertexPattern, type VertexPattern } from './printsAdapter';
 import { boneMatrices, jointPoints, poseAt, NBONES, JOINT_COUNT, type Mode } from '../sim/pose';
 import { EMPTY_EDITS, type CustomPose, type Edits } from '../data/edits';
@@ -68,6 +70,8 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
   const detailUpdater = useRef<DetailUpdater | null>(null);
   const [attachDetails, setAttachDetails] = useState<DetailsMsg | null>(null);
   const attachUpdater = useRef<DetailUpdater | null>(null);
+  const [hardware, setHardware] = useState<HardwareMsg | null>(null);
+  const hardwareUpdater = useRef<DetailUpdater | null>(null);
   const piecesRef = useRef(pieces);
   piecesRef.current = pieces;
   const attachments = useStore((s) => s.project.edits?.attachments);
@@ -107,6 +111,7 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         lastStrain.current = null;
         setDetails(null);
         setAttachDetails(null);
+        setHardware(null);
         setTopo((old) => {
           old?.geo.dispose();
           return { geo, fabrics: m.fabrics, pat: vertexPattern(m, piecesRef.current) };
@@ -114,6 +119,8 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         set({ draping: true, simStatus: 'Simulating fabric…' });
       } else if (m.type === 'details') {
         setDetails(m);
+      } else if (m.type === 'hardware') {
+        setHardware(m);
       } else if (m.type === 'attachDetails') {
         setAttachDetails({ ...m, type: 'details' });
       } else if (m.type === 'frame') {
@@ -134,7 +141,7 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
 
   // only edits that change the cloth (not artwork, names or prints) trigger a rebuild
   const edits = useStore((s) => s.project.edits ?? EMPTY_EDITS);
-  const simKey = JSON.stringify({ ...edits, attachments: edits.attachments.filter((a) => a.kind !== 'print').map(({ layers: _l, name: _n, ...a }) => a) });
+  const simKey = JSON.stringify({ ...edits, attachments: edits.attachments.filter((a) => a.kind !== 'print' && a.kind !== 'embroidery' && a.kind !== 'hardware').map(({ layers: _l, name: _n, ...a }) => a) });
   const simEdits = useMemo(() => JSON.parse(simKey) as Edits, [simKey]);
 
   // send a rebuild shortly after edits stop; pattern / fabric edits warm start from the current drape
@@ -193,6 +200,7 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         topo.geo.computeBoundingSphere();
         detailUpdater.current?.(attr.array as Float32Array);
         attachUpdater.current?.(attr.array as Float32Array);
+        hardwareUpdater.current?.(attr.array as Float32Array);
       }
       p.pos = undefined;
     }
@@ -218,6 +226,7 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         <mesh geometry={topo.geo} material={stretch ? topo.fabrics.map(() => stretchMat) : mats} castShadow receiveShadow frustumCulled={false} />
       )}
       {showGarment && topo && <Prints geo={topo.geo} pat={topo.pat} visible={!stretch} />}
+      {showGarment && topo && hardware && <Hardware data={hardware} geo={topo.geo} visible={!stretch} updater={hardwareUpdater} />}
       {showGarment && topo && attachDetails && <Details data={attachDetails} geo={topo.geo} visible={!stretch} updater={attachUpdater} />}
       {showGarment && topo && details && <Details data={details} geo={topo.geo} visible={!stretch} updater={detailUpdater} />}
     </group>
