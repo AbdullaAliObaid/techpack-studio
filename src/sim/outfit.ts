@@ -124,7 +124,7 @@ export function assembleOutfit(items: OutfitInput[], body: Body, collider?: Clot
   sim.rest = new Float32Array(nStretch + nOther); sim.comp = new Float32Array(nStretch + nOther);
   sim.maxStrain = new Float32Array(nStretch); sim.nStretch = nStretch;
   let ks = 0, ko = nStretch;
-  const limits = new Float32Array(n), contact = new Uint8Array(n), panelOf = new Uint16Array(n), uv = new Float32Array(n * 2);
+  const limits = new Float32Array(n), contact = new Uint8Array(n), thick = new Float32Array(n), panelOf = new Uint16Array(n), uv = new Float32Array(n * 2);
   const group = new Int32Array(n), nearSeam = new Uint8Array(n), garmentOf = new Uint8Array(n);
   const skipPanel = new Int32Array(n).fill(-1);
   let anySkip = false;
@@ -145,6 +145,7 @@ export function assembleOutfit(items: OutfitInput[], body: Body, collider?: Clot
     }
     limits.set(G.limits, o);
     if (G.contact) contact.set(G.contact, o);
+    if (G.thick) thick.set(G.thick, o);
     for (let i = 0; i < s.n; i++) {
       panelOf[o + i] = (s.panelOf ? s.panelOf[i] : 0) + po;
       group[o + i] = (s.seamGroup ? s.seamGroup[i] : i) + o;
@@ -174,7 +175,8 @@ export function assembleOutfit(items: OutfitInput[], body: Body, collider?: Clot
   sim.selfRadius = selfRadius; sim.garmentOf = garmentOf; sim.crossRadius = OUTFIT_GAP;
   sim.sewRise = Math.max(...built.map((b) => b.G.sim.sewRise));
   if (layerIdx.length) { sim.layerIdx = layerIdx; sim.layerW = layerW; if (anySkip) sim.skipPanel = skipPanel; }
-  sim.collider = contactCollider(contact, col);
+  // lined pieces keep their added thickness off the body in an outfit too
+  sim.collider = thick.some((t) => t > 0) ? contactCollider(contact, col, thick) : contactCollider(contact, col);
 
   // ---- start shapes: outer garments go on over the inner ones ----
   const t0 = col.thickness;
