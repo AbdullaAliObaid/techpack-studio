@@ -1,12 +1,12 @@
 // Inspector: four sections (Garment, Construction, Body, Specs), each with titled, collapsible groups.
 import { useStore, type InspectorTab } from '../store';
 import { CATALOG, migrateGarment } from '../data/catalog';
-import { FABRICS, fabricById, stretchLabel } from '../data/fabrics';
-import { fabricDataUrl } from '../lib/textures';
+import { fabricById } from '../data/fabrics';
 import { fitTable, garmentSpecs, pieceSpecs, seamReport } from '../lib/specs';
 import { FITS } from '../data/draft';
 import { fmt, toUnit } from '../lib/units';
 import { FabricPick } from './TrimFields';
+import FabricBrowser, { FabricSwatch, fabricLabel } from './FabricBrowser';
 import { faceName, hasCollar } from './editHelpers';
 import ConstructionPanel from './ConstructionPanel';
 import PosePanel from './PosePanel';
@@ -80,12 +80,6 @@ export function CollarControl() {
   );
 }
 
-function Swatch({ fabric, size = 44, label }: { fabric: { id: string; color: number }; size?: number; label?: string }) {
-  const f = fabricById(fabric.id);
-  const c = f.colors[fabric.color] ?? f.colors[0];
-  return <img className="swatch-img" src={fabricDataUrl(f, c.hex)} alt={label ?? ''} width={size} height={size} style={{ width: size, height: size }} />;
-}
-
 /** Outside and inside of the garment: a two face preview of the selected piece, a default for the whole garment, and the chart face. */
 function FacesSection() {
   const { project, selPiece, viewFace, set, setInsideFabric, setInsideAll } = useStore();
@@ -102,16 +96,15 @@ function FacesSection() {
     <section className="faces-card" aria-label="Inside and outside">
       <header>
         <h3>Inside and outside</h3>
-        <p>Each piece has two faces. The inside can be a different fabric or colour.</p>
+        <p>Each piece has two faces. Press a face to turn the pattern over to it. The inside can be a different fabric or colour.</p>
       </header>
-      <Seg label="Face shown on the pattern" value={viewFace} onChange={(f) => set({ viewFace: f, designFace: f })} options={[{ id: 'outside', label: 'Outside' }, { id: 'inside', label: 'Inside' }]} />
       <div className="faces-pair" role="group" aria-label={`${show.name}, both faces`}>
         <button className={`face ${viewFace === 'outside' ? 'on' : ''}`} onClick={() => set({ viewFace: 'outside', designFace: 'outside' })} aria-pressed={viewFace === 'outside'}>
-          <Swatch fabric={show.fabric} size={64} />
+          <FabricSwatch fabric={show.fabric} size={64} />
           <b>{outName}</b><small>{fabricById(show.fabric.id).name}</small>
         </button>
         <button className={`face ${viewFace === 'inside' ? 'on' : ''}`} onClick={() => set({ viewFace: 'inside', designFace: 'inside' })} aria-pressed={viewFace === 'inside'}>
-          <Swatch fabric={insideFab} size={64} />
+          <FabricSwatch fabric={insideFab} size={64} />
           <b>{inName}</b><small>{own ? fabricById(own.id).name : 'Same as outside'}</small>
         </button>
       </div>
@@ -119,14 +112,14 @@ function FacesSection() {
       {piece && <FabricPick id="inside-fab" sameLabel="Same as outside" value={own} host={piece.fabric} onChange={(f) => setInsideFabric(piece.id, f ?? null)} />}
       <div className="faces-all">
         <SubLabel>Whole garment default</SubLabel>
-        <FabricPick id="inside-all" sameLabel="Same as outside" value={all ? first : undefined} onChange={(f) => setInsideAll(f ?? null)} />
+        <FabricPick id="inside-all" sameLabel="Same as outside" host={project.pieces[0].fabric} value={all ? first : undefined} onChange={(f) => setInsideAll(f ?? null)} />
       </div>
     </section>
   );
 }
 
 function GarmentTab() {
-  const { project, selPiece, fabricScope, set, setFabric } = useStore();
+  const { project, selPiece, fabricScope, set, applyFabric } = useStore();
   const style = CATALOG.find((s) => s.id === migrateGarment(project.garment));
   const piece = project.pieces.find((p) => p.id === selPiece);
   const scope = piece ? fabricScope : 'all';
@@ -136,11 +129,11 @@ function GarmentTab() {
   return (
     <>
       <div className="mat-head">
-        <Swatch fabric={current} size={72} label={`${cf.name} swatch`} />
+        <FabricSwatch fabric={current} size={72} label={`${cf.name} swatch`} />
         <div>
           <span className="mat-kicker">Material and fit</span>
           <h2>{style?.name ?? 'Garment'}</h2>
-          <p>{cf.name}, {cf.colors[current.color]?.name ?? cf.colors[0].name}{piece ? ` on ${piece.name}` : ', whole garment'}</p>
+          <p>{fabricLabel(current)}{piece ? ` on ${piece.name}` : ', whole garment'}</p>
         </div>
       </div>
 
@@ -152,43 +145,14 @@ function GarmentTab() {
         </Disclosure>
       )}
 
-      <Disclosure id="gar-fabric" title="Fabric and colour" icon="grid">
+      <Disclosure id="gar-fabric" title="Fabric, colour and pattern" icon="grid">
         <div className="seg full">
           <button className={scope === 'all' ? 'on' : ''} onClick={() => set({ fabricScope: 'all' })}>Whole garment</button>
           <button className={scope === 'piece' ? 'on' : ''} disabled={!piece} onClick={() => set({ fabricScope: 'piece' })}>
             {piece ? piece.name : 'Select a piece'}
           </button>
         </div>
-        <div className="fabric-list">
-          {FABRICS.map((f) => {
-            const active = current.id === f.id;
-            return (
-              <div key={f.id} className={`fabric ${active ? 'on' : ''}`}>
-                <button className="fabric-main" aria-pressed={active} onClick={() => setFabric(f.id, active ? current.color : 0)}>
-                  <img src={fabricDataUrl(f, f.colors[active ? current.color : 0].hex)} alt="" width={44} height={44} />
-                  <div>
-                    <div className="fabric-name">{f.name}</div>
-                    <div className="fabric-meta">
-                      <span className={`chip s${f.stretch < 0.05 ? 0 : f.stretch < 0.15 ? 1 : 2}`}>{stretchLabel(f.stretch)}</span>
-                      <span>{f.weight}</span>
-                    </div>
-                  </div>
-                </button>
-                {active && (
-                  <>
-                    <p className="fabric-blurb">{f.blurb}</p>
-                    <div className="swatches">
-                      {f.colors.map((c, i) => (
-                        <button key={c.name} title={c.name} aria-label={c.name} aria-pressed={current.color === i} className={current.color === i ? 'on' : ''} style={{ background: c.hex }} onClick={() => setFabric(f.id, i)} />
-                      ))}
-                    </div>
-                    <div className="fabric-facts">Safe stretch ~{Math.round(f.stretch * 100)}% · {f.gsm} gsm</div>
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        <FabricBrowser idKey="outside" value={current} onChange={applyFabric} />
       </Disclosure>
 
       <Disclosure id="gar-fit" title="Fit" icon="stretch">
@@ -211,7 +175,7 @@ function BodyTab() {
         <BodyFields advanced={false} />
         <button className="btn ghost small" onClick={resetBody}>Reset to default</button>
       </Disclosure>
-      <Disclosure id="body-more" title="More measurements" icon="tape" defaultOpen={false}>
+      <Disclosure id="body-more" title="More measurements" icon="tape">
         <BodyFields advanced />
       </Disclosure>
       <PosePanel />
@@ -259,7 +223,7 @@ function SpecsTab() {
         <div className="fit-note">In {units}. * estimated from your other measurements. Negative ease means the garment is smaller than the body and has to stretch.</div>
       </Disclosure>
 
-      <Disclosure id="spec-seams" title="Seam lengths" icon="seams" defaultOpen={false}>
+      <Disclosure id="spec-seams" title="Seam lengths" icon="seams">
         {seamReport(project.garment, project.pieces, project.edits).map((r) => {
           const diff = r.a - r.b;
           const want = r.ease ?? 0;
@@ -277,13 +241,13 @@ function SpecsTab() {
         <div className="fit-note">Edge lengths that get sewn together. Green when they match (or carry their intended ease), red when a pattern edit makes them disagree.</div>
       </Disclosure>
 
-      <Disclosure id="spec-garment" title="Garment specs" icon="specs" defaultOpen={false}>
+      <Disclosure id="spec-garment" title="Garment specs" icon="specs">
         {g.map((r) => (
           <div className="kv" key={r.label}><span>{r.label}</span><b>{fmt(r.value, units)}</b></div>
         ))}
       </Disclosure>
 
-      <Disclosure id="spec-pieces" title="Pieces" icon="pattern" count={project.pieces.length} defaultOpen={false}>
+      <Disclosure id="spec-pieces" title="Pieces" icon="pattern" count={project.pieces.length}>
         {project.pieces.map((p) => (
           <div className={`piece-spec ${p.id === selPiece ? 'hl' : ''}`} key={p.id}>
             <div className="sublabel">{p.name} <span className="muted">· {fabricById(p.fabric.id).name} · cut {p.cut}{copiesOf(project.garment, p) === 2 ? ', right and left' : ''}</span></div>

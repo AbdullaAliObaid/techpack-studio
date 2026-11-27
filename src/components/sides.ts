@@ -22,6 +22,8 @@ export interface Entry {
   mirror: boolean;
   offset: Pt;
   label: string;
+  /** the chart is turned over (inside view): `mirror` and the outline are flipped on top of the copy's own mirroring */
+  flipped?: boolean;
 }
 
 /** How many times a piece is placed on the body. */
@@ -132,4 +134,16 @@ export function worldToAtt(atts: Attachment[], a: Attachment, e: Entry, w: Pt, r
   }
   const l = toSource(e, w);
   return { x: l.x, y: l.y, rotation: e.mirror ? -rotW : rotW };
+}
+
+/**
+ * The chart turned over, like a garment turned inside out: the whole layout is mirrored left to right. Each piece is
+ * seen from its other side, so its drawn outline mirrors and everything that maps the chart to the stored piece
+ * (toSource, frameOn, attWorld) keeps working because `mirror` flips with it. Labels stay as worn.
+ */
+export function flipEntries(entries: Entry[]): Entry[] {
+  return entries.map((e) => {
+    const offset: Pt = { x: -e.offset.x, y: e.offset.y };
+    return { ...e, flipped: true, mirror: !e.mirror, offset, piece: { ...e.piece, offset, points: e.piece.points.map((q) => ({ ...q, x: -q.x })) } };
+  });
 }

@@ -14,6 +14,7 @@ import { designHost, faceName, normaliseOutline, KIND_BLURB, LABEL_TYPES, SEWN_L
 import { ColorField, Disclosure, LenInput, NumInput, Row, Seg, SubLabel } from './controls';
 import { FabricPick, FinishPick, SheenPick, ZipperFields } from './TrimFields';
 import { copiesOf, instanceName } from './sides';
+import { imageFileOf, openPhoto } from './editHelpers';
 import DrawSheet from './DrawSheet';
 import Icon from './Icon';
 
@@ -173,6 +174,15 @@ export default function DesignLibrary() {
         )}
       </div>
 
+      <div className="photo-card">
+        <span className="att-ico"><Icon name="print" size={18} /></span>
+        <div className="att-text"><span className="att-name">From a photo</span><small>Print it, stitch it or cut it from fabric. You can also drag a picture onto the chart or the 3D view, or paste one.</small></div>
+        <label className="btn small photo-pick">
+          Choose a photo
+          <input type="file" accept="image/*" aria-label="Choose a photo to insert" onChange={(e) => { const f = imageFileOf(e.target.files); if (f) openPhoto(f); e.target.value = ''; }} />
+        </label>
+      </div>
+
       <Disclosure id="design-cut" title="Cut and sew" icon="scissors">
         <Seg label="Kind of cloth piece" value={cutKind} onChange={(k) => { setCutKind(k); setArmedKey(null); }}
           options={[{ id: 'pocket', label: 'Pocket' }, { id: 'patch', label: 'Patch' }, { id: 'strap', label: 'Strap' }, { id: 'applique', label: 'Appliqué' }]} />
@@ -194,7 +204,7 @@ export default function DesignLibrary() {
         <div className="frow stack"><span className="lbl">Stitch thread</span><ColorField label="Stitch thread" value={opts.thread} onChange={(c) => setOpts({ ...opts, thread: c })} /></div>
       </Disclosure>
 
-      <Disclosure id="design-embroidery" title="Embroidery" icon="embroidery" defaultOpen={false}>
+      <Disclosure id="design-embroidery" title="Embroidery" icon="embroidery">
         <p className="group-note">Thread stitched into the piece. One shape or word at a time.</p>
         <SubLabel>Shapes</SubLabel>
         <div className="tile-grid">{THREAD_SHAPES.map((s) => { const t = embroideryShape(s); return tile(t.key, t.label, () => t.make(opts)); })}</div>
@@ -205,7 +215,7 @@ export default function DesignLibrary() {
         <ColorField label="Thread colour" value={opts.thread} onChange={(c) => setOpts({ ...opts, thread: c })} />
       </Disclosure>
 
-      <Disclosure id="design-print" title="Print" icon="print" defaultOpen={false}>
+      <Disclosure id="design-print" title="Print" icon="print">
         <p className="group-note">Ink printed onto the piece. Add a second stripe by adding it again.</p>
         <SubLabel>Shapes</SubLabel>
         <div className="tile-grid">{THREAD_SHAPES.map((s) => { const t = printShape(s); return tile(t.key, t.label, () => t.make(opts)); })}</div>
@@ -219,7 +229,7 @@ export default function DesignLibrary() {
         <ColorField label="Ink colour" value={opts.ink} onChange={(c) => setOpts({ ...opts, ink: c })} />
       </Disclosure>
 
-      <Disclosure id="design-tags" title="Tags" icon="tag" defaultOpen={false}>
+      <Disclosure id="design-tags" title="Tags" icon="tag">
         <p className="group-note">A clothing tag with your design. Goes on the inside by default.</p>
         <button className="btn primary wide" onClick={addNeckTag}><Icon name="tag" size={16} /> Neck tag, inside the back neck</button>
         <SubLabel>Type</SubLabel>
@@ -234,7 +244,7 @@ export default function DesignLibrary() {
         <button className="btn wide" disabled={!host} onClick={() => addTo(tagAttachment(tag))}><Icon name="plus" size={16} /> Add this tag{host ? ` to ${targetLabel}` : ''}</button>
       </Disclosure>
 
-      <Disclosure id="design-hardware" title="Hardware" icon="hardware" defaultOpen={false}>
+      <Disclosure id="design-hardware" title="Hardware" icon="hardware">
         <p className="group-note">Metal or plastic trims fixed through the fabric. Each one you place is its own, so you can design every button differently.</p>
         <div className="tile-grid">
           {HARDWARE.map((d) => {

@@ -3,7 +3,6 @@ import type React from 'react';
 import { useStore } from '../store';
 import type { Piece } from '../data/presets';
 import { fabricById } from '../data/fabrics';
-import { fabricDataUrl } from '../lib/textures';
 import {
   bbox, bezAt, bezLength, bezTangent, centroid, nearestOnOutline, offsetInward, pathD, polyD, samplePoly, toBeziers, type Pt,
 } from '../lib/geometry';
@@ -13,10 +12,11 @@ import { pointInPoly } from '../lib/geometry';
 import { builtinSeams } from '../sim/seams';
 import type { Attachment, EdgeRef, Pleat } from '../data/edits';
 import { ArtworkGroup, isCloth, outlineD } from './Artwork';
-import { canHostDesigns, pleatMarks, rootPiece, runD, runIndices, runMid, scaleAttachment, scaleLimits } from './editHelpers';
+import { FabricDefs, InsideDecor, InsideLegend } from './ChartInside';
+import { canHostDesigns, fabricHex, imageFileOf, linkedPoints, openPhoto, pleatMarks, rootPiece, runD, runIndices, runMid, scaleAttachment, scaleLimits } from './editHelpers';
 import { pickSeamPoint } from './ConstructionPanel';
 import { ATTACHMENT_MIME, isAttachment } from './designLibrary';
-import { attWorld, frameOn, instanceFor, layoutEntries, onCopy, toSource, toWorldPt, worldToAtt, type Entry } from './sides';
+import { attWorld, flipEntries, frameOn, instanceFor, layoutEntries, onCopy, toSource, toWorldPt, worldToAtt, type Entry } from './sides';
 import { openPieceFlow } from './flow';
 import { attsOnEntry, computeGeo, layoutChart, type Geo } from './chartLayout';
 import { hitList, type Cand } from './chartHit';
@@ -69,7 +69,8 @@ export default function PatternEditor() {
   useEffect(() => { if (!picking) setPickHover(null); }, [picking]);
 
   // ---- what is drawn: pieces cut twice show as a right and a left pattern ----
-  const entries = useMemo(() => layoutEntries(project.garment, pieces, showBothSides), [project.garment, pieces, showBothSides]);
+  const chartFace = s.chartFace;
+  const entries = useMemo(() => { const e = layoutEntries(project.garment, pieces, showBothSides); return chartFace === 'inside' ? flipEntries(e) : e; }, [project.garment, pieces, showBothSides, chartFace]);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
   const findEntry = (pieceId: string, inst = 0) => entriesRef.current.find((e) => e.src.id === pieceId && e.inst === inst) ?? entriesRef.current.find((e) => e.src.id === pieceId);
@@ -160,6 +161,15 @@ export default function PatternEditor() {
     }
     return m;
   }, [tool, seamDraft]);
+
+  // turning the chart over mirrors the screen, so what the user was looking at stays where it was
+  const lastFace = useRef(chartFace);
+  useEffect(() => {
+    if (lastFace.current === chartFace) return;
+    lastFace.current = chartFace;
+    const w = svgRef.current?.clientWidth ?? 0;
+    setView((v) => ({ ...v, x: w - v.x }));
+  }, [chartFace]);
 
   // ---- fit to view -------------------------------------------------------
   const fit = () => {
@@ -407,6 +417,7 @@ export default function PatternEditor() {
       }
       st.select(pieceId, pointId);
       pick(ent);
+      if (st.totalSymmetry) st.set({ linkedHot: linkedPoints(st.project.pieces, pieceId, pointId) });
       drag.current = { mode: 'point', pieceId, pointId, key: ent.key, start: w, committed: false };
       return;
     }
@@ -581,6 +592,7 @@ export default function PatternEditor() {
     pending.current = null;
     if (pc && Math.hypot(e.clientX - pc.x, e.clientY - pc.y) < 4 && !(drag.current && 'committed' in drag.current && drag.current.committed)) pc.run();
     pointers.current.delete(e.pointerId);
+    if (useStore.getState().linkedHot.length) useStore.setState({ linkedHot: [] });
     if (pointers.current.size === 0) drag.current = null;
     else if (pointers.current.size === 1 && drag.current?.mode === 'pinch') {
       const [p] = [...pointers.current.values()];
@@ -601,26 +613,7 @@ export default function PatternEditor() {
         {k > 2.2 && <rect width="10" height="10" fill="url(#g1)" />}
         <path d="M10 0H0V10" fill="none" stroke="var(--grid-major)" strokeWidth={px(1)} />
       </pattern>
-      {pieces.map((p) => {
-        const f = fabricById(p.fabric.id);
-        const hex = f.colors[p.fabric.color]?.hex ?? f.colors[0].hex;
-        return (
-          <pattern key={p.id} id={'fab-' + p.id} width="6" height="6" patternUnits="userSpaceOnUse">
-            <image href={fabricDataUrl(f, hex)} width="6" height="6" preserveAspectRatio="none" />
-          </pattern>
-        );
-      })}
-      {Object.entries(edits?.insideFabric ?? {}).map(([pid, fb]) => {
-        const f = fabricById(fb.id);
-        return (
-          <pattern key={'in-' + pid} id={'fab-in-' + pid} width="6" height="6" patternUnits="userSpaceOnUse">
-            <image href={fabricDataUrl(f, (f.colors[fb.color] ?? f.colors[0]).hex)} width="6" height="6" preserveAspectRatio="none" />
-          </pattern>
-        );
-      })}
-      <pattern id="inside-hatch" width="1.2" height="1.2" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-        <line x1="0" y1="0" x2="0" y2="1.2" stroke="var(--grid-major)" strokeWidth={px(1)} />
-      </pattern>
+      <FabricDefs pieces={pieces} inside={edits?.insideFabric} />
       <marker id="arr" viewBox="0 0 10 10" refX="5" refY="5" markerWidth={px(7)} markerHeight={px(7)} orient="auto-start-reverse" markerUnits="userSpaceOnUse">
         <path d="M0 1L10 5L0 9z" fill="var(--dim-line)" />
       </marker>
@@ -634,7 +627,7 @@ export default function PatternEditor() {
 
   // ---- drop a design from the library onto the chart ------------------------
   const onDragOver = (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes(ATTACHMENT_MIME)) return;
+    if (!e.dataTransfer.types.includes(ATTACHMENT_MIME) && !e.dataTransfer.types.includes('Files')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     const en = entryAt(toWorld(e.clientX, e.clientY));
@@ -643,6 +636,19 @@ export default function PatternEditor() {
   const onDrop = (e: React.DragEvent) => {
     const raw = e.dataTransfer.getData(ATTACHMENT_MIME);
     setDropKey(null);
+    // a picture file: open the photo sheet aimed at the piece (and spot) it was dropped on
+    const file = imageFileOf(e.dataTransfer.files);
+    if (file && !raw) {
+      e.preventDefault();
+      const w = toWorld(e.clientX, e.clientY);
+      const en = entryAt(w);
+      if (!en) { setNote('Drop the picture on a piece of the pattern.'); setTimeout(() => setNote(null), 2500); return; }
+      const l = toSource(en, w);
+      const inst = instanceFor(en);
+      useStore.getState().set({ selPiece: en.src.id, selInstance: en.both ? en.inst : null, selPoint: null });
+      openPhoto(file, { pieceId: en.src.id, x: round2(l.x), y: round2(l.y), ...(inst !== undefined ? { instance: inst } : {}) });
+      return;
+    }
     if (!raw) return;
     e.preventDefault();
     const w = toWorld(e.clientX, e.clientY);
@@ -732,6 +738,7 @@ export default function PatternEditor() {
             {tool === 'pen' && <PenPreview draft={penDraft} hover={penHover} k={k} snap={penSnap} />}
           </g>
         </svg>
+        {chartFace === 'inside' && <InsideLegend />}
       </div>
       <footer className="pane-foot" role="status">
         <span className="foot-zoom">
@@ -812,7 +819,9 @@ function PieceView(props: {
   const sel = p.points.find((q) => q.id === selPoint);
 
   const allAtts = useStore((st) => st.project.edits?.attachments);
-  const viewFace = useStore((st) => st.viewFace);
+  const viewFace = useStore((st) => st.chartFace);
+  const garment = useStore((st) => st.project.garment);
+  const linkedHot = useStore((st) => st.linkedHot);
   const everyAtt = allAtts ?? [];
   const insideOwn = useStore((st) => !!st.project.edits?.insideFabric?.[p.id]);
 
@@ -821,7 +830,7 @@ function PieceView(props: {
     const o = outlineD(a);
     const label = a.kind === 'label';
     const fabric = a.fabric ?? p.fabric;
-    const hex = label ? a.label?.color ?? '#f2f2f2' : (fabricById(fabric.id).colors[fabric.color] ?? fabricById(fabric.id).colors[0]).hex;
+    const hex = label ? a.label?.color ?? '#f2f2f2' : fabricHex(fabric);
     const on = a.id === selAttachment;
     const fr = top ? frameOn(entry, a) : { x: a.x, y: a.y, rotation: a.rotation }; // on the left copy the position and turn mirror, the artwork does not flip
     const hw = a.kind === 'hardware';
@@ -877,7 +886,7 @@ function PieceView(props: {
   const els = layout.edges.get(entry.key) ?? [];
   // piece names sit on the fabric, so their colour follows the fabric (not the theme): dark text with a fabric halo on
   // light cloth, light text on dark cloth
-  const fabHex = (fabricById(p.fabric.id).colors[p.fabric.color] ?? fabricById(p.fabric.id).colors[0]).hex;
+  const fabHex = fabricHex(p.fabric);
   const lum = (() => { const n = parseInt(fabHex.slice(1, 7), 16); const c = [n >> 16, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; })();
   const onFabric = { fill: lum > 0.35 ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.95)', stroke: fabHex };
   const secondary = selected && k >= 4 ? (entry.both ? `Cut 1 of ${p.cut >= 2 ? p.cut : 2}` : `Cut ${p.cut} · ${fabricById(p.fabric.id).name}`) : null;
@@ -887,9 +896,9 @@ function PieceView(props: {
     <>
     <g transform={tr}>
       {/* body */}
-      <path d={geo.d} fill={viewFace === 'inside' && insideOwn ? `url(#fab-in-${p.id})` : `url(#fab-${p.id})`} data-kind="piece" data-piece={p.id} data-inst={inst} style={{ cursor: picking ? 'crosshair' : 'move' }} />
+      <path d={geo.d} fill={viewFace === 'inside' ? `url(#fab-in-${p.id})` : `url(#fab-${p.id})`} data-kind="piece" data-piece={p.id} data-inst={inst} style={{ cursor: picking ? 'crosshair' : 'move' }} />
       <path d={geo.d} fill="var(--piece-sheen)" pointerEvents="none" />
-      {viewFace === 'inside' && <path d={geo.d} fill="url(#inside-hatch)" opacity={0.7} pointerEvents="none" />}
+      {viewFace === 'inside' && <InsideDecor entry={entry} geo={geo} k={k} style={garment} ownInside={insideOwn} />}
       {showStitch && <path d={geo.cut} fill="none" stroke="var(--cut-line)" strokeWidth={px(1)} pointerEvents="none" />}
       {/* the editable outline is the sewing line (finished size); the outer line is the cut line with seam allowance */}
       <path d={geo.d} fill="none" stroke={selected ? 'var(--accent)' : 'var(--outline)'} strokeWidth={px(selected ? 2 : 1.4)} strokeDasharray={showStitch ? `${px(6)} ${px(3)}` : undefined} pointerEvents="none" />
@@ -990,6 +999,7 @@ function PieceView(props: {
       {p.points.map((q) => {
           const isSel = q.id === selPoint;
           const isMirror = symmetry && sel && sel.mirror === q.id && sel.id !== q.id;
+          const isLinked = linkedHot.some((h) => h.pieceId === p.id && h.pointId === q.id);
           const r = px(isSel ? 6 : tool === 'seams' ? 6 : selected ? 4.5 : 3.5);
           const fill = isSel ? 'var(--accent)' : isMirror ? 'var(--purple)' : 'var(--point-fill)';
           const stroke = isMirror ? 'var(--purple)' : selected ? 'var(--accent)' : 'var(--point-stroke)';
@@ -1000,6 +1010,7 @@ function PieceView(props: {
               ) : (
                 <rect x={q.x - r} y={q.y - r} width={r * 2} height={r * 2} fill={fill} stroke={stroke} strokeWidth={px(1.5)} pointerEvents="none" />
               )}
+              {isLinked && <circle cx={q.x} cy={q.y} r={px(11)} fill="var(--purple)" fillOpacity={0.25} stroke="var(--purple)" strokeWidth={px(2)} pointerEvents="none" />}
               <circle cx={q.x} cy={q.y} r={px(tool === 'seams' ? 16 : 13)} fill="transparent" data-kind="point" data-piece={p.id} data-inst={inst} data-point={q.id} style={{ cursor: tool === 'seams' ? 'pointer' : 'grab' }} />
             </g>
           );
@@ -1016,8 +1027,7 @@ function PieceView(props: {
       {ghosts.map((g) => {
         const pl = g.placement!;
         const on = g.id === selPieceId;
-        const f = fabricById(g.fabric.id);
-        const hex = (f.colors[g.fabric.color] ?? f.colors[0]).hex;
+        const hex = fabricHex(g.fabric);
         const gf = frameOn(entry, { x: pl.x ?? 0, y: pl.y ?? 0, rotation: pl.rotation ?? 0 });
         return (
           <g key={g.id} transform={`translate(${gf.x},${gf.y}) rotate(${gf.rotation})`} data-kind="ghost" data-piece={g.id} data-inst={inst} style={{ cursor: 'move' }}>

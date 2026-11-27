@@ -120,7 +120,7 @@ export default function DrawSheet({ initial, doneLabel, onDone, onCancel }: { in
           <ColorField label="Plastic colour" value={d.color ?? ''} onChange={(color) => patch({ color })} />
         </div>
         <SheenPick metal value={d.sheen} onChange={(sheen) => patch({ sheen })} />
-        <EmblemEditor att={synth} layers={d.layers} onLayers={(layers) => patch({ layers })} fill="var(--fill-2)" sectionId="draw-layers" title="Engraving and artwork" defaultOpen={false} />
+        <EmblemEditor att={synth} layers={d.layers} onLayers={(layers) => patch({ layers })} fill="var(--fill-2)" sectionId="draw-layers" title="Engraving and artwork" />
 
         <div className="flow-actions">
           <span className="spacer" />

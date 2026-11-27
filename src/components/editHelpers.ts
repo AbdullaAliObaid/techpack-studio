@@ -326,3 +326,6 @@ export function nudgePatch(atts: Attachment[], a: Attachment, dx: number, dy: nu
   const c = Math.cos((-rot * Math.PI) / 180), s = Math.sin((-rot * Math.PI) / 180);
   return { x: r2(a.x + c * dx - s * dy), y: r2(a.y + s * dx + c * dy) };
 }
+
+/* fallbacks for the fabrics agent's exports (categories, patterns, pattern tiles) and picture tracing */
+export * from './shims';

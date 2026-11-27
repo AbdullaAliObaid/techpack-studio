@@ -6,6 +6,7 @@ import { copiesOf } from './sides';
 import PatternEditor from './PatternEditor';
 import Toolbar from './Toolbar';
 import DesignBar from './DesignBar';
+import FaceBar, { FaceFlip } from './FaceBar';
 import DesignDock from './DesignDock';
 import { useDockMode } from './dock';
 
@@ -25,12 +26,13 @@ export default function PatternPane() {
           </label>
         )}
       </PaneTitle>
+      <FaceBar />
       <DesignBar />
       <div className="pane-body">
         <Toolbar />
         <div className={`pattern-main ${mode}`}>
           {mode === 'side' && <DesignDock mode="side" />}
-          <PatternEditor />
+          <FaceFlip><PatternEditor /></FaceFlip>
           {mode === 'bottom' && <DesignDock mode="bottom" />}
         </div>
       </div>

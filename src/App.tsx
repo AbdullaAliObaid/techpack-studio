@@ -4,6 +4,7 @@ import PatternPane from './components/PatternPane';
 import Inspector from './components/Inspector';
 import Viewport3D from './components/Viewport3D';
 import PieceFlow from './components/PieceFlow';
+import PhotoSheet from './components/PhotoSheet';
 import { openPieceFlow } from './components/flow';
 import { EMPTY_SEAM_DRAFT, useStore } from './store';
 import { useApplyTheme } from './components/theme';
@@ -62,6 +63,7 @@ export default function App() {
         else if (k === 'p') st.set({ tool: 'add' });
         else if (k === 'h') st.set({ tool: 'pan' });
         else if (k === 's') st.set({ symmetry: !st.symmetry });
+        else if (k === 't') { st.setTotalSymmetry(!st.totalSymmetry); if (!st.totalSymmetry) st.set({ symmetry: true }); }
         else if (k === 'm') st.set({ showMeasure: !st.showMeasure });
         else if (k === 'j') st.set({ tool: 'seams', inspectorTab: 'construction', seamDraft: EMPTY_SEAM_DRAFT });
         else if (k === 'l') st.set({ tool: 'pleat', inspectorTab: 'construction' });
@@ -131,6 +133,7 @@ export default function App() {
         <Inspector />
       </main>
       <PieceFlow />
+      <PhotoSheet />
       </div>
       <div className="layer home-layer" data-state={screen === 'home' ? 'active' : screen === 'new' && newFrom === 'home' ? 'under' : 'gone'} {...inertIf(screen !== 'home')}>
         <Home />

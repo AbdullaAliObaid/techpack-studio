@@ -1,32 +1,32 @@
 // Shared controls for the design panel: fabric, metal finish, sheen and the zipper designer.
 import type { Finish, Sheen, ZipperDesign } from '../data/edits';
-import { FABRICS, fabricById } from '../data/fabrics';
+import { fabricById } from '../data/fabrics';
+import type { PieceFabric } from '../data/presets';
+import FabricBrowser, { FabricSwatch, fabricLabel } from './FabricBrowser';
 import { FINISH, FINISH_IDS } from './Artwork';
 import type React from 'react';
 import { CLOTH_SHEENS, METAL_SHEENS, SHEEN_LABEL } from './editHelpers';
-import { ColorField, Row, Seg, SubLabel } from './controls';
+import { ColorField, Disclosure, Row, Seg, SubLabel } from './controls';
 import Icon from './Icon';
 
-/** Fabric dropdown plus colour swatches. Undefined = same as the piece. */
+/**
+ * Fabric choice for a design, a tag or the inside of a piece: a summary line (swatch and name) and a section, closed
+ * until opened, with the full fabric browser. Undefined = same as `host` (the piece it is on).
+ */
 export function FabricPick({ value, onChange, host, id = 'fab-pick', sameLabel = 'Same as the piece' }: {
-  value: { id: string; color: number } | undefined; onChange: (f: { id: string; color: number } | undefined) => void; host?: { id: string; color: number }; id?: string; sameLabel?: string;
+  value: PieceFabric | undefined; onChange: (f: PieceFabric | undefined) => void; host?: PieceFabric; id?: string; sameLabel?: string;
 }) {
-  const fab = fabricById(value?.id ?? host?.id ?? 'canvas');
-  const sel = value ?? host;
+  const shown = value ?? host ?? { id: 'canvas', color: 0 };
   return (
-    <div className="frow stack">
-      <label htmlFor={id}>Fabric</label>
-      <select id={id} className="sel" value={value ? value.id : ''} onChange={(e) => onChange(e.target.value ? { id: e.target.value, color: 0 } : undefined)}>
-        <option value="">{sameLabel}</option>
-        {FABRICS.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-      </select>
-      {(value || host) && (
-        <div className="swatches" role="group" aria-label="Fabric colour">
-          {fab.colors.map((c, i) => (
-            <button key={c.name} title={c.name} aria-label={c.name} aria-pressed={sel?.color === i} className={sel?.color === i ? 'on' : ''} style={{ background: c.hex }} onClick={() => onChange({ id: fab.id, color: i })} />
-          ))}
-        </div>
-      )}
+    <div className="fabpick">
+      <div className="fabpick-sum">
+        <FabricSwatch fabric={shown} size={40} label={fabricLabel(shown)} />
+        <span className="fabpick-name"><b>{value ? fabricById(value.id).name : sameLabel}</b><small>{fabricLabel(shown)}</small></span>
+        {value && <button className="btn small" onClick={() => onChange(undefined)}>{sameLabel}</button>}
+      </div>
+      <Disclosure id={`fabpick-${id}`} title="Browse fabrics" icon="grid">
+        <FabricBrowser idKey={id} value={shown} onChange={onChange} />
+      </Disclosure>
     </div>
   );
 }

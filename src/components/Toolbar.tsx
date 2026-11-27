@@ -2,9 +2,9 @@
 import { EMPTY_SEAM_DRAFT, useStore, type Tool } from '../store';
 import Icon from './Icon';
 
-function Btn(props: { on?: boolean; label: string; tip: string; icon: string; onClick: () => void }) {
+function Btn(props: { on?: boolean; label: string; tip: string; icon: string; aria?: string; onClick: () => void }) {
   return (
-    <button className={`rail-btn ${props.on ? 'on' : ''}`} title={props.tip} aria-label={props.tip.replace(/ \([A-Z]\)$/, '')} aria-pressed={props.on} onClick={props.onClick}>
+    <button className={`rail-btn ${props.on ? 'on' : ''}`} title={props.tip} aria-label={props.aria ?? props.tip.replace(/ \([A-Z]\)$/, '')} aria-pressed={props.on} onClick={props.onClick}>
       <Icon name={props.icon} size={22} />
       <span>{props.label}</span>
     </button>
@@ -21,7 +21,7 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 }
 
 export default function Toolbar() {
-  const { tool, symmetry, showMeasure, showStitch, set } = useStore();
+  const { tool, symmetry, totalSymmetry, setTotalSymmetry, showMeasure, showStitch, set } = useStore();
   const t = (v: Tool) => () => set({ tool: v });
   // build tools open their controls in the Construction tab and drop any half finished action
   const build = (v: Tool) => () => set({
@@ -43,6 +43,9 @@ export default function Toolbar() {
       <Group title="Show">
         <Btn on={showMeasure} label="Measure" tip="Show measurements (M)" icon="measure" onClick={() => set({ showMeasure: !showMeasure })} />
         <Btn on={symmetry} label="Symmetry" tip="Symmetry bind: edit both halves together (S)" icon="sym" onClick={() => set({ symmetry: !symmetry })} />
+        <Btn on={totalSymmetry} label="Total symmetry" aria="Total symmetry" icon="symAll"
+          tip="Total symmetry (T): link every mating piece. Move a point on one jeans leg and it moves on all four leg pieces, the same way the front and back bodies and both sleeves move together."
+          onClick={() => { setTotalSymmetry(!totalSymmetry); if (!totalSymmetry) set({ symmetry: true }); }} />
         <Btn on={showStitch} label="Stitch lines" tip="Stitch lines: cut line 1 cm outside the sewing line" icon="stitch" onClick={() => set({ showStitch: !showStitch })} />
       </Group>
       <Group title="View">

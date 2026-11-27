@@ -22,7 +22,7 @@ export interface DesignOpts {
   /** embroidery thread and the stitching round cloth */
   thread: string;
   /** cloth for pockets, patches, straps and appliqué (same as the piece when undefined) */
-  fabric?: { id: string; color: number };
+  fabric?: import('../data/presets').PieceFabric;
   text: string;
 }
 

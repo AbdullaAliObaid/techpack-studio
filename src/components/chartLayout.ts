@@ -114,7 +114,7 @@ export function layoutChart(opts: {
   const specsFor = (en: Entry) => {
     const g = geos.get(en.key)!;
     if (en.key === selKey) return g.specs.map((m) => ({ m, sel: true }));
-    if (showMeasure && !en.mirror) return g.specs.slice(0, 2).map((m) => ({ m, sel: false }));
+    if (showMeasure && !(en.flipped ? !en.mirror : en.mirror)) return g.specs.slice(0, 2).map((m) => ({ m, sel: false }));
     return [];
   };
   const order = [...entries].sort((a, b) => (a.key === selKey ? -1 : 0) - (b.key === selKey ? -1 : 0));
