@@ -356,6 +356,12 @@ export function warmStart(next: Garment3D, prev: Garment3D) {
     });
   });
   next.sim.prev.set(next.sim.pos);
+  if (prev.sim.frames < prev.sim.sewFrames) {
+    // the last build was still being sewn (an edit right after opening): carry on sewing where it was; cutting the
+    // sewing short gives open seams gravity
+    next.sim.frames = Math.min(prev.sim.frames, next.sim.sewFrames);
+    return true;
+  }
   next.sim.sewFrames = 4; // already sewn, just settle
   next.sim.frames = 0;
   return true;
@@ -1622,8 +1628,9 @@ export function setFloat(G: Garment3D & { floatSaved?: { collider: ClothSim['col
     sim.carrySource = G.floatSaved.carry;
     sim.gravity = -981;
     delete G.floatSaved;
+    // a garment built while floating may not be fully sewn yet: it finishes its sewing on the body (skipping the rest
+    // of the sewing phase gave open seams gravity and the body pushing them apart)
     sim.sleeping = false;
-    sim.frames = Math.max(sim.frames, sim.sewFrames + 1);
   }
 }
 

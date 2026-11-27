@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "tsx tests/accuracy.ts && tsx tests/fabrics.ts && tsx tests/snap.ts && tsx tests/share.ts && tsx tests/measure.ts",
     "test:drape": "tsx tests/drape.ts",
-    "test:motion": "tsx tests/motion.ts",
+    "test:motion": "tsx tests/motion.ts && tsx tests/worker.ts",
     "test:clip": "tsx tests/clip.ts",
     "test:outfit": "tsx tests/outfit.ts"
   },

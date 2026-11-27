@@ -62,7 +62,8 @@ type BuildMsg =
   | { type: 'outfit'; items: { project: Project; layer: number; tuck?: 'in' | 'out' }[]; body: Body; spacing: number; warm: boolean }
   /**
    * The body display is off: the cloth floats in its draped shape (no gravity, no body, no movement) until it is
-   * turned back on, when the normal simulation picks up from that shape. Builds while floating float too.
+   * turned back on, when the normal simulation picks up from that shape. A build while floating drapes on the
+   * hidden (standing) body, then floats.
    */
   | { type: 'float'; on: boolean }
   /**
@@ -115,13 +116,16 @@ const display = (g: Garment3D, out: Float32Array) => { const O = outfitOf(g); if
 let floating = false;
 /** a vertex is being pulled by hand: the cloth stays awake */
 let grabbing = false;
-/** frames a garment rebuilt while floating is still stepped (seams close, in the air) before it freezes */
-let floatSettle = 0;
+/**
+ * A garment built while the body is hidden is sewn and draped on the (hidden) body as usual and freezes once it has
+ * settled. It is never sewn without the body: seams closing in the air pull the front and back through where the body
+ * is, and when the body came back the cloth was inside it and fell off (the "clothes fly away" report).
+ */
+let floatPending = false;
 
 function wake() {
   if (!G || !G.sim.sleeping || floating) return; // floating: frozen until the body is back
-  G.sim.sleeping = false;
-  G.sim.frames = Math.max(G.sim.frames, G.sim.sewFrames + 1);
+  G.sim.sleeping = false; // carries on from where it is: a garment still being sewn finishes its sewing first
   if (timer) clearTimeout(timer);
   loop(gen);
 }
@@ -143,8 +147,8 @@ function loopFrame(myGen: number) {
   if (mode === 'custom' && poseDistance(poseCur, poseTarget) > 0) { poseCur = stepPose(poseCur, poseTarget, POSE_SPEED / 60); poseMovedAt = simTime; }
   G.sim.substepHook = floating ? null : (k, n) => applyPose(((k + 1) / n) / 60);
   G.sim.awake = floating ? false : grabbing ? true : mode === 'custom' ? poseT < 1.2 || simTime - poseMovedAt < 1.0 : mode !== 'stand' || poseT < 1.2;
-  if (floating && floatSettle-- <= 0) G.sim.sleeping = true;
   G.sim.step();
+  if (floatPending && G.sim.sleeping) { floatPending = false; setFloat(G, true); }
   simTime += 1 / 60;
   const pos = new Float32Array(G.sim.n * 3);
   display(G, pos);
@@ -201,8 +205,7 @@ async function handle(m: BuildMsg) {
     motionPeak = 0;
     motionPeakInfo = null;
     if (G && !floating) {
-      G.sim.sleeping = false;
-      G.sim.frames = Math.max(G.sim.frames, G.sim.sewFrames + 1);
+      G.sim.sleeping = false; // a garment still being sewn finishes its sewing (cutting it short drops open seams)
       if (timer) clearTimeout(timer);
       loop(gen);
     }
@@ -211,6 +214,8 @@ async function handle(m: BuildMsg) {
   if (m.type === 'float') {
     if (floating === m.on) return;
     floating = m.on;
+    if (!floating && floatPending) { floatPending = false; return; } // it was never frozen: it just carries on
+    floatPending = false;
     if (G) {
       setFloat(G, floating);
       if (timer) clearTimeout(timer);
@@ -230,9 +235,8 @@ async function handle(m: BuildMsg) {
       grabbing = false;
     } else sim.pin(m.vertex, m.on);
     if (sim.sleeping || m.type !== 'grab') {
-      // awake again from where it is (never back through the sewing phase)
+      // awake again from where it is (a garment still being sewn finishes its sewing first)
       sim.sleeping = false;
-      sim.frames = Math.max(sim.frames, sim.sewFrames + 1);
       if (timer) clearTimeout(timer);
       loop(gen);
     }
@@ -283,7 +287,7 @@ async function handle(m: BuildMsg) {
   }
   if (!next) { G = null; return; }
   // a build while the body is hidden floats too: the cloth is sewn in the air round where the body was
-  if (floating) { setFloat(next, true); next.sim.sleeping = false; floatSettle = m.warm ? 20 : 90; }
+  floatPending = floating;
   G = next;
   grabbing = false;
   gen++;
