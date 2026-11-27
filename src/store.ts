@@ -154,6 +154,8 @@ export interface State {
   setTotalSymmetry: (on: boolean) => void;
   /** the points that move together with the one being dragged (highlighted on the chart) */
   linkedHot: { pieceId: string; pointId: string }[];
+  /** the tool rail is previewing which pieces Symmetry ('sym') or Total symmetry ('total') links (hover, focus, or just switched on) */
+  symPreview: 'sym' | 'total' | null;
   showMeasure: boolean;
   showStitch: boolean;
   /** notes layer: draw, arrow and text callouts on the chart */
@@ -353,6 +355,7 @@ export const useStore = create<State>((set, get) => {
     totalSymmetry: false,
     setTotalSymmetry: (on) => set(on ? { totalSymmetry: true, symmetry: true, linkedHot: [] } : { totalSymmetry: false, linkedHot: [] }),
     linkedHot: [],
+    symPreview: null,
     showMeasure: false,
     showStitch: true,
     showNotes: true,

@@ -28,7 +28,7 @@ import { outlineLength } from '../lib/geometry';
 import type { Piece } from './presets';
 import { migrateGarment, styleById, type StyleId } from './catalog';
 import { frontOffset } from './draft';
-import { builtinSeams } from '../sim/seams';
+import { builtinSeams, instanceCount } from '../sim/seams';
 import type { EdgeRef } from './edits';
 
 export interface PointMove { pieceId: string; pointId: string; dx: number; dy: number }
@@ -52,8 +52,15 @@ function specFor(style: StyleId): Spec | null {
       walks: {
         outseam: { front: { keys: ['front.1'], axis: 'y' }, back: { keys: ['back.1'], axis: 'y' } },
         inseam: { front: { keys: ['front.8'], axis: 'y' }, back: { keys: ['back.8'], axis: 'y' } },
-        waistband: { waistband: { keys: ['waistband.1', 'waistband.2'], axis: 'x' } },
-        cuff: { cuff: { keys: ['cuff.1', 'cuff.2'], axis: 'x', mode: 'ratio' } },
+        // each seam can be walked from either side: the trim follows the body, and the body follows a trim you drag
+        waistband: {
+          waistband: { keys: ['waistband.1', 'waistband.2'], axis: 'x' },
+          front: { keys: ['front.1'], axis: 'x' }, back: { keys: ['back.1'], axis: 'x' },
+        },
+        cuff: {
+          cuff: { keys: ['cuff.1', 'cuff.2'], axis: 'x', mode: 'ratio' },
+          front: { keys: ['front.5'], axis: 'x', mode: 'ratio' }, back: { keys: ['back.5'], axis: 'x', mode: 'ratio' },
+        },
       },
     };
   }
@@ -70,10 +77,22 @@ function specFor(style: StyleId): Spec | null {
     walks: {
       shoulder: { front: { keys: [`front.${3 + fo}`], axis: 'x' }, back: { keys: ['back.3'], axis: 'x' } },
       side: { front: { keys: [`front.${7 + fo}`], axis: 'y' }, back: { keys: ['back.7'], axis: 'y' } },
-      'sleeve-cap': { sleeve: { keys: ['sleeve.3'], axis: 'x' } },
-      neckband: { neckband: { keys: ['neckband.1', 'neckband.2'], axis: 'x', mode: 'ratio' } },
-      collar: { collar: { keys: ['collar.1', 'collar.2'], axis: 'x' } },
-      cuff: { cuff: { keys: ['cuff.1', 'cuff.2'], axis: 'x' } },
+      // sleeve cap: a body edit walks the bicep; a sleeve edit walks the armhole depth (underarm point, front and back)
+      // so the cap keeps its ease, and the side seams then follow the underarm
+      'sleeve-cap': {
+        sleeve: { keys: ['sleeve.3'], axis: 'x' },
+        front: { keys: [`front.${5 + fo}`], axis: 'y' }, back: { keys: ['back.5'], axis: 'y' },
+      },
+      // neck trim: the trim follows the neckline; a trim you drag walks the neck width (high point shoulder)
+      neckband: {
+        neckband: { keys: ['neckband.1', 'neckband.2'], axis: 'x', mode: 'ratio' },
+        front: { keys: [`front.${2 + fo}`], axis: 'x', mode: 'ratio' }, back: { keys: ['back.2'], axis: 'x', mode: 'ratio' },
+      },
+      collar: {
+        collar: { keys: ['collar.1', 'collar.2'], axis: 'x' },
+        front: { keys: [`front.${2 + fo}`], axis: 'x' }, back: { keys: ['back.2'], axis: 'x' },
+      },
+      cuff: { cuff: { keys: ['cuff.1', 'cuff.2'], axis: 'x' }, sleeve: { keys: ['sleeve.4'], axis: 'x' } },
     },
   };
 }
@@ -124,7 +143,9 @@ export function linkedMoves(style: StyleId, pieces: Piece[], pieceId: string, po
   const matePt = mate && matePiece?.points.find((q) => q.key === mate.key);
   if (matePiece && matePt) shift(pts, matePiece.id, matePt.id, dx, dy, acc);
 
-  // walk the seams the edit touched
+  // walk the seams the edit touched. A walk can move a point another seam uses (the underarm after a sleeve cap
+  // edit), so the groups are walked again until nothing moves; every walk targets the same "before + change" length,
+  // so a settled seam is left alone.
   const before: Pts = new Map(pieces.map((p) => [p.id, p.points]));
   const seams = builtinSeams(style, pieces);
   const groups = new Map<string, { fam: string; a: EdgeRef[]; b: EdgeRef[] }>();
@@ -133,44 +154,48 @@ export function linkedMoves(style: StyleId, pieces: Piece[], pieceId: string, po
     const g = groups.get(k) ?? groups.set(k, { fam: family(s.id), a: [], b: [] }).get(k)!;
     g.a.push(...s.a); g.b.push(...s.b);
   }
-  const moved = new Set([...acc.values()].map((m) => m.pieceId));
   const roleOf = (id: string) => pieces.find((p) => p.id === id)?.role;
-  for (const g of groups.values()) {
-    const pa = new Set(g.a.map((e) => e.pieceId)), pb = new Set(g.b.map((e) => e.pieceId));
-    if (pa.size === 1 && pb.size === 1 && [...pa][0] === [...pb][0]) continue; // a piece sewn to itself always walks
-    const touched = (s: Set<string>) => [...s].some((id) => moved.has(id));
-    if (!touched(pa) && !touched(pb)) continue;
-    const walks = spec.walks[g.fam];
-    if (!walks) continue;
-    // master: the side holding the edited piece, else the side that moved
-    let masterA = pa.has(pieceId) ? true : pb.has(pieceId) ? false : touched(pa) && !touched(pb) ? true : !touched(pa) && touched(pb) ? false : null;
-    if (masterA === null) masterA = !walks[roleOf([...pa][0]) ?? ''];
-    if ((masterA ? pb : pa).has(pieceId)) continue; // never re-walk the piece the user is dragging
-    const master = masterA ? g.a : g.b, slave = masterA ? g.b : g.a;
-    const slaveIds = new Set(slave.map((e) => e.pieceId));
-    if (slaveIds.size !== 1) continue;
-    const sid = [...slaveIds][0];
-    const adj = walks[roleOf(sid) ?? ''];
-    if (!adj) continue;
-    const m0 = sideLen(before, master), s0 = sideLen(before, slave), m1 = sideLen(pts, master);
-    if (Math.abs(m1 - m0) < 1e-6 && Math.abs(sideLen(pts, slave) - s0) < 1e-6) continue;
-    const target = adj.mode === 'ratio' && m0 > 0 ? (s0 * m1) / m0 : s0 + (m1 - m0);
-    const ids = adj.keys.map((k) => pts.get(sid)?.find((q) => q.key === k)?.id).filter((v): v is string => !!v);
-    if (!ids.length) continue;
-    const trial = (d: number) => {
-      const t: Pts = new Map(pts);
-      for (const id of ids) shift(t, sid, id, adj.axis === 'x' ? d : 0, adj.axis === 'y' ? d : 0);
-      return sideLen(t, slave) - target;
-    };
-    // Newton on the handle, numeric slope
-    let d = 0, r = trial(0);
-    for (let it = 0; it < 12 && Math.abs(r) > 1e-4; it++) {
-      const h = 0.05, slope = (trial(d + h) - trial(d - h)) / (2 * h);
-      if (Math.abs(slope) < 1e-3) break;
-      d -= Math.max(-10, Math.min(10, r / slope));
-      r = trial(d);
+  for (let pass = 0; pass < 3; pass++) {
+    const moved = new Set([...acc.values()].map((m) => m.pieceId));
+    let changed = false;
+    for (const g of groups.values()) {
+      const pa = new Set(g.a.map((e) => e.pieceId)), pb = new Set(g.b.map((e) => e.pieceId));
+      if (pa.size === 1 && pb.size === 1 && [...pa][0] === [...pb][0]) continue; // a piece sewn to itself always walks
+      const touched = (s: Set<string>) => [...s].some((id) => moved.has(id));
+      if (!touched(pa) && !touched(pb)) continue;
+      const walks = spec.walks[g.fam];
+      if (!walks) continue;
+      // master: the side holding the edited piece, else the side that moved
+      let masterA = pa.has(pieceId) ? true : pb.has(pieceId) ? false : touched(pa) && !touched(pb) ? true : !touched(pa) && touched(pb) ? false : null;
+      if (masterA === null) masterA = !walks[roleOf([...pa][0]) ?? ''];
+      if ((masterA ? pb : pa).has(pieceId)) continue; // never re-walk the piece the user is dragging
+      const master = masterA ? g.a : g.b, slave = masterA ? g.b : g.a;
+      // the handles of the slave side: one per slave piece that has one (a trim can be sewn to front and back both)
+      const handles: { sid: string; adj: Adjust; ids: string[] }[] = [];
+      for (const sid of new Set(slave.map((e) => e.pieceId))) {
+        const adj = walks[roleOf(sid) ?? ''];
+        const ids = adj ? adj.keys.map((k) => pts.get(sid)?.find((q) => q.key === k)?.id).filter((v): v is string => !!v) : [];
+        if (adj && ids.length) handles.push({ sid, adj, ids });
+      }
+      if (!handles.length) continue;
+      const m0 = sideLen(before, master), s0 = sideLen(before, slave), m1 = sideLen(pts, master);
+      if (Math.abs(m1 - m0) < 1e-6 && Math.abs(sideLen(pts, slave) - s0) < 1e-6) continue;
+      const target = handles[0].adj.mode === 'ratio' && m0 > 0 ? (s0 * m1) / m0 : s0 + (m1 - m0);
+      const apply = (t: Pts, d: number, a?: Map<string, PointMove>) => {
+        for (const h of handles) for (const id of h.ids) shift(t, h.sid, id, h.adj.axis === 'x' ? d : 0, h.adj.axis === 'y' ? d : 0, a);
+      };
+      const trial = (d: number) => { const t: Pts = new Map(pts); apply(t, d); return sideLen(t, slave) - target; };
+      // Newton on the handle, numeric slope
+      let d = 0, r = trial(0);
+      for (let it = 0; it < 12 && Math.abs(r) > 1e-4; it++) {
+        const h = 0.05, slope = (trial(d + h) - trial(d - h)) / (2 * h);
+        if (Math.abs(slope) < 1e-3) break;
+        d -= Math.max(-10, Math.min(10, r / slope));
+        r = trial(d);
+      }
+      if (Math.abs(r) < 0.05 && Math.abs(d) > 1e-6) { apply(pts, d, acc); changed = true; }
     }
-    if (Math.abs(r) < 0.05 && Math.abs(d) > 1e-9) for (const id of ids) shift(pts, sid, id, adj.axis === 'x' ? d : 0, adj.axis === 'y' ? d : 0, acc);
+    if (!changed) break;
   }
   return [...acc.values()].filter((m) => m.dx !== 0 || m.dy !== 0 || (m.pieceId === pieceId && m.pointId === pointId));
 }
@@ -185,4 +210,34 @@ export function applyMoves(pieces: Piece[], moves: PointMove[]): Piece[] {
     if (!mv) return p;
     return { ...p, points: p.points.map((q) => { const m = mv.get(q.id); return m ? { ...q, x: q.x + m.dx, y: q.y + m.dy } : q; }) };
   });
+}
+
+/** One set of pieces that are linked together, for the hover preview on the tool rail. */
+export interface SymGroup { index: number; label: string; pieceIds: string[] }
+
+/** Plural name of a piece cut more than once: 'Front legs', 'Sleeves'; a single piece keeps its name. */
+function groupName(style: StyleId, p: Piece): string {
+  const n = p.name || 'Piece';
+  if (instanceCount(style, p) <= 1) return n;
+  return /s$/i.test(n) ? n : `${n}s`;
+}
+
+/**
+ * The pieces a symmetry mode links, grouped for the preview.
+ *  'sym': one group per piece that mirrors (about its own centre line, or as a left and right pair, or all the crown
+ *    panels): both halves of a group share a colour, different groups differ.
+ *  'total': every piece total symmetry reaches (mating front and back, and the trims it walks) in ONE group.
+ * Pieces the mode does not link are in no group.
+ */
+export function symmetryGroups(style: StyleId, pieces: Piece[], mode: 'sym' | 'total'): SymGroup[] {
+  const mirrored = pieces.filter((p) => p.symmetric || instanceCount(style, p) > 1);
+  if (mode === 'sym') return mirrored.map((p, i) => ({ index: i, label: groupName(style, p), pieceIds: [p.id] }));
+  const spec = specFor(style);
+  const roles = new Set<string>();
+  if (spec) {
+    roles.add('front'); roles.add('back');
+    for (const w of Object.values(spec.walks)) for (const r of Object.keys(w)) roles.add(r);
+  }
+  const hit = spec ? pieces.filter((p) => roles.has(p.role) && p.role !== 'custom') : mirrored;
+  return hit.length ? [{ index: 0, label: hit.map((p) => groupName(style, p)).join(', '), pieceIds: hit.map((p) => p.id) }] : [];
 }
