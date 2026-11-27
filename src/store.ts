@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { makePreset, GARMENT_LABEL, type Piece, type PieceFabric } from './data/presets';
-import { migrateGarment, type StyleId } from './data/catalog';
+import { migrateGarment, styleById, CATALOG, type StyleId } from './data/catalog';
+import { FABRICS } from './data/fabrics';
+import type { Design } from './data/designs';
 import { DEFAULT_BODY, type Body } from './three/body';
 import { draft, regradePoints, type Fit } from './data/draft';
 import { bezAt, toBeziers, type PPoint, type Pt } from './lib/geometry';
@@ -300,6 +302,8 @@ export interface State {
   setLink: (on: boolean) => void;
   setFit: (fit: Fit) => void;
   newProject: (id: StyleId) => void;
+  /** start a new project from an example design (src/data/designs.ts); false when its style or fabric is unknown */
+  loadDesign: (d: Design) => boolean;
   /** which full screen is showing: the start screen, the new project flow, or the editor */
   screen: Screen;
   setScreen: (s: Screen) => void;
@@ -398,6 +402,50 @@ export function freshProject(id: StyleId, name?: string, body: Body = DEFAULT_BO
   const g = migrateGarment(id);
   const pieces = makePreset(g, body);
   return withCollar({ id: uid(), name: name ?? `Untitled ${GARMENT_LABEL[g].toLowerCase()}`, garment: g, pieces, body: { ...body }, linkPattern: true, fit: 'regular', edits: styleEdits(g, pieces, body), updatedAt: Date.now() });
+}
+
+/**
+ * A new project from an example design: the style drafted on the body, the fabric and colour on the main pieces, each
+ * garment measurement typed in through setMeasurement (total symmetry, so seams still walk), then the design's edits
+ * with pattern roles swapped for the new piece ids. Null when the style or fabric does not exist.
+ */
+export function designProject(d: Design, body: Body = DEFAULT_BODY): Project | null {
+  if (!CATALOG.some((s) => s.id === d.style)) return null;
+  const fabric = d.fabric ? FABRICS.find((f) => f.id === d.fabric!.id) : undefined;
+  if (d.fabric && !fabric) return null;
+  let project = freshProject(d.style, d.name, body);
+  let pieces = project.pieces;
+  if (d.fabric && fabric) {
+    const named = d.fabric.color ? fabric.colors.findIndex((c) => c.name.toLowerCase() === d.fabric!.color!.toLowerCase()) : 0;
+    const spec: PieceFabric = { id: fabric.id, color: Math.max(0, named), ...(d.fabric.hex ? { hex: d.fabric.hex } : {}) };
+    const main = styleById(d.style).defaultFabric;
+    // trims in their own cloth (rib neckbands and cuffs) stay as they are
+    pieces = pieces.map((p) => (p.fabric.id === main ? { ...p, fabric: spec } : p));
+  }
+  // measurements interact (hip and thigh share points), so settle them over a few passes
+  const targets = Object.entries(d.measures ?? {}).map(([k, v]) => ({ t: (k === 'Inseam' ? { kind: 'fit', label: 'Inseam' } : { kind: 'garment', label: k }) as MeasureTarget, v }));
+  for (let pass = 0; pass < 4; pass++) {
+    let moved = false;
+    for (const { t, v } of targets) {
+      const mv = setMeasurement(d.style, pieces, t, v, { total: true });
+      if (mv.length) { pieces = applyMoves(pieces, mv); moved = true; }
+    }
+    if (!moved) break;
+  }
+  const base = project.edits ?? EMPTY_EDITS;
+  const idOf = (role: string) => pieces.find((p) => p.role === role)?.id;
+  const e = d.edits;
+  const edits: Edits = { ...base };
+  if (e) {
+    const add = (e.attachments ?? []).flatMap((a) => { const pid = idOf(a.pieceId); return pid ? [{ ...a, id: uid(), pieceId: pid, layers: a.layers.map((l) => ({ ...l, id: uid() })) }] : []; });
+    edits.attachments = [...base.attachments, ...add];
+    if (e.bands?.length) edits.bands = [...(base.bands ?? []), ...e.bands.map((b) => ({ ...b, id: uid(), skip: b.skip?.flatMap((r) => idOf(r) ?? []) }))];
+    if (e.insideFabric) edits.insideFabric = { ...(base.insideFabric ?? {}), ...Object.fromEntries(Object.entries(e.insideFabric).flatMap(([r, f]) => { const pid = idOf(r); return pid ? [[pid, f]] : []; })) };
+    if (e.collar && pieces.some((p) => p.role === 'collar')) edits.collar = e.collar;
+    if (e.closure) edits.closure = e.closure;
+  }
+  project = { ...project, pieces, edits, updatedAt: Date.now() };
+  return project;
 }
 
 /** A saved project as this version opens it: split fronts for a front that buttons, the inside pieces of the newer draft,
@@ -789,6 +837,12 @@ export const useStore = create<State>((set, get) => {
         return { project, past: [], future: [], selPiece: null, selPoint: null, selAttachment: null, fitToken: s.fitToken + 1, tool: 'select' };
       }),
     newProject: (id) => set((s) => ({ project: freshProject(id, undefined, s.project.body), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1, sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' })),
+    loadDesign: (d) => {
+      const project = designProject(d, get().project.body);
+      if (!project) return false;
+      set((s) => ({ project, past: [], future: [], selPiece: null, selPoint: null, selAttachment: null, fitToken: s.fitToken + 1, tool: 'select', sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' }));
+      return true;
+    },
     // older saves stored 'jacket' | 'shirt' | 'pants'; map them onto catalog styles
     loadProject: (p) => set((s) => ({ project: migrateProject(p), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1, sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' })),
     rename: (name) => set((s) => ({ project: { ...s.project, name, updatedAt: Date.now() } })),

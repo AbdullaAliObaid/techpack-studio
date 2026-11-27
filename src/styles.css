@@ -1083,6 +1083,41 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .style-name { padding: 0 6px; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; }
 .style-blurb { padding: 0 6px; font-size: 13px; line-height: 1.4; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
+/* example designs under each style card: the disclosure grows in place, content is revealed with a mask */
+.style-grid { align-items: start; }
+.style-item { display: flex; flex-direction: column; gap: 4px; }
+.shelf { border-radius: 14px; }
+.shelf-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 0 12px; border: 0; border-radius: 12px; background: transparent;
+  color: var(--text-2); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.shelf-toggle:hover { background: var(--fill-2); color: var(--label); }
+.shelf-toggle:focus-visible, .design-card:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.shelf-count { min-width: 20px; padding: 1px 6px; border-radius: 6px; background: var(--fill-2); font-size: 11px; text-align: center; font-variant-numeric: tabular-nums; }
+.shelf-chev { margin-left: auto; display: grid; transition: transform 220ms ease; }
+.shelf.open .shelf-chev { transform: rotate(180deg); }
+.shelf-body { display: grid; grid-template-rows: 0fr; visibility: hidden; transition: grid-template-rows 240ms ease, visibility 0s linear 240ms; }
+.shelf.open .shelf-body { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 240ms ease, visibility 0s; }
+.shelf-inner { min-height: 0; overflow: hidden; }
+.shelf-list { list-style: none; margin: 0; padding: 4px 0 8px; display: flex; flex-direction: column; gap: 8px; opacity: 0; transform: translateY(-6px); transition: opacity 200ms ease, transform 240ms ease; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 12px), transparent); }
+.shelf.open .shelf-list { opacity: 1; transform: none; -webkit-mask-image: none; mask-image: none; }
+.design-card {
+  display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 12px; align-items: center; width: 100%; min-height: 64px; padding: 6px 10px 6px 6px; text-align: left;
+  border: 0; border-radius: 14px; background: var(--bg-elevated); color: var(--label); box-shadow: 0 0 0 0.5px var(--separator); cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.design-card:hover { box-shadow: 0 0 0 0.5px var(--separator), var(--shadow); }
+.design-card:active { transform: scale(0.98); }
+.design-art { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 8px; background: var(--bg-grouped); }
+.design-art .sketch { width: 44px; height: 44px; fill: var(--tint); fill-opacity: 0.9; stroke: var(--label); stroke-opacity: 0.55; stroke-width: 2; }
+.design-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.design-name { font-size: 13px; font-weight: 600; line-height: 1.25; }
+.design-blurb { font-size: 12px; line-height: 1.35; color: var(--text-2); }
+@media (prefers-reduced-motion: reduce) {
+  .shelf-chev, .shelf-body, .shelf-list, .design-card { transition: none; }
+  .shelf-list { transform: none; }
+}
+
 .final { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr); gap: 48px; align-items: center; max-width: 920px; margin: 0 auto; }
 .final-art { aspect-ratio: 1; border-radius: 28px; background: var(--bg-elevated); box-shadow: 0 0 0 0.5px var(--separator); display: grid; place-items: center; padding: 14%; }
 .final-art .sketch { stroke-width: 1.3; }
