@@ -1140,7 +1140,7 @@ function PieceView(props: {
     const hitR = (dx: number, dy: number) => Math.min(px(22), Math.max(px(12), Math.hypot(dx, dy) - px(10)));
     return (
       <g key={a.id} transform={`translate(${fr.x},${fr.y}) rotate(${fr.rotation})`} data-kind="attach" data-att={a.id} data-piece={p.id} data-inst={inst} style={{ cursor: 'move' }}>
-        <g opacity={dim ? 0.5 : 1}>
+        <g opacity={(dim ? 0.5 : 1) * (a.kind === 'print' && a.blend !== false ? 1 - 0.14 * (a.blendStrength ?? 0.7) : 1)}>
           {hw || letters ? <rect x={-hitW / 2} y={-hitH / 2} width={hitW} height={hitH} fill="transparent" /> : <path d={o.d} transform={o.transform} fill="transparent" />}
           {!hw && !letters && (a.w < px(18) || a.h < px(18)) && <rect x={-hitW / 2} y={-hitH / 2} width={hitW} height={hitH} fill="transparent" />}
           {hw && a.hardware?.type !== 'zipper' && Math.max(a.w, a.h) * k < 16 && (

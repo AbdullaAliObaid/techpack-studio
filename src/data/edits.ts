@@ -160,6 +160,10 @@ export interface Attachment {
   instance?: number;
   /** a colour block (src/data/colourBlock.ts): a print the chart clips to the piece outline */
   block?: boolean;
+  /** prints: take on the host fabric (weave shows through the ink, gloss follows the cloth). Omitted: on. */
+  blend?: boolean;
+  /** how strongly the print blends with the fabric, 0..1. Omitted: 0.7. */
+  blendStrength?: number;
   /**
    * made from the style (src/data/construction.ts builtinDetails): the buttons, buttonholes, rivets, belt loops and
    * pockets every garment of the style has. The UI labels them "from the style"; they move, edit and delete like any
