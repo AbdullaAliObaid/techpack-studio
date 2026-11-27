@@ -1,10 +1,11 @@
 import type { Piece, SpecDef, GarmentType } from '../data/presets';
-import { bbox, bezAt, bezTangent, dist, outlineLength, samplePoly, sliceSpan, toBeziers, type Pt } from './geometry';
-import type { Attachment, Edits, Hardware, Pleat } from '../data/edits';
+import { bbox, bezAt, bezTangent, dist, offsetInward, outlineLength, samplePoly, signedArea, sliceSpan, toBeziers, type Pt } from './geometry';
+import type { Attachment, Edits, Face, Hardware, Pleat } from '../data/edits';
 import { attachmentPolygons, outlinePolygon, SHAPES } from './shapes';
 import { builtinSeams, faceLabel, faceOf, instanceLabel } from '../sim/seams';
 import { labelMaterial, labelSewing, labelSize } from '../data/labels';
-import { FABRIC_CATEGORIES, FABRICS, colorName, fabricById, fabricHex, patternLabel, withPatternDefaults, type FabricRef } from '../data/fabrics';
+import { FABRIC_CATEGORIES, FABRICS, PATTERNS, colorName, compositionOf, fabricById, fabricHex, patternLabel, withPatternDefaults, type FabricRef } from '../data/fabrics';
+import type { Note } from '../store';
 import type { StyleId } from '../data/catalog';
 import { derivedGirths, EASE, RIB, frontOffset, neckBase } from '../data/draft';
 import { migrateGarment, styleById } from '../data/catalog';
@@ -791,4 +792,356 @@ export function placementMarks(p: Piece, pieces: Piece[], edits?: Edits) {
   }
   const pleats = (edits?.pleats ?? []).filter((pl) => pl.pieceId === p.id).map((pl) => ({ pleat: pl, marks: pleatMarks(p, pl) })).filter((x) => x.marks);
   return { outlines, pleats: pleats as { pleat: Pleat; marks: NonNullable<ReturnType<typeof pleatMarks>> }[] };
+}
+
+
+// =====================================================================================================
+// Tech pack content builders (pure): what a manufacturer needs, as plain rows. exportPdf.ts only lays them out.
+// =====================================================================================================
+
+/** Roll width (cm) and marker waste factor behind every consumption estimate. */
+export const FABRIC_WIDTH = 150;
+export const MARKER_WASTE = 1.25;
+
+/** Cut area of one piece (cm2): the sewing line grown by the 1 cm seam allowance. */
+export function pieceCutArea(p: Piece): number {
+  return Math.abs(signedArea(offsetInward(samplePoly(p.points, 12), -1)));
+}
+
+export interface FabricBomRow {
+  key: string;
+  /** outside = shell face; inside = a different fabric on the inside face of a piece; attachment = a pocket, patch or tag cut from its own cloth */
+  face: 'outside' | 'inside' | 'attachment';
+  faceLabel: string;
+  fabric: string;
+  category: string;
+  gsm: number;
+  composition: string;
+  colour: string;
+  hex: string;
+  /** pattern name, repeat, colourway; undefined for a plain cloth */
+  pattern?: string;
+  repeat?: string;
+  colourway?: string;
+  /** plain, woven in or printed on */
+  construction: 'plain' | 'woven' | 'printed';
+  finish: string;
+  /** pieces (with cut counts) and attachments the row covers */
+  where: string[];
+  /** outside rows: pieces whose inside face is the same cloth (no inside fabric chosen) */
+  insideToo: string[];
+  pieces: number;
+  areaCm2: number;
+  /** metres of roll at FABRIC_WIDTH with MARKER_WASTE */
+  metres: number;
+  kg: number;
+  ref: FabricRef;
+}
+
+const SHEEN_NAME: Record<string, string> = { matte: 'Matte', satin: 'Satin sheen', glossy: 'Glossy', metallic: 'Metallic' };
+
+function bomBase(ref: FabricRef & { sheen?: string }) {
+  const i = fabricInfo(ref), f = fabricById(ref.id);
+  const pat = ref.pattern && ref.pattern.id !== 'solid' ? withPatternDefaults(ref.pattern) : undefined;
+  return {
+    fabric: i.fabric, category: i.category, gsm: i.gsm, composition: compositionOf(f.id), colour: i.colour, hex: i.hex,
+    ...(pat ? { pattern: PATTERNS[pat.id]?.name ?? pat.id, repeat: `${Math.round(pat.scale * 10) / 10} cm${pat.rotation ? `, at ${Math.round(pat.rotation)} deg` : ''}`, colourway: i.colourway } : {}),
+    construction: (pat ? (pat.method ?? 'printed') : 'plain') as 'plain' | 'woven' | 'printed',
+    finish: ref.sheen ? SHEEN_NAME[ref.sheen] ?? ref.sheen : 'Natural finish of the cloth',
+  };
+}
+
+/**
+ * Bill of materials for cloth, outside and inside faces kept apart: one row per fabric, colour, pattern and finish on
+ * each face. Inside rows exist only where an inside fabric differs from the piece's outside fabric (under collar,
+ * placket facing, lining look). Cloth attachments with their own fabric get rows too; those cut from the host fabric
+ * add their area to its outside row.
+ */
+export function fabricBom(pieces: Piece[], edits?: Edits, style?: StyleId, width = FABRIC_WIDTH, waste = MARKER_WASTE): FabricBomRow[] {
+  const rows = new Map<string, FabricBomRow>();
+  const order: string[] = [];
+  const add = (face: FabricBomRow['face'], ref: FabricRef & { sheen?: string }, where: string, area: number, count: number, insideToo?: string) => {
+    const key = `${face}|${fabricKey(ref)}|${ref.sheen ?? ''}`;
+    let r = rows.get(key);
+    if (!r) {
+      r = { key, face, faceLabel: face === 'outside' ? 'Outside (shell)' : face === 'inside' ? 'Inside face' : 'Attachment cloth', ...bomBase(ref), where: [], insideToo: [], pieces: 0, areaCm2: 0, metres: 0, kg: 0, ref };
+      rows.set(key, r);
+      order.push(key);
+    }
+    if (!r.where.includes(where)) r.where.push(where);
+    if (insideToo && !r.insideToo.includes(insideToo)) r.insideToo.push(insideToo);
+    r.pieces += count;
+    r.areaCm2 += area * count;
+  };
+  const patch = (p: Piece) => p.role === 'custom' && p.placement?.mode === 'patch';
+  for (const p of pieces) {
+    if (patch(p)) continue;
+    const label = p.cut > 1 ? `${p.name} (x${p.cut})` : p.name;
+    const inner = edits?.insideFabric?.[p.id];
+    const differs = inner && fabricKey(inner) !== fabricKey(p.fabric);
+    add('outside', p.fabric, label, pieceCutArea(p), p.cut, differs ? undefined : p.name);
+    if (differs) add('inside', inner, `${style ? faceLabel(style, p, 'inside') : 'Inside'}: ${p.name}${p.cut > 1 ? ` (x${p.cut})` : ''}`, pieceCutArea(p), p.cut);
+  }
+  // user pieces patched onto the garment, and cloth attachments
+  const atts = attachmentReport(pieces, edits, style);
+  for (const r of atts) {
+    if (!r.cutPieces) continue;
+    const a = edits?.attachments.find((q) => q.id === r.id);
+    if (a?.kind === 'label') continue; // tags are a trim, listed with the trims
+    const up = pieces.find((q) => q.id === r.id);
+    const host = pieces.find((q) => q.name === r.host);
+    const ref = (a?.fabric ?? up?.fabric ?? host?.fabric) as (FabricRef & { sheen?: string }) | undefined;
+    if (!ref) continue;
+    let area = 0;
+    if (a) for (const ring of attachmentPolygons(a)) area += Math.abs(signedArea(ring)) + perimeter(ring);
+    else if (up) area = pieceCutArea(up);
+    const same = !up && host && fabricKey(ref) === fabricKey(host.fabric);
+    add(up || same ? 'outside' : 'attachment', same ? host.fabric : ref, `${r.name} (${r.kind}${r.copies > 1 ? `, x${r.copies}` : ''})`, area, r.copies);
+  }
+  const out = order.map((k) => rows.get(k)!);
+  for (const r of out) {
+    r.metres = (r.areaCm2 / width / 100) * waste;
+    r.kg = (r.areaCm2 / 10000) * (r.gsm / 1000) * waste;
+  }
+  const rank = { outside: 0, inside: 1, attachment: 2 } as const;
+  return out.sort((a, b) => rank[a.face] - rank[b.face]);
+}
+
+/** A measured distance from a reference on the host piece to an item's centre (host local cm), with the line to draw. */
+export interface PlaceRef { label: string; value: number; from: Pt; to: Pt }
+
+/**
+ * How far a point on a piece is from the usual references a factory measures from: the centre line or centre seam,
+ * the shoulder point (HPS) or waist, and the hem or opening edge. All on the piece's own pattern coordinates; the
+ * lines run straight across (horizontal) and straight down (vertical) like a measuring tape on the flat garment.
+ */
+export function placementRefs(style: StyleId | undefined, host: Piece | undefined, at: Pt): PlaceRef[] {
+  if (!host) return [];
+  const bb = bbox(samplePoly(host.points, 12));
+  const tags = (t: string) => host.points.filter((q) => q.tag === t);
+  const nearX = <T extends Pt>(list: T[]) => list.length ? list.reduce((a, b) => (Math.abs(b.x - at.x) < Math.abs(a.x - at.x) ? b : a)) : undefined;
+  const refs: PlaceRef[] = [];
+  const horiz = (label: string, x: number) => refs.push({ label, value: Math.abs(at.x - x), from: { x, y: at.y }, to: { x: at.x, y: at.y } });
+  const vert = (label: string, y: number) => refs.push({ label, value: Math.abs(at.y - y), from: { x: at.x, y }, to: { x: at.x, y: at.y } });
+  const fam = style ? styleById(migrateGarment(style)).family : undefined;
+  const hps = nearX(tags('hps'));
+  const hem = tags('hem');
+  if ((host.role === 'front' || host.role === 'back') && hps) {
+    horiz(host.role === 'front' ? 'From centre front' : 'From centre back', 0);
+    vert('Down from shoulder point (HPS)', hps.y);
+    if (hem.length) vert('Up from hem', Math.max(...hem.map((q) => q.y)));
+  } else if (host.role === 'sleeve') {
+    horiz('From sleeve centre line', 0);
+    vert('Down from sleeve top', bb.minY);
+    const cuff = tags('cuff');
+    vert(fam === 'shirt' || fam === 'jacket' ? 'Up from cuff edge' : 'Up from sleeve opening', cuff.length ? Math.max(...cuff.map((q) => q.y)) : bb.maxY);
+  } else if ((host.role === 'front' || host.role === 'back') && tags('waistC').length) {
+    const wc = tags('waistC')[0], ws = tags('waistS')[0];
+    horiz(host.role === 'front' ? 'From centre front seam' : 'From centre back seam', wc.x);
+    if (ws) horiz('From outseam at waist', ws.x);
+    vert('Down from waist edge', wc.y);
+    if (hem.length) vert('Up from hem', Math.max(...hem.map((q) => q.y)));
+  } else if (host.role === 'crown' || host.role === 'brim') {
+    horiz('From panel centre line', 0);
+    vert('From top edge', bb.minY);
+    vert('From bottom edge', bb.maxY);
+  } else {
+    const cl = host.symmetric && host.role !== 'custom';
+    if (cl) horiz('From centre line', 0);
+    else horiz('From left edge', bb.minX), horiz('From right edge', bb.maxX);
+    vert('From top edge', bb.minY);
+    vert('From bottom edge', bb.maxY);
+  }
+  return refs.map((r) => ({ ...r, value: Math.round(r.value * 10) / 10 }));
+}
+
+export interface TrimDetail {
+  /** callout number, shared by the photo, the placement map and the table */
+  no: number;
+  id: string;
+  name: string;
+  kind: Attachment['kind'];
+  /** plain item name: 'Rivet', 'Chest patch', 'Woven label' */
+  item: string;
+  material: string;
+  finish: string;
+  colour: string;
+  thread: string;
+  stitch: string;
+  method: string;
+  qty: number;
+  size: string;
+  w: number;
+  h: number;
+  rotation: number;
+  /** centre on the host (host local pattern cm) */
+  at: Pt;
+  host: string;
+  hostId: string;
+  instance?: number;
+  /** 'Right front leg', 'Both sleeves' */
+  side: string;
+  face: Face;
+  /** 'Outside', 'Under collar', 'Inside' */
+  faceName: string;
+  refs: PlaceRef[];
+  /** artwork on the item, one line per layer */
+  layers: { label: string; color: string; size: string }[];
+  /** the cloth, for pockets, patches, appliques, straps */
+  fabric?: string;
+  /** outline(s) to draw on the host: one ring per letter, or none for hardware */
+  outlines: Pt[][];
+  /** hardware: each trim position and radius, or the zip line */
+  points: { at: Pt; r: number }[];
+  line?: [Pt, Pt];
+  /** for the placement crop: the host piece outline, a custom piece's own outline for a user patch */
+  note?: string;
+}
+
+const METAL = new Set(['silver', 'brass', 'copper', 'gunmetal']);
+const mm = (cm: number) => `${round1(cm * 10)} mm`;
+const hwMaterial = (h: Hardware) => (h.type === 'zipper' ? (h.zipper?.teeth === 'metal' ? 'Metal teeth on cloth tape' : h.zipper ? `${cap(TEETH[h.zipper.teeth] ?? h.zipper.teeth)} on cloth tape` : 'Zip') : METAL.has(h.finish) ? 'Metal' : 'Plastic');
+
+function threadText(a: Attachment, style?: StyleId): string {
+  if (a.thread) { const n = colorNameOfHex(a.thread); return n === a.thread ? a.thread : `${n} (${a.thread})`; }
+  const t = style ? styleById(migrateGarment(style)).details.topstitch : undefined;
+  if (t && t.color !== 'match') return `${colorNameOfHex(t.color)} (${t.color})`;
+  return 'Matched to the fabric';
+}
+const colorNameOfHex = (h: string) => (/^#/.test(h) ? hexName(h) : h);
+
+function stitchText(a: Attachment, style?: StyleId): string {
+  const t = style ? styleById(migrateGarment(style)).details.topstitch : undefined;
+  const top = t ? `Topstitch ${t.needles} needle lockstitch 301, ${round1(Math.min(t.offset, 0.5))} cm from the edge` : 'Lockstitch 301, 0.2 cm from the edge';
+  switch (a.kind) {
+    case 'pocket': return `${top}; bar tack at both top corners`;
+    case 'patch': return top;
+    case 'applique': return 'Satin stitch (zigzag 304), 0.3 cm wide, all round';
+    case 'strap': return `${top}; bar tack at each end`;
+    case 'label': return a.label?.sewn === 'all-round' ? top : 'Lockstitch 301 across the ends';
+    case 'embroidery': return 'Satin stitch embroidery, stabiliser behind the cloth';
+    case 'print': return 'No stitching. Printed ink';
+    case 'hardware': {
+      const h = a.hardware;
+      if (!h) return '';
+      if (h.type === 'zipper') return 'Lockstitch 301 along both tapes';
+      if (h.type === 'button') return h.holes === 'shank' ? 'Machine sewn shank button, thread shank' : `Machine sewn, ${h.holes ?? 4} hole cross stitch, 6 stitches`;
+      return 'No stitching. Set through the fabric with a press tool';
+    }
+  }
+}
+
+const KIND_ITEM: Record<Attachment['kind'], string> = { pocket: 'Pocket', patch: 'Patch', applique: 'Applique', strap: 'Strap', embroidery: 'Embroidery', print: 'Print', hardware: 'Hardware', label: 'Label' };
+
+/** Artwork layers in plain words. */
+function layerRows(layers: Attachment['layers']): TrimDetail['layers'] {
+  return layers.map((l) => ({
+    label: l.shape === 'text' ? `Text "${l.text ?? ''}"` : l.shape === 'image' ? 'Picture' : l.shape === 'path' ? 'Drawn shape' : SHAPES[l.shape]?.name ?? l.shape,
+    color: l.color,
+    size: `${round1(l.w)} x ${round1(l.h)} cm`,
+  }));
+}
+
+/**
+ * One row per item a manufacturer has to place: every attachment (pocket, patch, applique, strap, embroidery, print,
+ * hardware, label) and every user piece patched on. Numbered in the order of attachmentReport, with the measured
+ * position from the usual references, the specs and the artwork layers.
+ */
+export function trimDetails(pieces: Piece[], edits?: Edits, style?: StyleId): TrimDetail[] {
+  const out: TrimDetail[] = [];
+  const rep = attachmentReport(pieces, edits, style);
+  for (const r of rep) {
+    const a0 = edits?.attachments.find((q) => q.id === r.id);
+    const host = pieces.find((q) => q.name === r.host) ?? pieces.find((q) => q.id === a0?.pieceId);
+    if (!a0) {
+      // a user piece patched onto its host
+      const up = pieces.find((q) => q.id === r.id)!;
+      const hostP = pieces.find((q) => q.id === up.placement?.hostPieceId);
+      const poly = patchOutline(up);
+      out.push({
+        no: out.length + 1, id: r.id, name: r.name, kind: 'patch', item: 'Patch', material: fabricText(up.fabric), finish: up.fabric.sheen ? SHEEN_NAME[up.fabric.sheen] ?? up.fabric.sheen : 'Natural', colour: `${colorName(up.fabric)} (${fabricHex(up.fabric)})`,
+        thread: 'Matched to the fabric', stitch: stitchText({ kind: 'patch' } as Attachment, style), method: 'Sewn all round', qty: r.copies, size: `${round1(r.w)} x ${round1(r.h)} cm`, w: r.w, h: r.h, rotation: r.rotation,
+        at: { x: r.x, y: r.y }, host: hostP?.name ?? r.host, hostId: hostP?.id ?? '', ...(up.placement?.instance !== undefined ? { instance: up.placement.instance } : {}), side: r.side, face: 'outside', faceName: 'Outside',
+        refs: placementRefs(style, hostP, { x: r.x, y: r.y }), layers: [], fabric: fabricText(up.fabric), outlines: poly ? [poly.pts] : [], points: [],
+      });
+      continue;
+    }
+    const a = a0.kind === 'label' ? { ...a0, ...labelSize(a0) } : a0;
+    const face = faceOf(a);
+    const faceName = host && style ? faceLabel(style, host, face) : face === 'inside' ? 'Inside' : 'Outside';
+    const base = { no: out.length + 1, id: a.id, name: a.name, kind: a.kind, w: a.w, h: a.h, rotation: a.rotation, at: { x: a.x, y: a.y }, host: host?.name ?? r.host, hostId: host?.id ?? a.pieceId, ...(a.instance !== undefined ? { instance: a.instance } : {}), side: r.side, face, faceName, refs: placementRefs(style, host, { x: a.x, y: a.y }), layers: layerRows(a.layers), qty: r.copies, stitch: stitchText(a, style), method: r.stitched[0].toUpperCase() + r.stitched.slice(1) };
+    const sheen = a.sheen ? SHEEN_NAME[a.sheen] ?? a.sheen : undefined;
+    if (a.kind === 'hardware' && a.hardware) {
+      const h = a.hardware, m = hardwareMarks({ ...host!, id: a.pieceId }, { ...edits!, attachments: [a] })[0];
+      const n = h.type === 'zipper' ? 1 : Math.max(1, Math.round(h.count ?? 1));
+      out.push({
+        ...base, item: HW_NAME[h.type] ?? cap(h.type), material: hwMaterial(h), finish: sheen ?? (h.sheen ? SHEEN_NAME[h.sheen] : METAL.has(h.finish) ? 'Polished metal' : 'Matte'), colour: h.color ?? (h.zipper ? `${cap(h.finish)} teeth, tape ${h.zipper.tape}` : cap(h.finish)),
+        thread: h.type === 'button' ? 'Matched to the fabric' : 'None', size: h.type === 'zipper' ? `${round1(a.h)} cm long, ${mm(h.size)} tape` : n > 1 ? `${mm(h.size)} diameter, ${n} in a row, ${round1(h.spacing ?? Math.max(1.5, h.size * 2))} cm apart` : `${mm(h.size)} diameter`,
+        qty: n * r.copies, fabric: undefined, outlines: [], points: m?.points ?? [], ...(m?.line ? { line: m.line } : {}), note: hardwareDetail(h, a),
+      });
+    } else if (a.kind === 'label') {
+      const t = labelReport(pieces, { ...edits!, attachments: [a] }, style)[0], mat = labelMaterial(a);
+      out.push({
+        ...base, item: `${cap(a.label?.type ?? 'woven')} label`, material: mat.name, finish: `${cap(t.sheen)}${mat.purchased ? ', bought finished' : ''}`, colour: t.color, thread: threadText(a, style), size: `${round1(t.w)} x ${round1(t.h)} cm finished, ${round1(t.cutW)} x ${round1(t.cutH)} cm cut`,
+        method: t.sewn[0].toUpperCase() + t.sewn.slice(1), outlines: attachmentOutlines(a), points: [],
+      });
+    } else if (a.kind === 'embroidery') {
+      out.push({ ...base, item: 'Embroidery', material: 'Embroidery thread (rayon or polyester)', finish: sheen ?? 'Satin thread sheen', colour: a.thread ?? 'colour matched', thread: threadText(a, style), size: `${round1(a.w)} x ${round1(a.h)} cm${a.text ? `, "${a.text}"` : ''}`, outlines: attachmentOutlines(a), points: [] });
+    } else if (a.kind === 'print') {
+      out.push({ ...base, item: 'Print', material: 'Ink on the host fabric', finish: sheen ?? 'Matte', colour: a.layers.map((l) => l.color).filter((c, i, all) => all.indexOf(c) === i).join(', ') || 'see artwork', thread: 'None', size: `${round1(a.w)} x ${round1(a.h)} cm`, outlines: attachmentOutlines(a), points: [] });
+    } else {
+      const ref = (a.fabric ?? host?.fabric) as FabricRef | undefined;
+      const shape = a.kind === 'applique' ? (a.shape === 'text' ? `letters "${a.text ?? ''}"` : SHAPES[a.shape ?? 'rect']?.name.toLowerCase()) : undefined;
+      out.push({
+        ...base, item: KIND_ITEM[a.kind], material: ref ? fabricText(ref) : 'Host fabric', finish: sheen ?? (host?.fabric.sheen ? SHEEN_NAME[host.fabric.sheen] : 'Natural'), colour: ref ? `${colorName(ref)} (${fabricHex(ref)})` : '', thread: threadText(a, style),
+        size: `${round1(a.w)} x ${round1(a.h)} cm${shape ? `, ${shape}` : ''}`, fabric: ref ? fabricText(ref) : undefined, outlines: attachmentOutlines(a), points: [],
+      });
+    }
+  }
+  return out;
+}
+
+export interface ConstructionRow { label: string; type: string; stitch: string; allowance: string; note?: string }
+
+/** Seams and the stitching a style calls for, in plain words for the construction page. */
+export function constructionReport(type: GarmentType, pieces: Piece[], edits?: Edits) {
+  const st = styleById(migrateGarment(type));
+  const d = st.details;
+  const knit = !!d.rib || st.family === 'tee' || st.family === 'polo';
+  const top = d.topstitch ? `${d.topstitch.needles} needle topstitch, ${round1(d.topstitch.offset)} cm from the seam, thread ${d.topstitch.color === 'match' ? 'matched to the fabric' : colorNameOfHex(d.topstitch.color)}` : undefined;
+  const base = knit ? 'Overlock 504' : 'Lockstitch 301 + overlock 504';
+  const seams: ConstructionRow[] = seamReport(type, pieces, edits).map((r) => {
+    const label = r.label.replace(' (front / back)', '');
+    if (r.attachment) return { label, type: 'Attached piece', stitch: stitchText({ kind: 'patch' } as Attachment, type), allowance: '1 cm turned in' };
+    const typeName = r.ease !== undefined ? 'Eased seam' : r.seams?.some((id) => id.startsWith('cuff-join') || id.includes('join')) ? 'Closed seam' : 'Plain seam';
+    return { label, type: typeName, stitch: `${base}${top ? `; ${top}` : ''}`, allowance: '1 cm', ...(r.ease !== undefined ? { note: `Ease ${round1(r.ease)} cm distributed evenly` } : {}) };
+  });
+  const finishing: string[] = ['All raw edges overlocked (504) inside, 1 cm seam allowance unless noted'];
+  if (d.hem) finishing.push(`Hem: ${d.hem.needles} needle ${knit ? 'coverstitch 406' : 'lockstitch 301'}, ${round1(d.hem.depth)} cm folded`);
+  if (top) finishing.push(`Topstitching: ${top}`);
+  const has = (r: string) => pieces.some((p) => p.role === r);
+  if (!knit && (has('collar') || has('cuff') || has('placket') || has('waistband'))) finishing.push(`Fusible interfacing on ${['collar', 'cuff', 'placket', 'waistband'].filter(has).join(', ')} (recommended, light weight)`);
+  if (d.buttons) finishing.push(`${d.buttons} button${d.buttons > 1 ? 's' : ''} with matching buttonholes down the front`);
+  if (d.beltLoops) finishing.push(`${d.beltLoops} belt loops at the waistband`);
+  if (d.rivets) finishing.push('Copper rivets at pocket corners and fly');
+  for (const p of pieces) {
+    const inner = edits?.insideFabric?.[p.id];
+    if (inner && fabricKey(inner) !== fabricKey(p.fabric)) finishing.push(`${faceLabel(type, p, 'inside')} (${p.name}): ${fabricText(inner)}; outside is ${fabricText(p.fabric)}`);
+  }
+  const collar = pieces.some((p) => p.role === 'collar') ? (edits?.collar === 'up' ? 'Collar shown popped up (under collar visible)' : 'Collar shown folded down') : undefined;
+  const pleats = pleatReport(pieces, edits, type);
+  const custom = (edits?.customSeams ?? []).flatMap((cs) => {
+    const pa = pieces.find((q) => q.id === cs.a.pieceId), pb = pieces.find((q) => q.id === cs.b.pieceId);
+    return pa && pb ? [{ label: `${pa.name} to ${pb.name}`, a: sewnLength(pa, cs.a.fromId, cs.a.toId, edits), b: sewnLength(pb, cs.b.fromId, cs.b.toId, edits), flip: !!cs.flip }] : [];
+  });
+  const byId = new Map(builtinSeams(type, pieces, { collar: edits?.collar ?? 'down' }).map((s) => [s.id, s.label]));
+  const detached = (edits?.detachedSeams ?? []).map((id) => byId.get(id) ?? id);
+  return { seams, finishing, collar, pleats, custom, detached, topstitch: top, hem: d.hem ? `${d.hem.needles} needle, ${round1(d.hem.depth)} cm` : undefined };
+}
+
+export interface NoteRow { no: number; text: string; piece: string }
+
+/** Text notes of the project numbered for the pattern pages and the construction list. Ink and arrows stay on the chart. */
+export function noteRows(notes: Note[] | undefined, pieces: Piece[]): NoteRow[] {
+  return (notes ?? []).filter((n) => n.kind === 'text' && n.text?.trim()).map((n, i) => ({ no: i + 1, text: n.text!.trim(), piece: pieces.find((p) => p.id === n.pieceId)?.name ?? 'Chart' }));
 }

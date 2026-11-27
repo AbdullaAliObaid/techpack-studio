@@ -122,3 +122,15 @@ export function piecesToDxf(pieces: Piece[], meta: { project: string; size: stri
   L.push('0', 'ENDSEC', '0', 'EOF');
   return L.join('\r\n');
 }
+
+/** Download the DXF pattern for a manufacturer (full size, millimetres). */
+export function exportDxfPattern(project: { name: string; pieces: Piece[]; edits?: Edits; garment: StyleId; body: { height: number; chest: number; waist: number; hips: number } }) {
+  const b = project.body;
+  const dxf = piecesToDxf(project.pieces, { project: project.name, size: `H${Math.round(b.height)} C${Math.round(b.chest)} W${Math.round(b.waist)} H${Math.round(b.hips)}` }, undefined, project.edits, project.garment);
+  const url = URL.createObjectURL(new Blob([dxf], { type: 'application/dxf' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${project.name.replace(/[^a-z0-9]+/gi, '_')}_pattern.dxf`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}

@@ -1,6 +1,8 @@
-import type { Project } from '../store';
+import type { BodyPreset, Project } from '../store';
 import { useStore } from '../store';
 import { migrateGarment } from '../data/catalog';
+import { FEMALE_BODY, MALE_BODY } from '../three/body';
+import { uid } from './units';
 
 // Local project storage (browser). Cloud sync with accounts comes in a later phase.
 
@@ -48,6 +50,65 @@ export function deleteProject(id: string) {
   const all = { ...readAll() };
   delete all[id];
   writeAll(all);
+}
+
+/** Projects that came from someone else's shared file. */
+export const listImported = () => listProjects().filter((p) => p.imported);
+
+// ---- body presets: saved sets of measurements; Male and Female are built in and cannot be changed or deleted ----
+
+const BODY_KEY = 'techit.bodies.v1';
+export const BUILTIN_BODIES: BodyPreset[] = [
+  { id: 'builtin-male', name: 'Male', body: MALE_BODY, updatedAt: 0 },
+  { id: 'builtin-female', name: 'Female', body: FEMALE_BODY, updatedAt: 0 },
+];
+export const isBuiltinBody = (id: string) => BUILTIN_BODIES.some((b) => b.id === id);
+
+function readBodies(): BodyPreset[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(BODY_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((b: BodyPreset) => b && typeof b.id === 'string' && !isBuiltinBody(b.id)) : [];
+  } catch {
+    return [];
+  }
+}
+function writeBodies(list: BodyPreset[]) {
+  try { localStorage.setItem(BODY_KEY, JSON.stringify(list)); } catch { /* storage full or blocked */ }
+}
+
+/** Built-ins first (Male, Female), then the saved ones, newest first. */
+export function listBodyPresets(): BodyPreset[] {
+  return [...BUILTIN_BODIES, ...readBodies().sort((a, b) => b.updatedAt - a.updatedAt)];
+}
+/** Save measurements under a name; with an id of a saved preset it is updated, otherwise a new one is added. */
+export function saveBodyPreset(name: string, body: BodyPreset['body'], id?: string): BodyPreset {
+  const all = readBodies();
+  const keep = id && !isBuiltinBody(id) ? id : uid() + uid();
+  const preset: BodyPreset = { id: keep, name: name.trim().slice(0, 60) || 'Untitled body', body: { ...body }, updatedAt: Date.now() };
+  writeBodies([...all.filter((b) => b.id !== keep), preset]);
+  return preset;
+}
+/** Rename a saved preset; false for a built-in or an unknown id. */
+export function renameBodyPreset(id: string, name: string): boolean {
+  const all = readBodies();
+  const b = all.find((q) => q.id === id);
+  if (!b || !name.trim()) return false;
+  writeBodies(all.map((q) => (q.id === id ? { ...q, name: name.trim().slice(0, 60), updatedAt: Date.now() } : q)));
+  return true;
+}
+/** Delete a saved preset; false for a built-in or an unknown id. */
+export function deleteBodyPreset(id: string): boolean {
+  const all = readBodies();
+  if (isBuiltinBody(id) || !all.some((q) => q.id === id)) return false;
+  writeBodies(all.filter((q) => q.id !== id));
+  return true;
+}
+/** Add presets from a shared file under fresh ids. */
+export function saveImportedBodies(list: BodyPreset[]): BodyPreset[] {
+  const now = Date.now();
+  const added = list.filter((b) => !isBuiltinBody(b.id)).map((b) => ({ ...b, id: uid() + uid(), updatedAt: now }));
+  if (added.length) writeBodies([...readBodies(), ...added]);
+  return added;
 }
 
 export function lastProject(): Project | null {
