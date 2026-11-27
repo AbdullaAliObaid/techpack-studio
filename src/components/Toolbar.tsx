@@ -93,6 +93,7 @@ export default function Toolbar() {
         <Btn on={tool === 'pen'} label="Pen" tip="Pen: draw a new piece (D)" icon="pen" onClick={build('pen')} />
         <Btn on={tool === 'seams'} label="Seam" tip="Seam: join or open seams (J)" icon="seams" onClick={build('seams')} />
         <Btn on={tool === 'note'} label="Notes" tip="Notes: draw, add arrows and text on the chart (N)" icon="note" onClick={() => set({ tool: 'note', showNotes: true })} />
+        <Btn on={tool === 'block'} label="Colour block" tip="Colour block: draw a shape of colour on a piece, like black sleeve tips (B)" icon="block" onClick={build('block')} />
         <Btn on={tool === 'pleat'} label="Pleat" tip="Pleat: click an edge to add one (L)" icon="pleat" onClick={build('pleat')} />
       </Group>
       <Group title="Show">

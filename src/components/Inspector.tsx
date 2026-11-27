@@ -17,6 +17,8 @@ import { Disclosure, Seg, SubLabel, TabHeader } from './controls';
 import { copiesOf } from './sides';
 import Icon from './Icon';
 import MultiPanel from './MultiPanel';
+import MeasureField from './MeasureField';
+import { canEditMeasure, targetKey, type MeasureTarget } from '../data/measureEdit';
 
 const TABS: { id: InspectorTab; label: string; icon: string }[] = [
   { id: 'garment', label: 'Garment', icon: 'garment' },
@@ -213,6 +215,9 @@ function SpecsTab() {
   const g = garmentSpecs(project.garment, project.pieces);
   const piece = project.pieces.find((p) => p.id === selPiece);
   const point = piece?.points.find((q) => q.id === selPoint);
+  /** a measurement you can type into, or a plain number when the pattern has nothing to move for it */
+  const tgt = (t: MeasureTarget) => (canEditMeasure(project.garment, project.pieces, t) ? t : null);
+  const field = (cm: number, t: MeasureTarget, label: string) => <MeasureField cm={cm} units={units} label={label} target={tgt(t)} pulseKey={targetKey(t)} />;
 
   return (
     <>
@@ -243,14 +248,14 @@ function SpecsTab() {
             <div className="fit-row" key={r.label}>
               <span>{r.label}</span>
               <span className="muted">{r.body === null ? '·' : toUnit(r.body, units).toFixed(1)}{r.estimated ? '*' : ''}</span>
-              <b>{toUnit(r.garment, units).toFixed(1)}</b>
+              {field(r.garment, { kind: 'fit', label: r.label }, `${r.label} garment measurement`)}
               <span className={ease === null || r.length ? '' : ease < 0 ? 'neg' : ease < 2 ? 'tight' : 'pos'}>
                 {ease === null ? '' : (ease > 0 ? '+' : '') + toUnit(ease, units).toFixed(1)}
               </span>
             </div>
           );
         })}
-        <div className="fit-note">In {units}. * estimated from your other measurements. Negative ease means the garment is smaller than the body and has to stretch.</div>
+        <div className="fit-note">In {units}. Click a garment number to type your own. * estimated from your other measurements. Negative ease means the garment is smaller than the body and has to stretch.</div>
       </Disclosure>
 
       <Disclosure id="spec-seams" title="Seam lengths" icon="seams">
@@ -273,7 +278,7 @@ function SpecsTab() {
 
       <Disclosure id="spec-garment" title="Garment specs" icon="specs">
         {g.map((r) => (
-          <div className="kv" key={r.label}><span>{r.label}</span><b>{fmt(r.value, units)}</b></div>
+          <div className="kv" key={r.label}><span>{r.label}</span>{field(r.value, { kind: 'garment', label: r.label }, r.label)}</div>
         ))}
       </Disclosure>
 
@@ -282,7 +287,7 @@ function SpecsTab() {
           <div className={`piece-spec ${p.id === selPiece ? 'hl' : ''}`} key={p.id}>
             <div className="sublabel">{p.name} <span className="muted">· {fabricById(p.fabric.id).name} · cut {p.cut}{copiesOf(project.garment, p) === 2 ? ', right and left' : ''}</span></div>
             {pieceSpecs(p, project.edits).map((s) => (
-              <div className="kv" key={s.label}><span>{s.label}</span><b>{fmt(s.value, units)}</b></div>
+              <div className="kv" key={s.label}><span>{s.label}</span>{p.specs.some((d) => d.label === s.label) ? field(s.value, { kind: 'spec', pieceId: p.id, label: s.label }, `${p.name} ${s.label}`) : <b>{fmt(s.value, units)}</b>}</div>
             ))}
           </div>
         ))}

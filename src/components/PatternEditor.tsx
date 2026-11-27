@@ -8,6 +8,9 @@ import {
   bbox, bezAt, bezLength, bezTangent, centroid, nearestOnOutline, offsetInward, pathD, polyD, samplePoly, toBeziers, type Pt,
 } from '../lib/geometry';
 import { pieceSpecs } from '../lib/specs';
+import MeasureField from './MeasureField';
+import { commitBlockDraft } from './blockDraw';
+import { targetKey, type MeasureTarget } from '../data/measureEdit';
 import { fmt } from '../lib/units';
 import { pointInPoly } from '../lib/geometry';
 import { builtinSeams } from '../sim/seams';
@@ -41,6 +44,7 @@ type Drag =
   | { mode: 'rotate'; id: string; key: string; c: Pt; committed: boolean }
   | { mode: 'ghost'; pieceId: string; key: string; grab: Pt; start: Pt; committed: boolean }
   | { mode: 'pen'; startClient: Pt; smoothed: boolean }
+  | { mode: 'block' }
   | { mode: 'pan'; startClient: Pt; startView: View }
   | { mode: 'pinch'; startDist: number; startMid: Pt; startView: View };
 
@@ -70,7 +74,7 @@ export default function PatternEditor() {
   const pointers = useRef(new Map<number, Pt>());
   const lastTap = useRef<{ t: number; key: string }>({ t: 0, key: '' });
 
-  const { project, tool, symmetry, showMeasure, showStitch, selPiece, selPoint, selInstance, units, fitToken, selAttachment, selPleat, hoverSeam, seamDraft, penDraft, penSnap, showBothSides, pieceFlow } = usePick('project', 'tool', 'symmetry', 'showMeasure', 'showStitch', 'selPiece', 'selPoint', 'selInstance', 'units', 'fitToken', 'selAttachment', 'selPleat', 'hoverSeam', 'seamDraft', 'penDraft', 'penSnap', 'showBothSides', 'pieceFlow');
+  const { project, tool, symmetry, showMeasure, showStitch, selPiece, selPoint, selInstance, units, fitToken, selAttachment, selPleat, hoverSeam, seamDraft, penDraft, penSnap, showBothSides, pieceFlow, blockDraft } = usePick('project', 'tool', 'symmetry', 'showMeasure', 'showStitch', 'selPiece', 'selPoint', 'selInstance', 'units', 'fitToken', 'selAttachment', 'selPleat', 'hoverSeam', 'seamDraft', 'penDraft', 'penSnap', 'showBothSides', 'pieceFlow', 'blockDraft');
   const pieces = project.pieces;
   const edits = project.edits;
   const [penHover, setPenHover] = useState<Pt | null>(null);
@@ -451,6 +455,23 @@ export default function PatternEditor() {
       return panNow();
     }
 
+    // ---- colour block: drag a rectangle, or click the corners of a polygon, on a piece
+    if (st.tool === 'block') {
+      const en = ent ?? entryAt(w);
+      const d = st.blockDraft;
+      if (st.colourBlock.mode === 'rect') {
+        if (!en) return panNow();
+        st.set({ blockDraft: { key: en.key, pts: [w, w], rect: true } });
+        drag.current = { mode: 'block' };
+        return;
+      }
+      if (d && d.pts.length >= 3 && Math.hypot(w.x - d.pts[0].x, w.y - d.pts[0].y) * viewRef.current.k < 14) { commitBlockDraft(); drag.current = null; return; }
+      if (!d) { if (!en) return panNow(); st.set({ blockDraft: { key: en.key, pts: [w], rect: false } }); }
+      else st.set({ blockDraft: { ...d, pts: [...d.pts, w] } });
+      drag.current = null;
+      return;
+    }
+
     // ---- pen: click to add a corner, drag to make it smooth, click the first point to close
     if (st.tool === 'pen') {
       const d = st.penDraft;
@@ -633,6 +654,7 @@ export default function PatternEditor() {
       });
     }
     if (stNow.tool === 'pen') setPenHover(snap(toWorld(e.clientX, e.clientY)));
+    if (stNow.tool === 'block' && stNow.blockDraft && !stNow.blockDraft.rect) setPenHover(toWorld(e.clientX, e.clientY));
     if (stNow.pieceFlow?.picking && !drag.current) {
       const w0 = toWorld(e.clientX, e.clientY);
       const en = entryAt(w0);
@@ -664,6 +686,11 @@ export default function PatternEditor() {
     }
     if (d.mode === 'pan') {
       setView({ ...d.startView, x: d.startView.x + e.clientX - d.startClient.x, y: d.startView.y + e.clientY - d.startClient.y });
+      return;
+    }
+    if (d.mode === 'block') {
+      const bd = st.blockDraft;
+      if (bd) st.set({ blockDraft: { ...bd, pts: [bd.pts[0], toWorld(e.clientX, e.clientY)] } });
       return;
     }
     if (d.mode === 'pen') {
@@ -786,6 +813,7 @@ export default function PatternEditor() {
       flushDrag();
       const dd = drag.current;
       const stU = useStore.getState();
+      if (dd?.mode === 'block' && e.type === 'pointerup') commitBlockDraft();
       if (dd?.mode === 'marquee' && !dd.moved && dd.how === 'replace' && e.type === 'pointerup') { stU.select(null, null); stU.set({ selAttachment: null, selPleat: null }); }
       // a click on a point that was part of the selection narrows the selection to it
       if (dd?.mode === 'point' && dd.inMulti && !dd.committed && e.type === 'pointerup') stU.select(dd.pieceId, dd.pointId);
@@ -942,6 +970,7 @@ export default function PatternEditor() {
             <GuideLayer k={k} />
             <MarqueeLayer k={k} />
             {hover && tool !== 'pen' && <HoverOverlay hover={hover} entries={entries} geos={geos} k={k} />}
+            {tool === 'block' && blockDraft && <BlockPreview draft={blockDraft} hover={penHover} k={k} />}
             {tool === 'pen' && <PenPreview draft={penDraft} hover={penHover} k={k} snap={penSnap} />}
           </g>
         </svg>
@@ -968,6 +997,7 @@ const HUD: Record<string, string> = {
   seams: 'Click a start point, then an end point, to pick a range to sew. Escape to stop.',
   pleat: 'Click an edge of a piece to place a pleat. Escape to stop.',
   note: 'Draw, add arrows or text notes on the chart. Notes print on the tech pack. Two fingers pan and zoom.',
+  block: 'Drag a rectangle on a piece, or click the corners of a shape. It goes on both sides and on matching pieces when symmetry is on. Escape cancels.',
   pen: 'Click to add corners. Drag for a curve. Click the first point to close. Backspace removes the last point. Escape cancels.',
 };
 
@@ -986,6 +1016,17 @@ function SymTint({ entries, geos }: { entries: Entry[]; geos: Map<string, Geo> }
         if (!g || !geo) return null;
         return <path key={en.key} className="sym-tint" data-c={mode === 'total' ? 'total' : g.index % 6} transform={`translate(${en.piece.offset.x},${en.piece.offset.y})`} d={geo.d} vectorEffect="non-scaling-stroke" />;
       })}
+    </g>
+  );
+}
+
+function BlockPreview({ draft, hover, k }: { draft: { pts: Pt[]; rect: boolean }; hover: Pt | null; k: number }) {
+  const px = (n: number) => n / k;
+  const pts = draft.rect ? (() => { const [a, b] = draft.pts; return [{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }, { x: a.x, y: b.y }]; })() : hover ? [...draft.pts, hover] : draft.pts;
+  return (
+    <g pointerEvents="none">
+      <path d={`M${pts.map((q) => `${q.x},${q.y}`).join('L')}Z`} fill="var(--accent-soft)" stroke="var(--accent)" strokeWidth={px(1.6)} strokeDasharray={`${px(6)} ${px(4)}`} strokeLinejoin="round" />
+      {!draft.rect && draft.pts.map((q, i) => <circle key={i} cx={q.x} cy={q.y} r={px(i === 0 ? 7 : 4.5)} fill={i === 0 ? 'var(--accent)' : 'var(--point-fill)'} stroke="var(--accent)" strokeWidth={px(2)} />)}
     </g>
   );
 }
@@ -1045,6 +1086,8 @@ function PieceView(props: {
   const inst = entry.inst;
   const px = (n: number) => n / k;
   const selPieceId = useStore((st) => st.selPiece);
+  const flash = useStore((st) => st.measureFlash);
+  const [editing, setEditing] = useState<string | null>(null);
 
   const sel = p.points.find((q) => q.id === selPoint);
 
@@ -1213,6 +1256,11 @@ function PieceView(props: {
         )}
         {ms.map((m) => {
           const mx = (m.a.x + m.b.x) / 2, my = (m.a.y + m.b.y) / 2, tick = px(4);
+          const def = m.sel ? entry.src.specs.some((d) => d.label === m.key) : false;
+          const tgt: MeasureTarget | null = def ? { kind: 'spec', pieceId: entry.src.id, label: m.key } : null;
+          const spec = geo.specs.find((q) => q.label === m.key);
+          const flashed = !!tgt && !!flash?.keys.includes(targetKey(tgt));
+          const w = px(m.text.length * 6.6 + 10), hh = px(18);
           return (
             <g key={m.key} pointerEvents="none">
               <line x1={m.a.x} y1={m.a.y} x2={m.b.x} y2={m.b.y} stroke={ACCENT} strokeWidth={px(1)} opacity={0.8} />
@@ -1220,13 +1268,41 @@ function PieceView(props: {
                 ? <><line x1={m.a.x - tick} x2={m.a.x + tick} y1={m.a.y} y2={m.a.y} stroke={ACCENT} strokeWidth={px(1)} /><line x1={m.b.x - tick} x2={m.b.x + tick} y1={m.b.y} y2={m.b.y} stroke={ACCENT} strokeWidth={px(1)} /></>
                 : <><line x1={m.a.x} x2={m.a.x} y1={m.a.y - tick} y2={m.a.y + tick} stroke={ACCENT} strokeWidth={px(1)} /><line x1={m.b.x} x2={m.b.x} y1={m.b.y - tick} y2={m.b.y + tick} stroke={ACCENT} strokeWidth={px(1)} /></>}
               <line x1={mx} y1={my} x2={m.lx} y2={m.ly} stroke={ACCENT} strokeWidth={px(0.8)} opacity={0.55} />
-              <text x={m.lx} y={m.ly} className="dim-text" strokeWidth={px(3)} fontSize={px(11)} textAnchor="middle" dominantBaseline="central">{m.text}</text>
+              {tgt && spec && editing === 'm:' + m.key ? (
+                <foreignObject x={m.lx - px(46)} y={m.ly - px(14)} width={px(92)} height={px(28)} pointerEvents="all">
+                  <div className="chart-field" style={{ width: '100%', height: '100%', fontSize: px(13) }}>
+                    <MeasureField inline cm={spec.value} units={units} label={`${m.key} (${units})`} target={tgt} onClose={() => setEditing(null)} />
+                  </div>
+                </foreignObject>
+              ) : (
+                <>
+                  <text key={flashed ? flash!.n : 0} x={m.lx} y={m.ly} className={`dim-text${tgt ? ' editable' : ''}${flashed ? ' mf-flash' : ''}`} strokeWidth={px(3)} fontSize={px(11)} textAnchor="middle" dominantBaseline="central">{m.text}</text>
+                  {tgt && <rect x={m.lx - w / 2} y={m.ly - hh / 2} width={w} height={hh} fill="transparent" pointerEvents="all" style={{ cursor: 'text' }} onPointerDown={(e) => e.stopPropagation()} onClick={() => setEditing('m:' + m.key)}><title>Click to type a number</title></rect>}
+                </>
+              )}
             </g>
           );
         })}
-        {els.map((l) => (
-          <text key={l.key} x={l.x} y={l.y} className="edge-len" strokeWidth={px(3)} fontSize={px(10)} textAnchor="middle" dominantBaseline="central" pointerEvents="none">{l.text}</text>
-        ))}
+        {els.map((l) => {
+          const i = Number(l.key), n = p.points.length;
+          const a = p.points[i], b = p.points[(i + 1) % n];
+          const tgt: MeasureTarget | null = a && b ? { kind: 'edge', pieceId: entry.src.id, fromId: a.id, toId: b.id } : null;
+          const bez = geo.bz[i];
+          const flashed = !!tgt && !!flash?.keys.includes(targetKey(tgt));
+          const w = px(l.text.length * 6 + 8), hh = px(16);
+          return editing === 'e:' + l.key && tgt && bez ? (
+            <foreignObject key={l.key} x={l.x - px(44)} y={l.y - px(13)} width={px(88)} height={px(26)} pointerEvents="all">
+              <div className="chart-field" style={{ width: '100%', height: '100%', fontSize: px(12) }}>
+                <MeasureField inline cm={bezLength(bez)} units={units} label={`Edge length (${units})`} target={tgt} onClose={() => setEditing(null)} />
+              </div>
+            </foreignObject>
+          ) : (
+            <g key={l.key}>
+              <text key={flashed ? flash!.n : 0} x={l.x} y={l.y} className={`edge-len${tgt ? ' editable' : ''}${flashed ? ' mf-flash' : ''}`} strokeWidth={px(3)} fontSize={px(10)} textAnchor="middle" dominantBaseline="central" pointerEvents="none">{l.text}</text>
+              {tgt && <rect x={l.x - w / 2} y={l.y - hh / 2} width={w} height={hh} fill="transparent" pointerEvents="all" style={{ cursor: 'text' }} onPointerDown={(e) => e.stopPropagation()} onClick={() => setEditing('e:' + l.key)}><title>Click to type a length</title></rect>}
+            </g>
+          );
+        })}
       {p.points.map((q) => {
           const isSel = q.id === selPoint;
           const isMirror = symmetry && sel && sel.mirror === q.id && sel.id !== q.id;
@@ -1242,6 +1318,7 @@ function PieceView(props: {
               ) : (
                 <rect x={q.x - r} y={q.y - r} width={r * 2} height={r * 2} fill={fill} stroke={stroke} strokeWidth={px(1.5)} pointerEvents="none" />
               )}
+              {flash?.points.includes(q.id) && <circle key={flash.n} className="pt-pulse" cx={q.x} cy={q.y} r={px(11)} />}
               {isLinked && <circle cx={q.x} cy={q.y} r={px(11)} fill="var(--purple)" fillOpacity={0.25} stroke="var(--purple)" strokeWidth={px(2)} pointerEvents="none" />}
               <circle cx={q.x} cy={q.y} r={px(tool === 'seams' ? 16 : 13)} fill="transparent" data-kind="point" data-piece={p.id} data-inst={inst} data-point={q.id} style={{ cursor: tool === 'seams' ? 'pointer' : 'grab' }} />
             </g>
@@ -1253,7 +1330,9 @@ function PieceView(props: {
     {topEl && createPortal(
       <g transform={tr}>
       {/* attachments sit on their host in the host's own coordinates; designs on a pocket or tag sit inside it */}
-      {attachments.map((a) => renderAtt(a, true))}
+      <defs><clipPath id={`blk-${p.id}-${inst}`}><path d={geo.d} /></clipPath></defs>
+      {attachments.filter((a) => a.block).length > 0 && <g clipPath={`url(#blk-${p.id}-${inst})`}>{attachments.filter((a) => a.block).map((a) => renderAtt(a, true))}</g>}
+      {attachments.filter((a) => !a.block).map((a) => renderAtt(a, true))}
 
       {/* drawn pieces that are patched on: dashed placement, draggable */}
       {ghosts.map((g) => {

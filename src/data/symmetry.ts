@@ -93,6 +93,8 @@ function specFor(style: StyleId): Spec | null {
         front: { keys: [`front.${2 + fo}`], axis: 'x' }, back: { keys: ['back.2'], axis: 'x' },
       },
       cuff: { cuff: { keys: ['cuff.1', 'cuff.2'], axis: 'x' }, sleeve: { keys: ['sleeve.4'], axis: 'x' } },
+      // placket: its length and the front opening it is sewn to follow each other (the base of either one moves)
+      placket: { placket: { keys: ['placket.2', 'placket.3'], axis: 'y' }, front: { keys: ['front.1', 'front.0'], axis: 'y' } },
     },
   };
 }
@@ -147,7 +149,7 @@ export function linkedMoves(style: StyleId, pieces: Piece[], pieceId: string, po
   // edit), so the groups are walked again until nothing moves; every walk targets the same "before + change" length,
   // so a settled seam is left alone.
   const before: Pts = new Map(pieces.map((p) => [p.id, p.points]));
-  const seams = builtinSeams(style, pieces);
+  const seams = builtinSeams(style, pieces, { collar: 'down' });
   const groups = new Map<string, { fam: string; a: EdgeRef[]; b: EdgeRef[] }>();
   for (const s of seams) {
     const k = s.group ?? s.id;

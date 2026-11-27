@@ -1562,3 +1562,24 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .dz-side .btn.add-onto { margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .dz-placed { animation: none; } .ws-switch button, .dz-tile:active { transition: none; transform: none; } }
 @media (prefers-reduced-transparency: reduce) { .dz-tools, .dz-hint { background: var(--bg-elevated); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+
+/* typed measurements: a number you can click and type over */
+.mfield-num { display: inline-flex; align-items: baseline; gap: 3px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.mfield-num input { width: 7ch; box-sizing: content-box; min-height: 24px; padding: 0 5px; border: 0.5px solid transparent; border-radius: 6px; background: transparent; color: var(--label); font: inherit; font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; cursor: text; }
+.mfield-num input:hover { background: var(--fill); }
+.mfield-num input:focus { outline: none; background: var(--bg-elevated); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.mfield-num .mf-unit { color: var(--label-2); font-size: 11px; }
+.mfield-num.mf-bad input { border-color: var(--red); }
+.mfield-num.mf-pulse { animation: mfpulse 0.9s ease-out; }
+@keyframes mfpulse { 0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--green) 55%, transparent); background: color-mix(in oklch, var(--green) 22%, transparent); } 100% { box-shadow: 0 0 0 8px transparent; background: transparent; } }
+.fit-row .mfield-num { justify-self: end; }
+.fit-row .mfield-num input { width: 5ch; padding: 0 3px; font-weight: 600; }
+.chart-field input { width: 100%; height: 100%; box-sizing: border-box; text-align: center; border: 1.5px solid var(--accent); background: var(--bg-elevated); color: var(--label); border-radius: 6px; font-family: inherit; font-variant-numeric: tabular-nums; outline: none; box-shadow: 0 2px 10px rgb(0 0 0 / 0.18); }
+.dim-text.editable, .edge-len.editable { cursor: text; pointer-events: all; }
+.dim-text.editable:hover, .edge-len.editable:hover { fill: var(--accent); text-decoration: underline; }
+.dim-text.mf-flash, .edge-len.mf-flash { animation: mflash 0.9s ease-out; }
+@keyframes mflash { 0% { fill: var(--green); } 100% { } }
+.pt-pulse { fill: none; stroke: var(--purple); stroke-width: 2px; vector-effect: non-scaling-stroke; animation: ptpulse 1s ease-out forwards; pointer-events: none; }
+@keyframes ptpulse { 0% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .mfield-num.mf-pulse, .dim-text.mf-flash, .edge-len.mf-flash, .pt-pulse { animation-duration: 0.01s; } }
+.mfield-num.inline { display: block; width: 100%; height: 100%; }

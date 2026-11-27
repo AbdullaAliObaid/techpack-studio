@@ -1,3 +1,4 @@
+import { commitBlockDraft } from './components/blockDraw';
 import { allPointsOf } from './components/multi';
 import { useEffect, useRef, useState } from 'react';
 import TopBar from './components/TopBar';
@@ -94,7 +95,10 @@ export default function App() {
         else if (k === 'l') st.set({ tool: 'pleat', inspectorTab: 'construction' });
         else if (k === 'n') st.set({ tool: 'note', showNotes: true });
         else if (k === 'd') st.set({ tool: 'pen', inspectorTab: 'construction', penDraft: [] });
+        else if (k === 'b') st.set({ tool: 'block', inspectorTab: 'construction', blockDraft: null });
         else if (k === 'f') window.dispatchEvent(new Event('tps-fit'));
+        else if (k === 'enter' && st.tool === 'block' && st.blockDraft && !st.blockDraft.rect && st.blockDraft.pts.length >= 3) commitBlockDraft();
+        else if (k === 'backspace' && st.tool === 'block' && st.blockDraft && !st.blockDraft.rect) st.set({ blockDraft: st.blockDraft.pts.length > 1 ? { ...st.blockDraft, pts: st.blockDraft.pts.slice(0, -1) } : null });
         else if (k === 'enter' && st.tool === 'pen' && st.penDraft.length >= 3) openPieceFlow(st.penDraft);
         else if (k === 'backspace' && st.tool === 'pen' && st.penDraft.length) st.set({ penDraft: st.penDraft.slice(0, -1) });
         else if (k.startsWith('arrow') && st.selAttachment && st.tool === 'select') {

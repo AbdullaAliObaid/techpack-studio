@@ -9,6 +9,7 @@ import { Disclosure, LenInput, Row, Seg, Switch, TabHeader } from './controls';
 import { copiesOf, instanceName } from './sides';
 import { openPieceFlow } from './flow';
 import Icon from './Icon';
+import ColourBlockPanel from './ColourBlockPanel';
 
 /** Click handler for the Seams tool: first click starts a range, second ends it. A and B fill in turn. `instance` is the copy that was clicked. */
 export function pickSeamPoint(pieceId: string, pointId: string, instance?: number) {
@@ -113,6 +114,7 @@ export default function ConstructionPanel() {
         </section>
       )}
       {tool === 'pen' && <PenCard />}
+      {tool === 'block' && <ColourBlockPanel />}
 
       <PiecesSection />
 
