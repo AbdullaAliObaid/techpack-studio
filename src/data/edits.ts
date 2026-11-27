@@ -241,6 +241,31 @@ export interface CustomPose { s: [SideAngles, SideAngles]; spineBend: number; sp
 export const ZERO_SIDE: SideAngles = { shFlex: 0, shAbd: 0, shHoriz: 0, elbow: 0, hipFlex: 0, hipAbd: 0, knee: 0 };
 export const ZERO_POSE: CustomPose = { s: [{ ...ZERO_SIDE }, { ...ZERO_SIDE }], spineBend: 0, spineTwist: 0, headTurn: 0 };
 
+/**
+ * How the edge of a garment gets its colour. Real garments use thread, binding or piping rather than paint: paint is the
+ * colour block tool (an attachment), the others are edge trims (Edits.edgeTrims).
+ */
+export type EdgeMethod = 'paint' | 'thread' | 'binding' | 'piping';
+
+/**
+ * A contrast edge: a topstitch line in a colour ('thread'), a folded tape over the edge ('binding') or a cord sewn into
+ * the seam ('piping'). Runs along one outline run of a piece (see EdgeRef; omitted instance = every copy).
+ */
+export interface EdgeTrim {
+  id: string;
+  method: Exclude<EdgeMethod, 'paint'>;
+  edge: EdgeRef;
+  /** thread, tape or cord colour (CSS) */
+  colour: string;
+  /** binding: finished tape width over the edge (cm); piping: cord diameter (cm); thread: unused */
+  width: number;
+  /** thread weight as Tex (30 fine, 45 regular, 70 heavy topstitch); thread only */
+  tex?: number;
+  /** which face shows it; default: binding and thread show on both, piping on the outside */
+  face?: 'both' | 'outside' | 'inside';
+  name?: string;
+}
+
 export type WashSequence = 'prewash' | 'garment' | 'none';
 
 export interface Edits {
@@ -258,6 +283,8 @@ export interface Edits {
   insideFabric?: Record<string, { id: string; color: number; hex?: string; pattern?: import('./fabrics').FabricPattern }>;
   /** ids of points of interest (src/lib/poi.ts) the designer left out of the tech pack's close-up pages */
   techpackSkip?: string[];
+  /** contrast thread, binding and piping along piece edges (see EdgeTrim). Omitted in older projects: none. */
+  edgeTrims?: EdgeTrim[];
   /** a front that buttons: worn buttoned (default) or open (buttonholes left unbuttoned, the fronts hang free) */
   closure?: 'buttoned' | 'open';
   /**

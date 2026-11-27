@@ -16,7 +16,8 @@ import { instanceCount } from '../sim/seams';
 
 export type BlockPreset = 'hem' | 'tip' | 'yoke' | 'collar' | 'top' | 'bottom';
 export interface BlockLook { colour: string; sheen: Sheen; look: 'dyed' | 'printed' }
-export interface BlockOpts { total: boolean; symmetry: boolean }
+/** bothFaces (default on): the colour goes through the cloth, so the inside shows it too */
+export interface BlockOpts { total: boolean; symmetry: boolean; bothFaces?: boolean }
 
 export const PRESET_LABEL: Record<BlockPreset, string> = { hem: 'Hem band', tip: 'Cuff / sleeve tip', yoke: 'Yoke', collar: 'Collar', top: 'Top half', bottom: 'Bottom half' };
 export const PRESET_HEIGHT: Record<BlockPreset, number> = { hem: 5, tip: 6, yoke: 12, collar: 0, top: 0, bottom: 0 };
@@ -63,6 +64,12 @@ function onPiece(style: StyleId, p: Piece, poly: Pt[], rect: boolean, look: Bloc
 /** The piece a total symmetry block also goes on: front and back (of a top or of the legs) mate. */
 const mateOf = (pieces: Piece[], p: Piece) => (p.role === 'front' ? roleOf(pieces, 'back') : p.role === 'back' ? roleOf(pieces, 'front') : undefined);
 
+/** a copy of each block on the inside face, so the colour shows through to the wrong side too */
+function withInside(list: Omit<Attachment, 'id'>[], o: BlockOpts): Omit<Attachment, 'id'>[] {
+  if (o.bothFaces === false) return list;
+  return [...list, ...list.map((a) => ({ ...a, name: `${a.name} (inside)`, face: 'inside' as const, layers: a.layers.map((l) => ({ ...l, id: uid(), flipX: l.shape === 'rect' ? l.flipX : !l.flipX })) }))];
+}
+
 /** A drawn shape (piece local cm) on a piece, plus its symmetric and mating blocks. */
 export function shapeBlocks(style: StyleId, pieces: Piece[], pieceId: string, poly: Pt[], rect: boolean, look: BlockLook, o: BlockOpts): Omit<Attachment, 'id'>[] {
   const p = pieces.find((q) => q.id === pieceId);
@@ -74,7 +81,7 @@ export function shapeBlocks(style: StyleId, pieces: Piece[], pieceId: string, po
     const dy = edgeY(mate, 'hem', bbox(mate.points).maxY) - edgeY(p, 'hem', bbox(p.points).maxY);
     out.push(...onPiece(style, mate, poly.map((q) => ({ x: q.x, y: q.y + dy })), rect, look, 'colour block', o));
   }
-  return out;
+  return withInside(out, o);
 }
 
 /** A quick block from an edge of the garment: height h (cm) from the hem, tip, or neckline; halves ignore h. */
@@ -84,7 +91,7 @@ export function presetBlocks(style: StyleId, pieces: Piece[], preset: BlockPrese
   if (!piece) return [];
   const label = PRESET_LABEL[preset].toLowerCase();
   const targets = [piece, ...(o.total && preset !== 'tip' && preset !== 'collar' ? [mateOf(pieces, piece)].filter((q): q is Piece => !!q) : [])];
-  return targets.flatMap((p) => {
+  return withInside(targets.flatMap((p) => {
     const bb = bbox(p.points);
     const x0 = bb.minX - MARGIN, x1 = bb.maxX + MARGIN;
     let poly: Pt[];
@@ -96,5 +103,5 @@ export function presetBlocks(style: StyleId, pieces: Piece[], preset: BlockPrese
     else if (preset === 'bottom') poly = rectPoly(x0, bb.minY + bb.h / 2, x1, bb.maxY + MARGIN);
     else poly = rectPoly(x0, bb.minY - MARGIN, x1, bb.maxY + MARGIN);
     return [block(p, poly, true, look, label)];
-  });
+  }), o);
 }
