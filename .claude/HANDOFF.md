@@ -44,3 +44,4 @@ components use `usePick(...)` selectors, keep that), `npx tsc --noEmit`, `npm ru
 - In flight: measure tools tray (ruler, tape, protractor, grid/set square, edge rulers) on agent/measure in /home/claude/wt-measure.
 - Known: QUICK=1 test:clip has 5 to 6 failures on the male button-up cuff (pre-existing per thick agent, unconfirmed on old code).
 - Open: no UI for Attachment.lining; no visible thick edge in 3D (Garment3D.panelThickness ready).
+- Fly-away fix merged (4195dc7, tests/worker.ts). Soft skin WIP uncommitted in /home/claude/wt-skin, snapshot on origin wip/skin. Resume agent a6d6bc3b9ca7e391d after 12:50am Dubai.
