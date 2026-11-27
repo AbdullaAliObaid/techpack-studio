@@ -216,6 +216,8 @@ export interface State {
   showBody: boolean;
   /** 3D view: pull the cloth by hand (drag a point; Shift-click pins one) instead of orbiting */
   pullMode: boolean;
+  /** soft skin: tight cloth presses the mannequin's skin in (src/sim/softSkin.ts) */
+  softSkin: boolean;
   skin: number;
   showJoints: boolean;
   showGarment: boolean;
@@ -544,6 +546,7 @@ export const useStore = create<State>((set, get) => {
     view3d: 'fabric',
     showBody: true,
     pullMode: false,
+    softSkin: true,
     skin: 1,
     showJoints: false,
     showGarment: true,

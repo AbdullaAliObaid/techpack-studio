@@ -136,6 +136,8 @@ type Hit = { nx: number; ny: number; nz: number; depth: number; vx?: number; vy?
 /** what setup needs of a body collider (BodyCollider, GridCollider, PosedCollider) */
 export type BodyLike = {
   project(p: Float32Array, i: number, out: Hit): boolean; thickness: number; flat?: [number, number]; useCaps?: boolean; skinning?: boolean;
+  /** soft skin: which cloth particle a query is for when it is not p[i] of the simulation (-1: i / 3) */
+  particle?: number;
   escape?(p: Float32Array, i: number, bone: number, dx: number, dy: number, dz: number, margin: number): boolean;
 };
 /** displayed cloth keeps at least this far off the drawn skin (cm); the solver keeps BodyLike.thickness */
@@ -1769,6 +1771,7 @@ function liftOffSkin(G: Garment3D, B: BodyLike, contact: Uint8Array | undefined,
     for (let i = 0; i < n; i++) {
       if (contact && contact[i] === 1) continue;
       const j = i * 3;
+      if (B.particle !== undefined) B.particle = i; // soft skin: the dent under this point
       tmp[0] = out[j]; tmp[1] = out[j + 1]; tmp[2] = out[j + 2];
       if (!B.project(tmp, 0, hit)) continue;
       const dx = tmp[0] - out[j], dy = tmp[1] - out[j + 1], dz = tmp[2] - out[j + 2], mv = Math.sqrt(dx * dx + dy * dy + dz * dz);
@@ -1818,5 +1821,6 @@ function liftOffSkin(G: Garment3D, B: BodyLike, contact: Uint8Array | undefined,
     if (fl) B.flat = fl;
     if (caps !== undefined) B.useCaps = caps;
     if (skin !== undefined) B.skinning = skin;
+    if (B.particle !== undefined) B.particle = -1;
   }
 }
