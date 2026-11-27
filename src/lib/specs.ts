@@ -5,7 +5,7 @@ import { attachmentPolygons, outlinePolygon, SHAPES } from './shapes';
 import { builtinSeams, faceLabel, faceOf, instanceLabel } from '../sim/seams';
 import { labelMaterial, labelSewing, labelSize } from '../data/labels';
 import { FABRIC_CATEGORIES, FABRICS, PATTERNS, colorName, compositionOf, fabricById, fabricHex, patternLabel, withPatternDefaults, type FabricRef } from '../data/fabrics';
-import type { Note } from '../store';
+import type { Note, Outfit, Project } from '../store';
 import type { StyleId } from '../data/catalog';
 import { derivedGirths, EASE, RIB, frontOffset, neckBase } from '../data/draft';
 import { migrateGarment, styleById } from '../data/catalog';
@@ -1144,4 +1144,85 @@ export interface NoteRow { no: number; text: string; piece: string }
 /** Text notes of the project numbered for the pattern pages and the construction list. Ink and arrows stay on the chart. */
 export function noteRows(notes: Note[] | undefined, pieces: Piece[]): NoteRow[] {
   return (notes ?? []).filter((n) => n.kind === 'text' && n.text?.trim()).map((n, i) => ({ no: i + 1, text: n.text!.trim(), piece: pieces.find((p) => p.id === n.pieceId)?.name ?? 'Chart' }));
+}
+
+// ---- outfits: several garments worn together (src/sim/outfit.ts) ----
+
+export interface OutfitGarmentRow {
+  projectId: string;
+  name: string;
+  /** catalog style name, e.g. 'Jeans' */
+  style: string;
+  category: string;
+  /** 1 = next to the skin, counting outward (as worn, from Outfit.items layer order) */
+  layer: number;
+  /** tops: 'Tucked in' or 'Worn out'; empty for bottoms and headwear */
+  wear: string;
+  hidden: boolean;
+  pieces: number;
+  /** fabrics of this garment, one line each (fabricText) */
+  fabrics: string[];
+}
+export interface OutfitMaterialRow extends Omit<FabricBomRow, 'where' | 'insideToo'> {
+  /** 'Garment: piece' entries the row covers, across every garment */
+  where: string[];
+  /** garments using this cloth */
+  garments: string[];
+}
+export interface OutfitTrimRow extends TrimRow { garment: string }
+export interface OutfitReport {
+  name: string;
+  /** garments in layer order, skin side first; items whose project is missing are left out */
+  garments: OutfitGarmentRow[];
+  /** cloth across the whole outfit: same fabric, colour, pattern and face merged, metres and kg added up */
+  materials: OutfitMaterialRow[];
+  /** trims, labels, embroidery and appliques of every garment, with the garment they are on */
+  trims: OutfitTrimRow[];
+  totals: { garments: number; pieces: number; metres: number; kg: number; trims: number };
+}
+
+/**
+ * Outfit summary for the tech pack: the garments with their layer and how a top is worn, the combined cloth bill of
+ * materials (one row per fabric, colour and pattern across all garments) and every trim with its garment.
+ * `projects`: the saved projects (any order; the open one should be its live copy).
+ */
+export function outfitReport(outfit: Outfit, projects: Project[]): OutfitReport {
+  const byId = new Map(projects.map((p) => [p.id, p]));
+  const items = outfit.items.slice().sort((a, b) => a.layer - b.layer).filter((i) => byId.has(i.projectId));
+  const garments: OutfitGarmentRow[] = [];
+  const materials: OutfitMaterialRow[] = [];
+  const trims: OutfitTrimRow[] = [];
+  items.forEach((it, k) => {
+    const p = byId.get(it.projectId)!;
+    const style = styleById(migrateGarment(p.garment));
+    const top = style.category === 'tops';
+    garments.push({
+      projectId: p.id, name: p.name, style: style.name, category: style.category, layer: k + 1,
+      wear: top ? (it.tuck === 'in' ? 'Tucked in' : 'Worn out') : '', hidden: !!it.hidden, pieces: p.pieces.length,
+      fabrics: [...new Set(p.pieces.map((q) => fabricText(q.fabric)))],
+    });
+    for (const r of fabricBom(p.pieces, p.edits, style.id)) {
+      const where = r.where.map((w) => `${p.name}: ${w}`);
+      const same = materials.find((m) => m.key === r.key && m.face === r.face);
+      if (same) {
+        same.where.push(...where);
+        if (!same.garments.includes(p.name)) same.garments.push(p.name);
+        same.pieces += r.pieces; same.areaCm2 += r.areaCm2; same.metres += r.metres; same.kg += r.kg;
+      } else {
+        const { insideToo: _i, where: _w, ...rest } = r;
+        materials.push({ ...rest, where, garments: [p.name] });
+      }
+    }
+    for (const t of trimsReport(p.pieces, p.edits, style.id)) trims.push({ ...t, garment: p.name });
+  });
+  for (const m of materials) { m.metres = Math.round(m.metres * 100) / 100; m.kg = Math.round(m.kg * 1000) / 1000; m.areaCm2 = Math.round(m.areaCm2); }
+  return {
+    name: outfit.name, garments, materials, trims,
+    totals: {
+      garments: garments.length, pieces: garments.reduce((s, g) => s + g.pieces, 0),
+      metres: Math.round(materials.reduce((s, m) => s + m.metres, 0) * 100) / 100,
+      kg: Math.round(materials.reduce((s, m) => s + m.kg, 0) * 1000) / 1000,
+      trims: trims.reduce((s, t) => s + t.qty, 0),
+    },
+  };
 }

@@ -10,7 +10,8 @@
     "test": "tsx tests/accuracy.ts && tsx tests/fabrics.ts && tsx tests/snap.ts && tsx tests/share.ts",
     "test:drape": "tsx tests/drape.ts",
     "test:motion": "tsx tests/motion.ts",
-    "test:clip": "tsx tests/clip.ts"
+    "test:clip": "tsx tests/clip.ts",
+    "test:outfit": "tsx tests/outfit.ts"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",

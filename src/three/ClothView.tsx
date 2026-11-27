@@ -16,7 +16,8 @@ import type { HardwareMsg } from '../sim/detailsHardware';
 import { vertexPattern, type VertexPattern } from './printsAdapter';
 import { useSnapshotRegistration } from './snapshots';
 import { boneMatrices, jointPoints, poseAt, NBONES, JOINT_COUNT, type Mode } from '../sim/pose';
-import { EMPTY_EDITS, type CustomPose, type Edits } from '../data/edits';
+import { EMPTY_EDITS, type Attachment, type CustomPose, type Edits } from '../data/edits';
+import { listProjects } from '../lib/projects';
 
 // Live cloth view. The simulation runs in a Web Worker (src/sim/worker.ts); this component sends it the
 // pattern, fabric and body, and streams back positions and strain every frame.
@@ -163,11 +164,45 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
   const simKey = JSON.stringify({ ...edits, attachments: edits.attachments.filter((a) => a.kind !== 'print' && a.kind !== 'embroidery' && a.kind !== 'hardware').map(({ layers: _l, name: _n, ...a }) => a) });
   const simEdits = useMemo(() => JSON.parse(simKey) as Edits, [simKey]);
 
+  // an outfit: every visible garment in one simulation (src/sim/outfit.ts); the open project is the live copy of its
+  // garment, the others come as saved. `others` keeps their attachments and inside fabrics for the materials and prints
+  const outfit = useStore((s) => s.outfit);
+  const liveProject = useStore((s) => s.project);
+  const others = useRef<{ attachments: Attachment[]; insideFabric: Edits['insideFabric'] }>({ attachments: [], insideFabric: {} });
+  const outfitKey = outfit ? JSON.stringify({ b: outfit.body, i: outfit.items.filter((i) => !i.hidden).map((i) => [i.projectId, i.layer, i.tuck]), a: liveProject.id, g: type, p: pieces, e: simKey }) : '';
+  const lastOutfit = useRef<string | null>(null);
+  useEffect(() => {
+    if (!outfit) { lastOutfit.current = null; return; }
+    const saved = new Map(listProjects().map((p) => [p.id, p]));
+    const live = useStore.getState().project;
+    const items = outfit.items.filter((i) => !i.hidden).flatMap((i) => {
+      const p = i.projectId === live.id ? live : saved.get(i.projectId);
+      return p ? [{ project: p, layer: i.layer, ...(i.tuck ? { tuck: i.tuck } : {}) }] : [];
+    });
+    const rest = items.filter((i) => i.project.id !== live.id).map((i) => i.project.edits);
+    others.current = { attachments: rest.flatMap((e) => e?.attachments ?? []), insideFabric: Object.assign({}, ...rest.map((e) => e?.insideFabric ?? {})) };
+    if (!items.length) { setTopo((old) => { old?.geo.dispose(); return null; }); lastOutfit.current = null; return; }
+    // the same garments with one of them edited warm start from the drape; a new body or a garment added or removed drapes again
+    const shape = JSON.stringify({ b: outfit.body, ids: items.map((i) => i.project.id) });
+    const warm = lastOutfit.current === shape;
+    const first = lastOutfit.current === null;
+    const t = setTimeout(() => {
+      lastOutfit.current = shape;
+      worker.postMessage({ type: 'outfit', items, body: outfit.body, spacing: SPACING, warm });
+    }, first ? 0 : 160);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outfitKey, redrape, worker]);
+
+  // the body display off: the cloth floats in its draped shape (no gravity, no body)
+  useEffect(() => { worker.postMessage({ type: 'float', on: !showBody }); }, [showBody, worker]);
+
   // send a rebuild shortly after edits stop; pattern / fabric edits warm start from the current drape
   const lastBody = useRef<Body | null>(null);
   const lastToken = useRef(redrape);
   const lastType = useRef(type);
   useEffect(() => {
+    if (outfit) { lastBody.current = null; return; } // the outfit effect above builds
     const first = lastBody.current === null;
     const t = setTimeout(() => {
       const warm = !first && lastBody.current === body && lastToken.current === redrape && lastType.current === type;
@@ -177,14 +212,15 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
       worker.postMessage({ type: 'build', garment: type, pieces, body, warm, spacing: SPACING, edits: simEdits });
     }, first ? 0 : 160);
     return () => clearTimeout(t);
-  }, [type, pieces, body, redrape, worker, simEdits]);
+  }, [type, pieces, body, redrape, worker, simEdits, outfit === null]);
 
   // stitching around pockets, patches and straps follows the attachments (debounced while dragging)
   // prints and embroidery are painted here on the main thread (Prints.tsx), so moving one does not rebuild them
   const detailKey = JSON.stringify((attachments ?? []).filter((a) => a.kind !== 'print' && a.kind !== 'embroidery'));
   useEffect(() => {
-    const t = setTimeout(() => worker.postMessage({ type: 'attachments', attachments: JSON.parse(detailKey) }), 120);
+    const t = setTimeout(() => worker.postMessage({ type: 'attachments', attachments: JSON.parse(detailKey), ...(outfit ? { projectId: liveProject.id } : {}) }), 120);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailKey, worker]);
 
   useEffect(() => {
@@ -240,10 +276,13 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
   const rootRef = useRef<THREE.Group>(null);
   useSnapshotRegistration(rootRef, topo);
   const sceneRef = useThree((s) => s.scene);
-  const insideFabric = useStore((s) => s.project.edits?.insideFabric);
-  const labelKey = JSON.stringify((attachments ?? []).filter((a) => a.kind === 'label').map((a) => [a.id, a.label, a.sheen]));
+  const ownInside = useStore((s) => s.project.edits?.insideFabric);
+  // in an outfit the cloth holds every garment: their attachments and inside fabrics count too
+  const allAttachments = useMemo(() => (outfit ? [...(attachments ?? []), ...others.current.attachments] : undefined), [outfit, attachments, topo]);
+  const insideFabric = useMemo(() => (outfit ? { ...others.current.insideFabric, ...(ownInside ?? {}) } : ownInside), [outfit, ownInside, topo]);
+  const labelKey = JSON.stringify((allAttachments ?? attachments ?? []).filter((a) => a.kind === 'label').map((a) => [a.id, a.label, a.sheen]));
   const cloth = useMemo(
-    () => (topo ? clothMaterials(topo.fabrics, topo.pat, { insideFabric }, attachments ?? []) : null),
+    () => (topo ? clothMaterials(topo.fabrics, topo.pat, { insideFabric }, allAttachments ?? attachments ?? []) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [topo, insideFabric, labelKey],
   );
@@ -265,7 +304,7 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
       {showGarment && topo && cloth?.twoSided && !stretch && (
         <mesh geometry={topo.geo} material={cloth.inside} receiveShadow frustumCulled={false} />
       )}
-      {showGarment && topo && <Prints geo={topo.geo} pat={topo.pat} visible={!stretch} />}
+      {showGarment && topo && <Prints geo={topo.geo} pat={topo.pat} visible={!stretch} all={allAttachments} />}
       {showGarment && topo && hardware && <Hardware data={hardware} geo={topo.geo} visible={!stretch} updater={hardwareUpdater} />}
       {showGarment && topo && attachDetails && <Details data={attachDetails} geo={topo.geo} visible={!stretch} updater={attachUpdater} />}
       {showGarment && topo && details && <Details data={details} geo={topo.geo} visible={!stretch} updater={detailUpdater} />}

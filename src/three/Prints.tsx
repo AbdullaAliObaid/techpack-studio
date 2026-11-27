@@ -396,9 +396,11 @@ function paintRelief(hc: CanvasRenderingContext2D, W: number, H: number, k: numb
 interface Slot { canvas: HTMLCanvasElement; tex: THREE.CanvasTexture; sig: string; hgt?: HTMLCanvasElement; hgtTex?: THREE.CanvasTexture }
 interface ThreadSlot { col: HTMLCanvasElement; hgt: HTMLCanvasElement; colTex: THREE.CanvasTexture; hgtTex: THREE.CanvasTexture; sig: string; k: number }
 
-export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometry; pat: VertexPattern; visible: boolean }) {
+/** `all`: every attachment to draw when the cloth holds more than the open project (an outfit); default the open project's */
+export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGeometry; pat: VertexPattern; visible: boolean; all?: Attachment[] }) {
   const { gl, camera, controls } = useThree();
-  const attachments = useStore((s) => s.project.edits?.attachments);
+  const own = useStore((s) => s.project.edits?.attachments);
+  const attachments = all ?? own;
   const bands = useStore((s) => s.project.edits?.bands);
   const pieces = useStore((s) => s.project.pieces);
   const sel = useStore((s) => s.selAttachment);

@@ -11,6 +11,7 @@ import { FEMALE_BODY, MALE_BODY } from './three/body';
 import { applyMoves, linkedMoves } from './data/symmetry';
 import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorkspaceMap, defaultBand } from './components/designDoc';
 import type { Band } from './data/edits';
+import { deleteOutfit as removeSavedOutfit, listOutfits, listProjects, saveOutfit, saveProject } from './lib/projects';
 
 /** undo history entry: pattern pieces plus garment edits */
 export interface Snapshot { pieces: Piece[]; edits?: Edits; notes?: Note[] }
@@ -308,6 +309,30 @@ export interface State {
   addBand: (b?: Partial<Omit<Band, 'id'>>) => string;
   updateBand: (id: string, patch: Partial<Band>) => void;
   removeBand: (id: string) => void;
+  // --- outfits: several saved garment projects worn together on one body (src/sim/outfit.ts simulates them) ---
+  /** the open outfit, or null when a single garment is open. Saved with src/lib/projects.ts (saveOutfit) on every change */
+  outfit: Outfit | null;
+  /** the outfit garment the 2D editor edits (its project is `project`); edits save to that project and redrape the outfit */
+  activeItem: string | null;
+  /** start a new, empty outfit on this body and open it; returns its id */
+  newOutfit: (name: string, body: Body) => string;
+  /** open a saved outfit; the first garment (closest to the skin) becomes the active one */
+  openOutfit: (id: string) => void;
+  /** close the outfit (the active garment stays open on its own) */
+  leaveOutfit: () => void;
+  /** add a saved garment project as the new outermost layer; regraded onto the outfit body when it follows the body */
+  addToOutfit: (projectId: string) => void;
+  removeFromOutfit: (projectId: string) => void;
+  /** move a garment to position `layer` in the skin side first order (0 = closest to the skin); layers are renumbered */
+  setOutfitLayer: (projectId: string, layer: number) => void;
+  /** a top tucked into the bottoms or worn out over them */
+  setTuck: (projectId: string, tuck: 'in' | 'out') => void;
+  /** show or hide one garment in the 3D view (a hidden garment is left out of the simulation) */
+  setItemHidden: (projectId: string, hidden: boolean) => void;
+  /** which garment the 2D editor edits; the open one is saved first */
+  setActiveItem: (projectId: string) => void;
+  /** a new body for the outfit: every garment that follows the body (linkPattern) is regraded onto it */
+  setOutfitBody: (body: Body) => void;
 }
 
 /** Garments with a collar store the collar position explicitly (folded down unless chosen), which turns on the
@@ -359,6 +384,17 @@ export const useStore = create<State>((set, get) => {
   const setEdits = (fn: (e: Edits) => Edits) =>
     set((s) => ({ project: { ...s.project, edits: fn(s.project.edits ?? EMPTY_EDITS), updatedAt: Date.now() } }));
   const setPieces = (pieces: Piece[]) => set((s) => ({ project: { ...s.project, pieces, updatedAt: Date.now() } }));
+  /** keep the open outfit in the store and on the device */
+  const putOutfit = (o: Outfit) => { const next = { ...o, updatedAt: Date.now() }; saveOutfit(next); set({ outfit: next }); };
+  /** put a garment of an outfit on the outfit body: the open one in the store, a saved one on the device */
+  const onOutfitBody = (projectId: string, body: Body) => {
+    const same = (p: Project) => JSON.stringify(p.body) === JSON.stringify(body);
+    const move = (p: Project): Project => ({ ...p, body: { ...body }, pieces: p.linkPattern ? regrade(p, p.body, body) : p.pieces, updatedAt: Date.now() });
+    const open = get().project;
+    if (open.id === projectId) { if (!same(open)) set({ project: move(open) }); return; }
+    const p = listProjects().find((q) => q.id === projectId);
+    if (p && !same(p)) saveProject(move(p));
+  };
 
   return {
     project: freshProject('jacket', 'My first jacket'),
@@ -661,6 +697,65 @@ export const useStore = create<State>((set, get) => {
       get().commit();
       setEdits((e) => ({ ...e, bands: (e.bands ?? []).filter((q) => q.id !== id) }));
       set((s) => ({ selBand: s.selBand === id ? null : s.selBand }));
+    },
+    // ---- outfits ----
+    outfit: null,
+    activeItem: null,
+    newOutfit: (name, body) => {
+      const o: Outfit = { id: uid(), name: name.trim() || 'My outfit', body: { ...body }, items: [], updatedAt: Date.now() };
+      saveOutfit(o);
+      set({ outfit: o, activeItem: null });
+      return o.id;
+    },
+    openOutfit: (id) => {
+      const o = listOutfits().find((q) => q.id === id);
+      if (!o) return;
+      set({ outfit: o, activeItem: null });
+      const first = o.items.slice().sort((a, b) => a.layer - b.layer)[0];
+      if (first) get().setActiveItem(first.projectId);
+    },
+    leaveOutfit: () => set({ outfit: null, activeItem: null }),
+    addToOutfit: (projectId) => {
+      const o = get().outfit;
+      if (!o || o.items.some((i) => i.projectId === projectId)) return;
+      onOutfitBody(projectId, o.body);
+      putOutfit({ ...o, items: [...o.items, { projectId, layer: o.items.reduce((m, i) => Math.max(m, i.layer + 1), 0), tuck: 'out' }] });
+      if (!get().activeItem) get().setActiveItem(projectId);
+    },
+    removeFromOutfit: (projectId) => {
+      const o = get().outfit;
+      if (!o) return;
+      const items = o.items.filter((i) => i.projectId !== projectId).sort((a, b) => a.layer - b.layer).map((i, n) => ({ ...i, layer: n }));
+      putOutfit({ ...o, items });
+      if (get().activeItem === projectId) { set({ activeItem: null }); if (items[0]) get().setActiveItem(items[0].projectId); }
+    },
+    setOutfitLayer: (projectId, layer) => {
+      const o = get().outfit;
+      if (!o) return;
+      const sorted = o.items.slice().sort((a, b) => a.layer - b.layer);
+      const from = sorted.findIndex((i) => i.projectId === projectId);
+      if (from < 0) return;
+      const [it] = sorted.splice(from, 1);
+      sorted.splice(Math.max(0, Math.min(sorted.length, layer)), 0, it);
+      putOutfit({ ...o, items: sorted.map((i, n) => ({ ...i, layer: n })) });
+    },
+    setTuck: (projectId, tuck) => { const o = get().outfit; if (o) putOutfit({ ...o, items: o.items.map((i) => (i.projectId === projectId ? { ...i, tuck } : i)) }); },
+    setItemHidden: (projectId, hidden) => { const o = get().outfit; if (o) putOutfit({ ...o, items: o.items.map((i) => (i.projectId === projectId ? { ...i, hidden } : i)) }); },
+    setActiveItem: (projectId) => {
+      const { project, outfit } = get();
+      if (project.id === projectId) { set({ activeItem: projectId }); return; }
+      saveProject(project);
+      if (outfit) onOutfitBody(projectId, outfit.body);
+      const p = listProjects().find((q) => q.id === projectId);
+      if (!p) return;
+      get().loadProject(p);
+      set({ activeItem: projectId });
+    },
+    setOutfitBody: (body) => {
+      const o = get().outfit;
+      if (!o) return;
+      for (const it of o.items) onOutfitBody(it.projectId, body);
+      putOutfit({ ...o, body: { ...body } });
     },
 
     // ---- edits ----

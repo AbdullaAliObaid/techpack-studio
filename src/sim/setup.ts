@@ -112,7 +112,7 @@ export interface Garment3D {
 
 type Hit = { nx: number; ny: number; nz: number; depth: number; vx?: number; vy?: number; vz?: number };
 /** what setup needs of a body collider (BodyCollider, GridCollider, PosedCollider) */
-type BodyLike = {
+export type BodyLike = {
   project(p: Float32Array, i: number, out: Hit): boolean; thickness: number; flat?: [number, number]; useCaps?: boolean; skinning?: boolean;
   escape?(p: Float32Array, i: number, bone: number, dx: number, dy: number, dz: number, margin: number): boolean;
 };
@@ -1300,21 +1300,9 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   // 3: rubber elastic grips the skin much harder than fabric (the solver's friction scales with contact depth)
   if (band) for (const P of insts) if (P.piece === band) contact.fill(3, P.offset, P.offset + P.mesh.uv.length);
   const body3d = (collider ?? new BodyCollider(body)) as BodyLike;
-  sim.collider = contact.some((v) => v)
-    ? {
-      project: (p, j, out) => {
-        const c = contact[j / 3];
-        if (c === 1) { out.depth = 0; return false; }
-        if (c === 0) return body3d.project(p, j, out);
-        if (c === 3) { const hit = body3d.project(p, j, out); out.depth *= 6; return hit; }
-        const t = body3d.thickness;
-        body3d.thickness = -3.5;
-        const hit = body3d.project(p, j, out);
-        body3d.thickness = t;
-        return hit;
-      },
-    }
-    : body3d;
+  sim.collider = contactCollider(contact, body3d);
+  // a hat rides on the head: simulated in the head's frame, so a walk's bob or a jump can not throw it off
+  if (hat) carryWithHead(sim, body3d, 0, count);
   // fabric weight: heavier cloth (higher gsm) hangs and folds more under the same stiffness
   const panelOf = new Uint16Array(count), uvs = new Float32Array(count * 2);
   let heaviest = 0;
@@ -1384,6 +1372,67 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   sim.selfRadius = Math.min(spacing * 0.45, 0.5 + heaviest / 1500); // thicker cloth keeps layers further apart
   const panelSign = Int8Array.from(insts, (P) => signOf(P));
   return { sim, panels: insts.map(({ place: _p, shape: _s, mech: _m, ...rest }) => rest), limits, seamLinks, body: body3d, contact, panelSign, collar: collarIs, foldLayers, ...(layerNear.length ? { layerNear } : {}) };
+}
+
+/**
+ * Float: the body is hidden, so the cloth is shown in its draped shape in the air instead of acting as if a body were
+ * there. On: the cloth is frozen where it is (the solver stops: sim.sleeping), and should it be stepped anyway (a
+ * garment rebuilt while floating is stepped a few frames to close its seams) there is no gravity, no body and no
+ * riding on the head, so nothing falls or sinks. The cloth on its own can not hold a drape (fabric springs back flat
+ * without the body and gravity shaping it), which is why it is frozen rather than simulated. Off: gravity and the body
+ * come back and the drape picks up from that shape. The body collider is kept on the garment (`floatSaved`).
+ */
+export function setFloat(G: Garment3D & { floatSaved?: { collider: ClothSim['collider']; carry: ClothSim['carrySource'] } }, on: boolean) {
+  const sim = G.sim;
+  if (on) {
+    if (!G.floatSaved) G.floatSaved = { collider: sim.collider, carry: sim.carrySource };
+    sim.collider = null;
+    sim.carrySource = null;
+    sim.gravity = 0;
+    sim.vel.fill(0);
+    sim.prev.set(sim.pos);
+    sim.awake = false;
+    sim.sleeping = true;
+  } else if (G.floatSaved) {
+    sim.collider = G.floatSaved.collider;
+    sim.carrySource = G.floatSaved.carry;
+    sim.gravity = -981;
+    delete G.floatSaved;
+    sim.sleeping = false;
+    sim.frames = Math.max(sim.frames, sim.sewFrames + 1);
+  }
+}
+
+/** bone of the head (and upper neck) in the pose rig (src/sim/pose.ts) */
+export const HEAD_BONE = 10;
+
+/** Make particles from..to ride with the head when the collider is posed (has bone matrices M and Mprev). */
+export function carryWithHead(sim: ClothSim, body: unknown, from: number, to: number) {
+  const C = body as { M?: Float64Array; Mprev?: Float64Array };
+  if (!(C.M instanceof Float64Array) || !(C.Mprev instanceof Float64Array)) return;
+  sim.carrySource = C as { M: Float64Array; Mprev: Float64Array };
+  sim.carry.push({ from, to, bone: HEAD_BONE });
+}
+
+/**
+ * The solver's collider for a per particle contact mode (Garment3D.contact): 0 normal, 1 none (a visor held off the
+ * body by its band), 2 may sink up to 3.5 cm (the crease between the thighs), 3 elastic (grips 6x harder).
+ */
+export function contactCollider(contact: Uint8Array, body3d: BodyLike): NonNullable<ClothSim['collider']> {
+  if (!contact.some((v) => v)) return body3d;
+  return {
+    project: (p, j, out) => {
+      const c = contact[j / 3];
+      if (c === 1) { out.depth = 0; return false; }
+      if (c === 0) return body3d.project(p, j, out);
+      if (c === 3) { const hit = body3d.project(p, j, out); out.depth *= 6; return hit; }
+      const t = body3d.thickness;
+      body3d.thickness = -3.5;
+      const hit = body3d.project(p, j, out);
+      body3d.thickness = t;
+      return hit;
+    },
+  };
 }
 
 /**

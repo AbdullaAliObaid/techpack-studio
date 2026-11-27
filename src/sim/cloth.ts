@@ -70,6 +70,33 @@ export class ClothSim {
   /** called before each substep (k of n), e.g. to move the body smoothly between frames */
   substepHook: ((k: number, n: number) => void) | null = null;
   frames = 0;
+  /**
+   * Cloth that rides on a body part, like a hat on the head: every substep each particle in from..to is moved with the
+   * rigid motion of `bone` (carrySource.M against carrySource.Mprev, 3x4 rows per bone, src/sim/pose.ts), so the cloth
+   * is simulated in that bone's frame. Gravity, the body and the seams still act on it; a head that drops faster than
+   * gravity (the bob of a walk) no longer throws the hat up and off. Velocities stay relative to the bone. Set by
+   * setup for hats when the collider is posed (PosedCollider); empty otherwise.
+   */
+  carry: { from: number; to: number; bone: number }[] = [];
+  carrySource: { M: Float64Array; Mprev: Float64Array } | null = null;
+  private carryD: Float32Array | null = null;
+  /**
+   * Outfits (src/sim/outfit.ts): per particle the garment it belongs to. Particles of different garments always
+   * collide (the "two sides of a seam" skip only applies within one garment) and keep crossRadius apart.
+   */
+  garmentOf: Uint8Array | null = null;
+  crossRadius = 0;
+  /**
+   * Outfit layer contacts, rebuilt every frame by contactHook: particle a keeps at least gap on the sign side of the
+   * triangle h0 h1 h2 (same packing as layerIdx / layerW), with friction against that triangle.
+   */
+  contactIdx: Int32Array | null = null;
+  contactW: Float32Array | null = null;
+  contactCount = 0;
+  /** friction between garments (0 slides freely, 1 sticks) */
+  contactFriction = 0.25;
+  /** called at the start of every frame (outfits rebind their layer contacts here) */
+  frameHook: (() => void) | null = null;
   /** frames of the sewing phase: low gravity, no friction, so seams can close before the cloth settles */
   sewFrames = 45;
 
@@ -109,6 +136,8 @@ export class ClothSim {
     let maxV = 0;
     const vMax = this.maxSpeed, vMax2 = vMax * vMax;
     if (!this.good) this.good = pos.slice();
+    if (this.frameHook) this.frameHook();
+    const carryD = this.carry.length && this.carrySource ? (this.carryD ??= new Float32Array(n * 3)) : null;
     for (let s = 0; s < this.substeps; s++) {
       if (this.substepHook) this.substepHook(s, this.substeps);
       for (let i = 0; i < n; i++) {
@@ -118,6 +147,7 @@ export class ClothSim {
         prev[j] = pos[j]; prev[j + 1] = pos[j + 1]; prev[j + 2] = pos[j + 2];
         pos[j] += vel[j] * h; pos[j + 1] += vel[j + 1] * h; pos[j + 2] += vel[j + 2] * h;
       }
+      if (carryD) this.carryStep(carryD);
       // one Gauss-Seidel pass over all constraints
       for (let c = 0; c < ca.length; c++) {
         const a = ca[c] * 3, b = cb[c] * 3;
@@ -150,6 +180,7 @@ export class ClothSim {
         }
       }
       if (this.selfRadius > 0 && (s & 1) === 1) this.selfCollide();
+      if (this.contactCount) this.contacts(sewing ? 0.6 : 0.15);
       // body collision with friction
       if (this.collider) {
         for (let i = 0; i < n; i++) {
@@ -177,6 +208,7 @@ export class ClothSim {
       for (let i = 0; i < n; i++) {
         const j = i * 3;
         let vx = (pos[j] - prev[j]) / h, vy = (pos[j + 1] - prev[j + 1]) / h, vz = (pos[j + 2] - prev[j + 2]) / h;
+        if (carryD) { vx -= carryD[j] / h; vy -= carryD[j + 1] / h; vz -= carryD[j + 2] / h; }
         const v2 = vx * vx + vy * vy + vz * vz;
         if (v2 > vMax2) {
           // thrown: keep the direction, limit the step (and the speed it carries into the next substep)
@@ -208,8 +240,9 @@ export class ClothSim {
 
   /** Keep cloth layers from passing through each other: particles closer than selfRadius are pushed apart. */
   private selfCollide() {
-    const { pos, n, panelOf, uv, seamGroup, invMass } = this;
+    const { pos, n, panelOf, uv, seamGroup, invMass, garmentOf } = this;
     const r = this.selfRadius, r2 = r * r, skip2 = (r * 4) ** 2;
+    const cr = Math.min(r, this.crossRadius), cr2 = cr * cr;
     const T = 1 << 15;
     if (this.hashStart.length !== T + 1) { this.hashStart = new Int32Array(T + 1); this.hashItems = new Int32Array(n); }
     if (this.hashItems.length !== n) this.hashItems = new Int32Array(n);
@@ -234,6 +267,16 @@ export class ClothSim {
           const ex = pos[j * 3] - x, ey = pos[j * 3 + 1] - y, ez = pos[j * 3 + 2] - z;
           const d2 = ex * ex + ey * ey + ez * ez;
           if (d2 >= r2 || d2 < 1e-10) continue;
+          if (garmentOf && garmentOf[i] !== garmentOf[j]) {
+            // two garments of an outfit: the layer contacts keep them on the right side, this only keeps points apart
+            if (d2 >= cr2) continue;
+            const d = Math.sqrt(d2), w = invMass[i] + invMass[j];
+            if (!w) continue;
+            const c = (cr - d) / d / w;
+            pos[i * 3] -= ex * c * invMass[i]; pos[i * 3 + 1] -= ey * c * invMass[i]; pos[i * 3 + 2] -= ez * c * invMass[i];
+            pos[j * 3] += ex * c * invMass[j]; pos[j * 3 + 1] += ey * c * invMass[j]; pos[j * 3 + 2] += ez * c * invMass[j];
+            continue;
+          }
           if (seamGroup && seamGroup[i] === seamGroup[j]) continue;
           if (this.nearSeam && this.nearSeam[i] && this.nearSeam[j] && panelOf && panelOf[i] !== panelOf[j]) continue; // the two sides of a seam
           if (this.skipPanel && panelOf && (this.skipPanel[i] === panelOf[j] || this.skipPanel[j] === panelOf[i])) continue; // attachment on its host
@@ -247,6 +290,85 @@ export class ClothSim {
           pos[j * 3] += ex * c * invMass[j]; pos[j * 3 + 1] += ey * c * invMass[j]; pos[j * 3 + 2] += ez * c * invMass[j];
         }
       }
+    }
+  }
+
+  /** move the carried particles with their bone's motion over the last substep (see carry) */
+  private carryStep(d: Float32Array) {
+    const { M, Mprev } = this.carrySource!;
+    const pos = this.pos;
+    for (const c of this.carry) {
+      const o = c.bone * 12;
+      // D = M * inverse(Mprev); Mprev is rigid, so its inverse is the transposed rotation
+      const R = [0, 0, 0, 0, 0, 0, 0, 0, 0], t = [0, 0, 0];
+      const P = (r: number, k: number) => Mprev[o + r * 4 + k];
+      const pt = [P(0, 3), P(1, 3), P(2, 3)];
+      let ok = true;
+      for (let r = 0; r < 3; r++) {
+        for (let k = 0; k < 3; k++) {
+          let v = 0;
+          for (let m = 0; m < 3; m++) v += M[o + r * 4 + m] * P(k, m);
+          R[r * 3 + k] = v;
+        }
+      }
+      for (let r = 0; r < 3; r++) t[r] = M[o + r * 4 + 3] - (R[r * 3] * pt[0] + R[r * 3 + 1] * pt[1] + R[r * 3 + 2] * pt[2]);
+      // a pose that jumps (a rebuild after a movement) is not a motion to follow
+      if (Math.abs(t[0]) + Math.abs(t[1]) + Math.abs(t[2]) > 30) ok = false;
+      for (let i = c.from; i < c.to; i++) {
+        const j = i * 3;
+        if (!ok || !this.invMass[i]) { d[j] = d[j + 1] = d[j + 2] = 0; continue; }
+        const x = pos[j], y = pos[j + 1], z = pos[j + 2];
+        const nx = R[0] * x + R[1] * y + R[2] * z + t[0], ny = R[3] * x + R[4] * y + R[5] * z + t[1], nz = R[6] * x + R[7] * y + R[8] * z + t[2];
+        d[j] = nx - x; d[j + 1] = ny - y; d[j + 2] = nz - z;
+        pos[j] = nx; pos[j + 1] = ny; pos[j + 2] = nz;
+      }
+    }
+  }
+
+  /**
+   * Outfit layer contacts (see contactIdx): the particle is pushed onto the right side of its triangle by at most step
+   * cm, and its slide along the triangle is damped by contactFriction (relative to the triangle's own motion).
+   */
+  private contacts(step: number) {
+    const I = this.contactIdx!, W = this.contactW!, pos = this.pos, prev = this.prev, fr = this.contactFriction;
+    for (let e = 0, k = 0; e < this.contactCount * 4; e += 4, k += 5) {
+      const a = I[e] * 3, h0 = I[e + 1] * 3, h1 = I[e + 2] * 3, h2 = I[e + 3] * 3;
+      const ux = pos[h1] - pos[h0], uy = pos[h1 + 1] - pos[h0 + 1], uz = pos[h1 + 2] - pos[h0 + 2];
+      const vx = pos[h2] - pos[h0], vy = pos[h2 + 1] - pos[h0 + 1], vz = pos[h2 + 2] - pos[h0 + 2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (l < 1e-9) continue;
+      const sg = W[k + 4] / l;
+      nx *= sg; ny *= sg; nz *= sg;
+      const w0 = W[k], w1 = W[k + 1], w2 = W[k + 2];
+      const px = pos[h0] * w0 + pos[h1] * w1 + pos[h2] * w2, py = pos[h0 + 1] * w0 + pos[h1 + 1] * w1 + pos[h2 + 1] * w2, pz = pos[h0 + 2] * w0 + pos[h1 + 2] * w1 + pos[h2 + 2] * w2;
+      const d = (pos[a] - px) * nx + (pos[a + 1] - py) * ny + (pos[a + 2] - pz) * nz;
+      let c = W[k + 3] - d;
+      if (c <= 0) continue;
+      if (c > step) c = step;
+      // both layers give way, by mass: the point one way, the triangle under it the other
+      const im = this.invMass, wa = im[I[e]], wt = im[I[e + 1]] * w0 * w0 + im[I[e + 2]] * w1 * w1 + im[I[e + 3]] * w2 * w2;
+      const sum = wa + wt;
+      if (!sum) continue;
+      const ca = (c * wa) / sum, ct = (c * wt) / sum;
+      pos[a] += nx * ca; pos[a + 1] += ny * ca; pos[a + 2] += nz * ca;
+      if (ct > 0) {
+        const l2 = w0 * w0 * im[I[e + 1]] + w1 * w1 * im[I[e + 2]] + w2 * w2 * im[I[e + 3]];
+        for (const [hi, wi] of [[h0, w0 * im[I[e + 1]]], [h1, w1 * im[I[e + 2]]], [h2, w2 * im[I[e + 3]]]] as [number, number][]) {
+          const m = (ct * wi) / l2;
+          pos[hi] -= nx * m; pos[hi + 1] -= ny * m; pos[hi + 2] -= nz * m;
+        }
+      }
+      if (fr <= 0) continue;
+      // friction: the slide of the particle relative to the triangle under it this substep, tangential part
+      const mx = pos[a] - prev[a] - ((pos[h0] - prev[h0]) * w0 + (pos[h1] - prev[h1]) * w1 + (pos[h2] - prev[h2]) * w2);
+      const my = pos[a + 1] - prev[a + 1] - ((pos[h0 + 1] - prev[h0 + 1]) * w0 + (pos[h1 + 1] - prev[h1 + 1]) * w1 + (pos[h2 + 1] - prev[h2 + 1]) * w2);
+      const mz = pos[a + 2] - prev[a + 2] - ((pos[h0 + 2] - prev[h0 + 2]) * w0 + (pos[h1 + 2] - prev[h1 + 2]) * w1 + (pos[h2 + 2] - prev[h2 + 2]) * w2);
+      const dn = mx * nx + my * ny + mz * nz;
+      const tx = mx - dn * nx, ty = my - dn * ny, tz = mz - dn * nz;
+      const tl = Math.sqrt(tx * tx + ty * ty + tz * tz);
+      const f = tl < fr * c ? 1 : Math.min(1, (fr * c) / (tl || 1));
+      pos[a] -= tx * f; pos[a + 1] -= ty * f; pos[a + 2] -= tz * f;
     }
   }
 
