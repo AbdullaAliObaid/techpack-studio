@@ -174,7 +174,9 @@ function cropBitmap(b: Bitmap, r: { x: number; y: number; w: number; h: number }
 
 /* ------------------------------------------------------------------ repeat detection (fallback) */
 
-export interface RepeatInfo { repeating: boolean; /** repeat tile in source pixels */ tile?: { w: number; h: number }; confidence: number }
+export interface RepeatInfo {
+  /** the photo had no full vertical repeat: the tile uses the whole height with blended top and bottom edges */
+  seamY?: boolean; repeating: boolean; /** repeat tile in source pixels */ tile?: { w: number; h: number }; confidence: number }
 
 /** Is this picture a repeating pattern? Self similarity over horizontal and vertical shifts on a small grey copy. */
 export async function detectRepeatLocal(b: Bitmap): Promise<RepeatInfo> {
@@ -205,15 +207,81 @@ export async function detectRepeatLocal(b: Bitmap): Promise<RepeatInfo> {
   return { repeating: true, tile: { w: Math.round(w), h: Math.round(h) }, confidence: Math.round((1 - Math.min(okx ? bxe : 1, oky ? bye : 1)) * 100) / 100 };
 }
 
+/**
+ * Repeat probe that works on short photos (a damask strip with only ~1.3 vertical repeats): find the horizontal
+ * period by normalised cross correlation, then a vertical period, or the half drop shift (period/2 across, dy down).
+ * Returns the full rectangular repeat tile in source pixels.
+ */
+export function probeRepeat(b: Bitmap): RepeatInfo {
+  const k = Math.max(1, b.w / 220);
+  const W = Math.floor(b.w / k), H = Math.floor(b.h / k);
+  if (W < 24 || H < 24) return { repeating: false, confidence: 0 };
+  const g = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (Math.floor(y * k) * b.w + Math.floor(x * k)) * 4;
+    g[y * W + x] = 0.299 * b.data[i] + 0.587 * b.data[i + 1] + 0.114 * b.data[i + 2];
+  }
+  // light blur so sub pixel periods and fabric texture don't hide the repeat
+  const gb = new Float32Array(g);
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    let t = 0;
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) t += g[(y + j) * W + x + i];
+    gb[y * W + x] = t / 9;
+  }
+  g.set(gb);
+  const ncc = (dx: number, dy: number) => {
+    let sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0, n = 0;
+    for (let y = Math.max(0, -dy); y < Math.min(H, H - dy); y++) for (let x = 0; x < W - dx; x++) {
+      const a = g[y * W + x], c = g[(y + dy) * W + x + dx];
+      sa += a; sb += c; saa += a * a; sbb += c * c; sab += a * c; n++;
+    }
+    if (n < W * H * 0.15) return -1;
+    const cov = sab / n - (sa / n) * (sb / n), va = saa / n - (sa / n) ** 2, vb = sbb / n - (sb / n) ** 2;
+    return va > 1e-6 && vb > 1e-6 ? cov / Math.sqrt(va * vb) : -1;
+  };
+  // horizontal period: the first strong peak
+  let px = 0, best = 0;
+  for (let dx = Math.floor(W / 8); dx <= Math.floor(W * 0.75); dx++) { const v = ncc(dx, 0); if (v > best) { best = v; px = dx; } }
+  if (best < 0.5 || !px) return { repeating: false, confidence: Math.max(0, best) };
+  // straight vertical repeat, or a half drop (shift half the width across)
+  let vy = 0, vBest = 0, hy = 0, hBest = 0;
+  for (let dy = Math.floor(H / 8); dy <= Math.floor(H * 0.8); dy++) {
+    const a = ncc(0, dy); if (a > vBest) { vBest = a; vy = dy; }
+    for (let dx = Math.round(px / 2) - 2; dx <= Math.round(px / 2) + 2; dx++) { const c = ncc(dx, dy); if (c > hBest) { hBest = c; hy = dy; } }
+  }
+  let tw = px, th: number;
+  if (hBest > 0.55 && hBest >= vBest - 0.05 && 2 * hy <= H) th = 2 * hy;
+  else if (vBest > 0.55) th = vy;
+  else {
+    // a clear repeat across but no full repeat top to bottom in the photo: keep the exact width, use the whole
+    // height and blend the top and bottom edges so the tile still joins without a seam
+    const w0 = Math.round(px * k);
+    return w0 <= b.w ? { repeating: true, tile: { w: w0, h: b.h }, confidence: Math.round(best * 100) / 100, seamY: true } : { repeating: false, confidence: best };
+  }
+  tw = Math.round(tw * k); th = Math.round(th * k);
+  if (tw > b.w || th > b.h) return { repeating: false, confidence: best };
+  return { repeating: true, tile: { w: tw, h: th }, confidence: Math.round(Math.min(best, Math.max(hBest, vBest)) * 100) / 100 };
+}
+
 export async function detectRepeat(b: Bitmap): Promise<RepeatInfo> {
+  const probe = probeRepeat(b);
   const fn = first(real.repeat)?.detectRepeat as ((b: unknown) => unknown) | undefined;
   if (fn) {
     try {
-      const r = (await fn(b)) as Partial<RepeatInfo> & { isRepeat?: boolean; tile?: { w: number; h: number } } | null;
+      const r = (await fn(b)) as (Partial<RepeatInfo> & { isRepeat?: boolean; found?: boolean; w?: number; h?: number; layout?: string; tile?: { w: number; h: number } }) | null;
+      // src/lib/repeat.ts: {found, w, h, layout, confidence}; w x h is one motif cell. Half drop and brick repeat
+      // exactly over two cells, so the seamless tile kept from the photo is 2w x h (half drop) or w x 2h (brick).
+      if (r && typeof r.found === 'boolean') {
+        if (!r.found || !r.w || !r.h) return probe.repeating ? probe : { repeating: false, confidence: r.confidence ?? 0 };
+        const w = r.layout === 'half-drop' ? 2 * r.w : r.w, h = r.layout === 'brick' ? 2 * r.h : r.h;
+        if (w > b.w || h > b.h) return { repeating: true, tile: { w: Math.round(r.w), h: Math.round(r.h) }, confidence: r.confidence ?? 0 };
+        return { repeating: true, tile: { w: Math.round(w), h: Math.round(h) }, confidence: r.confidence ?? 0 };
+      }
       if (r && (typeof r.repeating === 'boolean' || typeof r.isRepeat === 'boolean')) return { repeating: r.repeating ?? !!r.isRepeat, tile: r.tile, confidence: r.confidence ?? 0 };
     } catch { /* use the local detector */ }
   }
-  return detectRepeatLocal(b);
+  const local = await detectRepeatLocal(b);
+  return local.repeating ? local : probe;
 }
 
 export interface MotifOptions { tolerance?: number; repeat?: RepeatInfo }
@@ -221,13 +289,16 @@ export interface MotifOptions { tolerance?: number; repeat?: RepeatInfo }
 /** The motif as a transparent picture: a repeating photo keeps one repeat tile, a single motif loses its background and is cropped. */
 export async function extractMotif(b: Bitmap, opts: MotifOptions = {}): Promise<PatternMotif> {
   const fn = first(real.repeat)?.extractMotif as ((b: unknown, o: unknown) => unknown) | undefined;
-  if (fn) {
+  // an upload that already repeats (a damask, a print photo) keeps one full repeat exactly as it looks, ground and
+  // texture included; only single motifs lose their background
+  if (fn && !opts.repeat?.repeating) {
     try { const m = (await fn(b, opts)) as PatternMotif | null; if (m && (m.image || m.paths)) return m; } catch { /* use the local one */ }
   }
   if (opts.repeat?.repeating && opts.repeat.tile) {
     const t = opts.repeat.tile;
-    const tile = cropBitmap(b, { x: Math.round((b.w - t.w) / 2), y: Math.round((b.h - t.h) / 2), w: t.w, h: t.h });
-    return { image: bitmapToDataUrl(tile, 512), aspect: t.w / t.h, detectedTile: t };
+    let tile = cropBitmap(b, { x: Math.round((b.w - t.w) / 2), y: Math.round((b.h - t.h) / 2), w: t.w, h: t.h });
+    if (opts.repeat.seamY) tile = blendSeamY(tile, 0.18);
+    return { image: bitmapToDataUrl(tile, 768), aspect: tile.w / tile.h, detectedTile: { w: tile.w, h: tile.h } };
   }
   const clear = hasAlpha(b) ? b : removeBackground(b, opts.tolerance ?? 36);
   let x0 = clear.w, y0 = clear.h, x1 = 0, y1 = 0;
@@ -235,6 +306,20 @@ export async function extractMotif(b: Bitmap, opts: MotifOptions = {}): Promise<
   if (x1 <= x0 || y1 <= y0) { x0 = 0; y0 = 0; x1 = clear.w - 1; y1 = clear.h - 1; }
   const crop = cropBitmap(clear, { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 });
   return { image: bitmapToDataUrl(crop, 768), aspect: crop.w / crop.h };
+}
+
+/** Make a tile join top to bottom: the last `share` of rows is cross faded into the first rows, then dropped. */
+function blendSeamY(b: Bitmap, share: number): Bitmap {
+  const band = Math.max(2, Math.round(b.h * share)), h = b.h - band;
+  const out = new Uint8ClampedArray(b.w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < b.w; x++) {
+    const o = (y * b.w + x) * 4, i = (y * b.w + x) * 4;
+    if (y < band) {
+      const t = y / band, j = ((h + y) * b.w + x) * 4; // rows below the kept area flow into the top
+      for (let c = 0; c < 4; c++) out[o + c] = b.data[j + c] * (1 - t) + b.data[i + c] * t;
+    } else for (let c = 0; c < 4; c++) out[o + c] = b.data[i + c];
+  }
+  return { w: b.w, h, data: out };
 }
 
 /** Vector copy of a picture motif (up to 3 colours) so it can be recoloured. Null when it does not trace cleanly. */

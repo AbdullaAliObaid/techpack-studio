@@ -404,6 +404,15 @@ export function motifPlacements(layout: RepeatLayout, S: number): { W: number; H
 
 function customTile(p: FabricPattern): { size: [number, number]; svg: string; body: string } {
   const S = p.scale, layout = p.layout ?? 'block';
+  // a full repeat cut from a photo of a print (detectedTile): the picture IS the tile, at its own proportions,
+  // edge to edge with no ground showing; scale is the repeat width in cm
+  const mt = p.motif;
+  if (mt?.image && mt.detectedTile && layout === 'block') {
+    const a = Number.isFinite(mt.aspect) && mt.aspect > 0 ? mt.aspect : 1;
+    const W = S, H = S / a;
+    const body = `<image x="0" y="0" width="${f(W)}" height="${f(H)}" preserveAspectRatio="none" href="${mt.image}"/>`;
+    return { size: [W, H], svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${f(W)}" height="${f(H)}" viewBox="0 0 ${f(W)} ${f(H)}">${body}</svg>`, body };
+  }
   const { W, H, items } = motifPlacements(layout, S);
   const out: string[] = [`<rect x="0" y="0" width="${f(W)}" height="${f(H)}" fill="${p.colors[0]}"/>`];
   const m = p.motif;
