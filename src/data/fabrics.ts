@@ -405,6 +405,21 @@ export function colorName(pf: FabricRef): string {
   return (f.colors[pf.color] ?? f.colors[0]).name;
 }
 
+/**
+ * Typical cloth thickness per fabric id (mm, at rest under a light presser foot, like a mill's thickness gauge).
+ * Used for layer stacks (src/data/stack.ts): a lining or a stack of patches adds its thickness, weight and stiffness.
+ */
+const THICKNESS: Record<string, number> = {
+  canvas: 0.6, denim: 0.8, 'stretch-denim': 0.7, poplin: 0.2, linen: 0.3, wool: 0.5, poly: 0.15, jersey: 0.5, rib: 0.9,
+  leather: 1.2, spandex: 0.5, oxford: 0.3, chambray: 0.25, 'shirting-twill': 0.25, flannel: 0.6, seersucker: 0.35, voile: 0.1,
+  'selvedge-denim': 1.0, 'raw-denim': 0.95, 'white-denim': 0.75, 'black-denim': 0.75, 'slub-jersey': 0.5, pique: 0.8,
+  interlock: 0.7, 'french-terry': 1.2, fleece: 2.5, waffle: 1.5, modal: 0.4, duck: 0.8, ripstop: 0.15, 'nylon-taffeta': 0.1,
+  softshell: 1.5, 'waxed-cotton': 0.6, corduroy: 1.3, moleskin: 0.8, melton: 2.0, tweed: 1.5, gabardine: 0.4, satin: 0.15,
+  'silk-crepe': 0.15, velvet: 1.5, suede: 1.0, 'faux-leather': 0.8, mesh: 0.6, 'tech-stretch': 0.3,
+};
+/** Thickness of a fabric (mm). Unknown ids: estimated from weight (about 400 g/m2 per mm, like a medium woven). */
+export const fabricThickness = (id: string) => THICKNESS[id] ?? Math.max(0.1, fabricById(id).gsm / 400);
+
 /** Typical fibre content per fabric id, for the tech pack bill of materials. Typical values: the mill's spec sheet wins. */
 const COMPOSITION: Record<string, string> = {
   canvas: '100% cotton', denim: '100% cotton', 'stretch-denim': '98% cotton, 2% elastane', poplin: '100% cotton', linen: '100% linen',

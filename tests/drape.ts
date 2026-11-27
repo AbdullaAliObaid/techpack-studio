@@ -13,6 +13,7 @@ import { calibratedField } from '../src/three/bodyField';
 import { meshField, GridCollider, PosedCollider } from '../src/three/mesher';
 import { hatPose } from './hatLib';
 import { styleEdits } from '../src/data/construction';
+import { fabricThickness } from '../src/data/fabrics';
 
 const DEFAULT_BODY = process.env.BODY === 'female' ? FEMALE_BODY : MALE;
 const FF = calibratedField(DEFAULT_BODY);
@@ -22,7 +23,7 @@ const SP = Number(process.env.SP ?? 1.8);
 const only = process.argv[2];
 let fails = 0;
 
-function drape(g: StyleId, pieces: Piece[], edits?: Edits, label: string = g): { ok: boolean; G: Garment3D } {
+function drape(g: StyleId, pieces: Piece[], edits?: Edits, label: string = g, safe = 2.5): { ok: boolean; G: Garment3D } {
   const style = CATALOG.find((s) => s.id === g)!;
   const t0 = performance.now();
   const G = assemble(g, pieces, DEFAULT_BODY, SP, collider, edits)!;
@@ -71,7 +72,7 @@ function drape(g: StyleId, pieces: Piece[], edits?: Edits, label: string = g): {
     where = `neck ${f.neckH.toFixed(0)}`;
   }
   // strain: no runaway stretch anywhere, the bulk of the cloth relaxed; the crotch fork of woven trousers is the expected hot spot
-  const ok = bad === 0 && avgGap < 0.6 && open / ns < 0.02 && p99 < 0.2 && p50 < 0.03 && r98 < 2.5 && placed;
+  const ok = bad === 0 && avgGap < 0.6 && open / ns < 0.02 && p99 < 0.2 && p50 < 0.03 && r98 < safe && placed;
   if (!ok) fails++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${label.padEnd(14)} ${sim.n} particles, ${ns} sew links | build ${(t1 - t0).toFixed(0)}ms | ${frames} frames ${((t3 - t2) / frames).toFixed(1)}ms/frame | NaN ${bad} | y ${minY.toFixed(1)}..${maxY.toFixed(1)} (${where}) | seam gap avg ${avgGap.toFixed(2)}cm, open ${open} | strain p50 ${(p50 * 100).toFixed(1)}% p99 ${(p99 * 100).toFixed(1)}%, p98 ${(r98 * 100).toFixed(0)}% of safe`);
   if (!ok || process.env.V) console.log(`     worst ${(st[wi] * 100).toFixed(0)}% on ${pan.piece.name}${pan.mirror ? ' (L)' : ''} at pattern (${uvw.x.toFixed(1)}, ${uvw.y.toFixed(1)}) world y ${sim.pos[wi * 3 + 1].toFixed(1)}`);
@@ -504,6 +505,115 @@ if (!only || only === 'height') {
     const ok = folds <= 5 && inNeck === 0 && (top ? mx > fb.neckH - 1 && mx < fb.neckH + 10 && rise < 4 : mx > fb.waistH - 6 && mx < fb.waistH + 3);
     verdict(ok, `${g.padEnd(10)} at 173 cm: ${folds} folds on the body pieces, top at ${mx.toFixed(1)} (neck ${fb.neckH.toFixed(1)}, waist ${fb.waistH.toFixed(1)})${top ? `, collar rose ${rise.toFixed(1)} cm while sewn, ${inNeck} of ${nb} collar points in the neck` : ''}`);
   }
+}
+
+// ---- fabric thickness: a lining or stacked patches add weight, thickness and stiffness (src/data/stack.ts) ----
+if (!only || only === 'thick') {
+  console.log('\n== thickness and layer stacks ==');
+  type P3 = Garment3D['panels'][number];
+  const X = (G: Garment3D, i: number) => [G.sim.pos[i * 3], G.sim.pos[i * 3 + 1], G.sim.pos[i * 3 + 2]];
+  const body = (G: Garment3D) => G.panels.filter((p) => !p.attach && (p.piece.role === 'front' || p.piece.role === 'back'));
+  /** mean world height of the hem (the bottom 1.5 cm of the pattern) of the body panels */
+  const hemY = (G: Garment3D) => {
+    let s2 = 0, n = 0;
+    for (const P of body(G)) {
+      const maxY = Math.max(...P.mesh.uv.map((q) => q.y));
+      P.mesh.uv.forEach((q, v) => { if (q.y > maxY - 1.5) { s2 += G.sim.pos[(P.offset + v) * 3 + 1]; n++; } });
+    }
+    return s2 / n;
+  };
+  /**
+   * folds of the body panels: across rows of the lower body, each point that stands out from its neighbours two
+   * points either side by over 2.5 mm is a fold crest (count); and the mean angle between neighbouring triangles away
+   * from the edges and seams (deg): fewer, larger folds read as fewer crests and a smoother surface
+   */
+  const folds = (G: Garment3D) => {
+    let crests = 0, sum = 0, n = 0;
+    for (const P of body(G)) {
+      const ys = P.mesh.uv.map((q) => q.y), y0 = Math.min(...ys), y1 = Math.max(...ys), sg = P.piece.role === 'front' ? 1 : -1;
+      for (let t = 0.45; t <= 0.951; t += 0.05) {
+        const yr = y0 + (y1 - y0) * t;
+        const row = P.mesh.uv.map((q, v) => ({ q, v })).filter((r) => Math.abs(r.q.y - yr) < 0.9).sort((a, b) => a.q.x - b.q.x);
+        const z = row.map((r) => sg * G.sim.pos[(P.offset + r.v) * 3 + 2]);
+        for (let i = 2; i < z.length - 2; i++) if (z[i] - (z[i - 2] + z[i + 2]) / 2 > 0.25 && z[i] >= z[i - 1] && z[i] >= z[i + 1]) crests++;
+      }
+      const { tris, uv, boundary } = P.mesh, nrm: number[][] = [], seen = new Map<string, number>();
+      const near = uv.map((q) => boundary.some((b) => (uv[b].x - q.x) ** 2 + (uv[b].y - q.y) ** 2 < 9));
+      for (let t = 0; t < tris.length; t += 3) {
+        const [a, b, c] = [tris[t], tris[t + 1], tris[t + 2]].map((v) => X(G, P.offset + v));
+        const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        const m = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], l = Math.hypot(m[0], m[1], m[2]) || 1;
+        nrm.push(m.map((x) => x / l));
+        for (let e = 0; e < 3; e++) {
+          const i = tris[t + e], j = tris[t + ((e + 1) % 3)];
+          if (near[i] || near[j]) continue;
+          const k = i < j ? `${i},${j}` : `${j},${i}`, o = seen.get(k);
+          if (o === undefined) { seen.set(k, t / 3); continue; }
+          const A = nrm[o], B = nrm[t / 3];
+          sum += (Math.acos(Math.max(-1, Math.min(1, A[0] * B[0] + A[1] * B[1] + A[2] * B[2]))) * 180) / Math.PI; n++;
+        }
+      }
+    }
+    return { crests, mean: sum / n };
+  };
+  /** share of body panel points resting on the skin */
+  const onSkin = (G: Garment3D) => {
+    const copy = Float32Array.from(G.sim.pos), out = { nx: 0, ny: 0, nz: 0, depth: 0 };
+    let hit = 0, n = 0;
+    for (const P of body(G)) for (let v = 0; v < P.mesh.uv.length; v++) { n++; if (collider.project(copy, (P.offset + v) * 3, out)) hit++; }
+    return hit / n;
+  };
+  /** out of plane spread of points (cm rms about their mean plane): low = flat and stiff, high = sagging or buckled */
+  const spread = (G: Garment3D, idx: number[]) => {
+    const c = [0, 1, 2].map((k) => idx.reduce((s2, i) => s2 + G.sim.pos[i * 3 + k], 0) / idx.length);
+    // the plane's normal: the smallest spread direction, by power iteration on the inverse is overkill; use the
+    // normal of the best of three axis aligned cross products of the covariance
+    const C = [0, 1, 2].map((a) => [0, 1, 2].map((b) => idx.reduce((s2, i) => s2 + (G.sim.pos[i * 3 + a] - c[a]) * (G.sim.pos[i * 3 + b] - c[b]), 0) / idx.length));
+    const cr = (u: number[], w: number[]) => [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+    const cands = [cr(C[0], C[1]), cr(C[1], C[2]), cr(C[0], C[2])];
+    const nv = cands.reduce((b, q) => (Math.hypot(...q) > Math.hypot(...b) ? q : b)), l = Math.hypot(...nv) || 1;
+    return Math.sqrt(idx.reduce((s2, i) => s2 + (((G.sim.pos[i * 3] - c[0]) * nv[0] + (G.sim.pos[i * 3 + 1] - c[1]) * nv[1] + (G.sim.pos[i * 3 + 2] - c[2]) * nv[2]) / l) ** 2, 0) / idx.length);
+  };
+  const pieces = makePreset('basic-tee', DEFAULT_BODY);
+  const front = pieces.find((p) => p.role === 'front')!;
+  const lined = (id: string) => Object.fromEntries(pieces.map((p) => [p.id, { id, color: 0 }]));
+  const plain = drape('basic-tee', pieces, E({}), 'tee');
+  const lea = drape('basic-tee', pieces, E({ insideFabric: lined('leather') }), 'tee+leather');
+  // a linen lining barely stretches (2%): the knit tee now strains past what linen takes (the Stretch-Risk-O-Meter shows it)
+  const lin = drape('basic-tee', pieces, E({ insideFabric: lined('linen') }), 'tee+linen', 4);
+  const [h0, h1, h2] = [plain, lea, lin].map((d) => hemY(d.G));
+  const [f0, f1, f2] = [plain, lea, lin].map((d) => folds(d.G));
+  const [k0, k1, k2] = [plain, lea, lin].map((d) => onSkin(d.G));
+  const report = (n: string, h: number, fo: { crests: number; mean: number }, k: number) => `${n} hem y ${h.toFixed(1)}, ${fo.crests} fold crests, ${fo.mean.toFixed(2)} deg between triangles, ${(k * 100).toFixed(0)}% on skin`;
+  console.log(`     ${report('plain', h0, f0, k0)} | ${report('leather', h1, f1, k1)} | ${report('linen', h2, f2, k2)}`);
+  verdict(lea.ok && !!lea.G.thick && lea.G.panelThickness![lea.G.panels.findIndex((p) => p.piece.id === front.id)] > 0.16, 'leather lined tee: thicker stack keeps off the body (1.7 mm)');
+  // the stiff stack stands a little off the body (it bridges instead of clinging), so the hem may sit up to 1 cm higher
+  verdict(lea.ok && h1 <= h0 + 1, `leather lined tee: hem ${h1.toFixed(1)} vs ${h0.toFixed(1)} cm (about the same; it hangs off the shoulders, not the skin: ${(k1 * 100).toFixed(0)}% vs ${(k0 * 100).toFixed(0)}% on skin)`);
+  verdict(lea.ok && f1.crests < f0.crests * 0.8 && f1.mean < f0.mean, `leather lined tee: fewer, larger folds (${f1.crests} vs ${f0.crests} crests, ${f1.mean.toFixed(2)} vs ${f0.mean.toFixed(2)} deg)`);
+  verdict(lin.ok && Math.abs(h2 - h0) < 1.5 && k2 <= k0, `linen lined tee: light (340 vs 1080 g/m2), hem close to plain (${h2.toFixed(1)} vs ${h0.toFixed(1)}), crisp (${f2.crests} crests)`);
+  // unlined garments are untouched: no extra thickness anywhere
+  verdict(!plain.G.thick && plain.G.panelThickness!.every((t, i) => Math.abs(t - fabricThickness(plain.G.panels[i].piece.fabric.id) / 10) < 1e-6), 'plain tee: single ply everywhere, no extra thickness');
+
+  // a pocket with a leather lining is stiffer: it sags and buckles less than the same pocket unlined
+  const pk = (lining?: { id: string; color: number }): Attachment => ({ id: 'pk', kind: 'pocket', name: 'Pocket', pieceId: front.id, x: 11, y: 27, rotation: 0, w: 12, h: 13, outline: 'rect', layers: [], fabric: { id: 'jersey', color: 0 }, ...(lining ? { lining } : {}) });
+  const pp = drape('basic-tee', pieces, E({ attachments: [pk()] }), 'tee+pocket');
+  const pl = drape('basic-tee', pieces, E({ attachments: [pk({ id: 'leather', color: 0 })] }), 'tee+lined pkt');
+  const pts = (G: Garment3D) => G.panels.filter((p) => p.attach?.id === 'pk').flatMap((P) => P.mesh.uv.map((_, v) => P.offset + v));
+  const bcOf = (G: Garment3D) => { const P = G.panels.find((p) => p.attach?.id === 'pk')!; let m = Infinity; for (let c = G.sim.nStretch; c < G.sim.ca.length; c++) if (G.sim.ca[c] >= P.offset && G.sim.ca[c] < P.offset + P.mesh.uv.length && G.sim.cb[c] >= P.offset && G.sim.cb[c] < P.offset + P.mesh.uv.length && G.sim.comp[c] > 0) m = Math.min(m, G.sim.comp[c]); return m; };
+  const [s0, s1] = [pp, pl].map((d) => spread(d.G, pts(d.G)));
+  const [o0, o1] = [pp, pl].map((d) => staysOn(d.G, 'pk'));
+  verdict(pp.ok && pl.ok && bcOf(pl.G) < bcOf(pp.G) / 10 && s1 <= s0 + 0.05 && o1.worst < 2.5, `leather lined pocket stiffer: bend compliance ${bcOf(pl.G).toExponential(1)} vs ${bcOf(pp.G).toExponential(1)}, out of plane ${s1.toFixed(2)} vs ${s0.toFixed(2)} cm, stays on (worst ${o1.worst.toFixed(2)} cm)`);
+
+  // three patches stacked like layered emblems: thicker and stiffer where they overlap than one patch
+  const patch = (id: string, w: number): Attachment => ({ id, kind: 'patch', name: id, pieceId: front.id, x: 10, y: 26, rotation: 0, w, h: w, outline: 'rounded', layers: [], fabric: { id: 'canvas', color: 0 } });
+  const one = drape('basic-tee', pieces, E({ attachments: [patch('p1', 10)] }), 'tee+1 patch');
+  const three = drape('basic-tee', pieces, E({ attachments: [patch('p1', 10), patch('p2', 8), patch('p3', 6)] }), 'tee+3 patches');
+  const hostPts = (G: Garment3D) => { const H = G.panels.find((p) => p.piece.id === front.id && !p.attach)!; return H.mesh.uv.flatMap((q, v) => (Math.hypot(q.x - 10, q.y - 26) < 3.5 ? [H.offset + v] : [])); };
+  const [r1, r3] = [one, three].map((d) => spread(d.G, hostPts(d.G)));
+  const top = staysOn(three.G, 'p3'), single = staysOn(one.G, 'p1');
+  const gaps = (G: Garment3D) => { const s3 = G.sim.layerW!; const g: number[] = []; for (let i = 3; i < s3.length; i += 5) g.push(s3[i]); return g; };
+  const g3 = Math.max(...gaps(three.G)), g1 = Math.max(...gaps(one.G));
+  verdict(one.ok && three.ok && g3 > g1 + 0.1 && r3 <= r1 + 0.05 && top.worst < 2.5, `3 stacked patches: top layer ${g3.toFixed(2)} cm off the host vs ${g1.toFixed(2)}, host under them out of plane ${r3.toFixed(2)} vs ${r1.toFixed(2)} cm, top patch stays on (avg ${top.avg.toFixed(2)} vs ${single.avg.toFixed(2)} cm)`);
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall drape checks passed');

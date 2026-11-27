@@ -336,10 +336,10 @@ export async function buildTechPack(p: Project, units: Units, snapshot: string |
     { t: r.faceLabel, bold: true },
     `${r.fabric}\n${r.category}\n${r.composition}`,
     col(r),
-    String(r.gsm),
+    `${r.gsm}\n${r.thickness} mm`,
     r.pattern ? `${r.pattern}\nRepeat ${r.repeat}\n${r.construction === 'woven' ? 'Woven in' : 'Printed'}, colourway ${r.colourway}` : 'Plain, no pattern',
     r.finish,
-    `${r.where.join(', ')}${r.face === 'outside' && r.insideToo.length ? `\nInside face is the same cloth on: ${r.insideToo.join(', ')}` : ''}`,
+    `${r.where.join(', ')}${r.face === 'outside' && r.insideToo.length ? `\nInside face is the same cloth on: ${r.insideToo.join(', ')}` : ''}${r.stacks.length ? `\nLayers: ${r.stacks.join('; ')}` : ''}`,
     `${r.metres.toFixed(2)} m\n${(r.kg).toFixed(2)} kg`,
   ]), { title: 'Fabrics: outside and inside faces' });
   const totalM = bom.reduce((s, r) => s + r.metres, 0);
