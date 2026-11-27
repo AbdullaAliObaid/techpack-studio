@@ -12,6 +12,7 @@ import { useCssVars } from './theme';
 import Icon from './Icon';
 import { PaneTitle } from './controls';
 import { CATALOG, migrateGarment } from '../data/catalog';
+import { imageFileOf, openPhoto } from './editHelpers';
 
 const Tgl = ({ on, icon, label, onChange }: { on: boolean; icon: string; label: string; onChange: (v: boolean) => void }) => (
   <button className={`tgl ${on ? 'on' : ''}`} aria-pressed={on} title={`${on ? 'Hide' : 'Show'} ${label.toLowerCase()}`} onClick={() => onChange(!on)}>
@@ -37,7 +38,11 @@ export default function Viewport3D() {
         <button className={stretch ? 'on' : ''} aria-pressed={stretch} onClick={() => set({ view3d: 'stretch' })}>Stretch-Risk-O-Meter</button>
       </div>
     </PaneTitle>
-    <div className="viewport">
+    <div
+      className="viewport"
+      onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }}
+      onDrop={(e) => { const f = imageFileOf(e.dataTransfer.files); if (f) { e.preventDefault(); openPhoto(f); } }}
+    >
       <Canvas shadows dpr={[1, 2]} gl={{ preserveDrawingBuffer: true }} camera={{ position: [-H * 0.18, H * 0.6, H * 2.3], fov: 32, near: 1, far: 5000 }}>
         <color attach="background" args={[tv['--viewport'] || '#f2f2f7']} />
         <StudioLight />

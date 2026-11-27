@@ -51,7 +51,7 @@ export default function PosePanel() {
         {!posing && <p className="group-note">Choose Pose, or move any slider below, to pose the body yourself. The garment drapes to the pose.</p>}
       </Disclosure>
 
-      <Disclosure id="body-joints" title="Pose by hand" icon="joints" defaultOpen={false}>
+      <Disclosure id="body-joints" title="Pose by hand" icon="joints">
         <Row label="Mirror left and right"><Switch label="Mirror left and right" on={symmetricPose} onChange={(v) => {
           set({ symmetricPose: v });
           if (v) for (const k of [...ARM, ...LEG]) setPoseAngle(1, k, customPose.s[0][k]); // copy the left side over
@@ -60,12 +60,12 @@ export default function PosePanel() {
       </Disclosure>
 
       {GROUPS.map((g) => (
-        <Disclosure key={g.title} id={`body-${g.title.replace(' ', '-').toLowerCase()}`} title={g.title} icon={g.icon} defaultOpen={false}>
+        <Disclosure key={g.title} id={`body-${g.title.replace(' ', '-').toLowerCase()}`} title={g.title} icon={g.icon}>
           {g.keys.map((k) => slider(g.side, k, customPose.s[g.side][k], g.title.replace(' ', '-')))}
         </Disclosure>
       ))}
 
-      <Disclosure id="body-trunk" title="Body and head" icon="body" defaultOpen={false}>
+      <Disclosure id="body-trunk" title="Body and head" icon="body">
         {slider(null, 'spineBend', customPose.spineBend, 'body')}
         {slider(null, 'spineTwist', customPose.spineTwist, 'body')}
         {slider(null, 'headTurn', customPose.headTurn, 'body')}

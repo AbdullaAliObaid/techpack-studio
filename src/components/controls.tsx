@@ -96,15 +96,15 @@ export function LenInput({ value, onChange, label, min, max, units, step }: { va
 }
 
 /**
- * Collapsible inspector section: icon, title, optional count, chevron. Open or closed is remembered on this device.
- * `open` (when given) forces it open, for example while a tool needs the controls.
+ * Collapsible section: icon, title, optional count, chevron.
+ * Every section starts closed. It opens only when the user presses its arrow, and that choice is remembered for this
+ * session only. Nothing opens a section for the user: picking an option inside one never expands another.
  */
-export function Disclosure({ id, title, icon, count, defaultOpen = true, open: force, action, children }: {
-  id: string; title: string; icon: string; count?: number; defaultOpen?: boolean; open?: boolean; action?: ReactNode; children: ReactNode;
+export function Disclosure({ id, title, icon, count, action, children }: {
+  id: string; title: string; icon: string; count?: number; action?: ReactNode; children: ReactNode;
 }) {
-  const stored = useStore((s) => s.sections[id]);
+  const open = useStore((s) => !!s.sections[id]);
   const setSection = useStore((s) => s.setSection);
-  const open = force || (stored ?? defaultOpen);
   return (
     <section className={`dsc ${open ? 'open' : ''}`}>
       <div className="dsc-head">

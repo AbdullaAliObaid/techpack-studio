@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { makePreset, GARMENT_LABEL, type Piece } from './data/presets';
+import { makePreset, GARMENT_LABEL, type Piece, type PieceFabric } from './data/presets';
 import { migrateGarment, type StyleId } from './data/catalog';
 import { DEFAULT_BODY, type Body } from './three/body';
 import { draft, regradePoints, type Fit } from './data/draft';
@@ -58,10 +58,6 @@ export interface PieceFlow {
   picking: boolean;
 }
 
-const SECTION_KEY = 'tech-it-sections';
-export function readSections(): Record<string, boolean> {
-  try { return JSON.parse(localStorage.getItem(SECTION_KEY) ?? '{}') as Record<string, boolean>; } catch { return {}; }
-}
 
 /** Seam being joined by hand: a range on one piece, then a range on another (point ids on the outline). */
 export interface SeamDraft { a: Partial<EdgeRef> | null; b: Partial<EdgeRef> | null; flip: boolean }
@@ -97,6 +93,11 @@ interface State {
   units: Units;
   tool: Tool;
   symmetry: boolean;
+  /** Total symmetry: mating pieces (all four jeans leg pieces, front and back, both sleeves) move together */
+  totalSymmetry: boolean;
+  setTotalSymmetry: (on: boolean) => void;
+  /** the points that move together with the one being dragged (highlighted on the chart) */
+  linkedHot: { pieceId: string; pointId: string }[];
   showMeasure: boolean;
   showStitch: boolean;
   selPiece: string | null;
@@ -134,7 +135,8 @@ interface State {
   selInstance: number | null;
   pieceFlow: PieceFlow | null;
   setFlow: (patch: Partial<PieceFlow>) => void;
-  /** open or closed state of inspector sections, remembered on this device */
+  /** Open sections. Everything starts closed; only what the user opens is remembered, for this session only
+   *  (never stored on the device, cleared when a project is created or opened). */
   sections: Record<string, boolean>;
   setSection: (id: string, open: boolean) => void;
   /** inspector as a slide over drawer on narrow screens */
@@ -150,7 +152,10 @@ interface State {
   designSize: { w: number; h: number };
   /** face new designs go on, and the face the chart shows */
   designFace: Face;
+  /** the face the user asked for (the fabric coin) */
   viewFace: Face;
+  /** the face the chart is drawing right now: follows viewFace halfway through the flip animation */
+  chartFace: Face;
   coachDone: boolean;
   openDesign: (tab?: 'add' | 'edit', face?: Face) => void;
   dismissCoach: () => void;
@@ -166,6 +171,8 @@ interface State {
   deletePoint: (pieceId: string, pointId: string) => void;
   toggleSmooth: (pieceId: string, pointId: string) => void;
   setFabric: (fabricId: string, color: number) => void;
+  /** fabric, colour (palette index or custom hex) and pattern on the selected piece, or the whole garment */
+  applyFabric: (spec: PieceFabric) => void;
   setBody: (key: keyof Body, v: number | undefined) => void;
   resetBody: () => void;
   setLink: (on: boolean) => void;
@@ -268,6 +275,9 @@ export const useStore = create<State>((set, get) => {
     units: 'cm',
     tool: 'select',
     symmetry: true,
+    totalSymmetry: false,
+    setTotalSymmetry: (on) => set({ totalSymmetry: on, linkedHot: [] }),
+    linkedHot: [],
     showMeasure: false,
     showStitch: true,
     selPiece: null,
@@ -303,6 +313,7 @@ export const useStore = create<State>((set, get) => {
     designSize: readDesignSize(),
     designFace: 'outside',
     viewFace: 'outside',
+    chartFace: 'outside',
     coachDone: readCoach(),
     openDesign: (tab = 'add', face) => set((s) => ({ designOpen: true, designCollapsed: false, designTab: tab, ...(face ? { designFace: face, viewFace: face } : {}), coachDone: true })),
     dismissCoach: () => { try { localStorage.setItem(COACH_KEY, '1'); } catch { /* storage blocked */ } set({ coachDone: true }); },
@@ -310,12 +321,8 @@ export const useStore = create<State>((set, get) => {
     selInstance: null,
     pieceFlow: null,
     setFlow: (patch) => set((s) => (s.pieceFlow ? { pieceFlow: { ...s.pieceFlow, ...patch } } : {})),
-    sections: readSections(),
-    setSection: (id, open) => set((s) => {
-      const sections = { ...s.sections, [id]: open };
-      try { localStorage.setItem(SECTION_KEY, JSON.stringify(sections)); } catch { /* storage blocked */ }
-      return { sections };
-    }),
+    sections: {},
+    setSection: (id, open) => set((s) => ({ sections: { ...s.sections, [id]: open } })),
     drawer: false,
 
     set: (s) => set(s),
@@ -336,7 +343,7 @@ export const useStore = create<State>((set, get) => {
       restore(future[0]);
     },
 
-    select: (piece, point = null) => set({ selPiece: piece, selPoint: point, ...(piece === null ? { selInstance: null } : {}) }),
+    select: (piece, point = null) => set({ selPiece: piece, selPoint: point, ...(piece === null ? { selInstance: null, fabricScope: 'all' } : {}) }),
 
     movePoint: (pieceId, pointId, x, y) => {
       const { symmetry, project } = get();
@@ -423,10 +430,14 @@ export const useStore = create<State>((set, get) => {
       );
     },
 
-    setFabric: (fabricId, color) => {
+    setFabric: (fabricId, color) => get().applyFabric({ id: fabricId, color }),
+    applyFabric: (spec) => {
       const { fabricScope, selPiece, project } = get();
+      // "this piece" only counts while a piece is selected: after a click on empty chart the controls fall back to
+      // the whole garment, and so does this (it used to stay on "piece" and silently change nothing)
+      const one = fabricScope === 'piece' && !!selPiece && project.pieces.some((p) => p.id === selPiece);
       get().commit();
-      setPieces(project.pieces.map((p) => (fabricScope === 'all' || p.id === selPiece ? { ...p, fabric: { id: fabricId, color } } : p)));
+      setPieces(project.pieces.map((p) => (!one || p.id === selPiece ? { ...p, fabric: { ...spec } } : p)));
     },
 
     setBody: (key, v) =>
@@ -459,7 +470,7 @@ export const useStore = create<State>((set, get) => {
         const body = { ...(sex === 'female' ? FEMALE_BODY : MALE_BODY) };
         let project = freshProject(style, name.trim() || undefined, body);
         if (fit !== 'regular') project = { ...project, fit, pieces: regrade(project, body, body, 'regular', fit) };
-        return { project, past: [], future: [], selPiece: null, selPoint: null, selAttachment: null, fitToken: s.fitToken + 1, tool: 'select' };
+        return { project, past: [], future: [], selPiece: null, selPoint: null, selAttachment: null, fitToken: s.fitToken + 1, tool: 'select', sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' };
       }),
     restyle: (id) =>
       set((s) => {
@@ -469,9 +480,9 @@ export const useStore = create<State>((set, get) => {
         if (fit !== 'regular') project = { ...project, fit, pieces: regrade(project, old.body, old.body, 'regular', fit) };
         return { project, past: [], future: [], selPiece: null, selPoint: null, selAttachment: null, fitToken: s.fitToken + 1, tool: 'select' };
       }),
-    newProject: (id) => set((s) => ({ project: freshProject(id, undefined, s.project.body), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
+    newProject: (id) => set((s) => ({ project: freshProject(id, undefined, s.project.body), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1, sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' })),
     // older saves stored 'jacket' | 'shirt' | 'pants'; map them onto catalog styles
-    loadProject: (p) => set((s) => ({ project: withCollar({ ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1 })),
+    loadProject: (p) => set((s) => ({ project: withCollar({ ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1, sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' })),
     rename: (name) => set((s) => ({ project: { ...s.project, name, updatedAt: Date.now() } })),
 
     // ---- edits ----

@@ -19,8 +19,8 @@ type Drag = { kind: 'move'; id: string; dx: number; dy: number } | { kind: 'scal
  * Layer editor. By default it edits the attachment's own layers; pass `layers` and `onLayers` to edit another list of
  * layers (trim engraving, zipper puller artwork) and `fill` for the colour behind them.
  */
-export default function EmblemEditor({ att: attIn, layers: layersProp, onLayers, fill, sectionId = 'design-layers', title = 'Artwork layers', defaultOpen = false }: {
-  att: Attachment; layers?: ShapeLayer[]; onLayers?: (l: ShapeLayer[]) => void; fill?: string; sectionId?: string; title?: string; defaultOpen?: boolean;
+export default function EmblemEditor({ att: attIn, layers: layersProp, onLayers, fill, sectionId = 'design-layers', title = 'Artwork layers' }: {
+  att: Attachment; layers?: ShapeLayer[]; onLayers?: (l: ShapeLayer[]) => void; fill?: string; sectionId?: string; title?: string;
 }) {
   const layers = layersProp ?? attIn.layers;
   const att = layersProp ? { ...attIn, layers } : attIn;
@@ -61,7 +61,7 @@ export default function EmblemEditor({ att: attIn, layers: layersProp, onLayers,
   };
 
   return (
-    <Disclosure id={sectionId} title={title} icon="layers" count={layers.length} defaultOpen={defaultOpen}>
+    <Disclosure id={sectionId} title={title} icon="layers" count={layers.length}>
         <Preview att={att} sel={sel} onPatch={patch} onSelect={(id) => set({ selLayer: id })} lock={lock} fabricHex={fill ?? fabricHex(att, project.pieces.find((p) => p.id === att.pieceId)?.fabric)} />
         <div className="group-note" style={{ padding: '6px 0 0' }}>Drag a layer to move it. Use the corner handle to resize and the top handle to turn it.</div>
         <div className="row wrap">
@@ -90,9 +90,9 @@ export default function EmblemEditor({ att: attIn, layers: layersProp, onLayers,
               <li key={l.id} className={`layer-row ${l.id === selLayer ? 'on' : ''}`}>
                 <button className="layer-main" aria-pressed={l.id === selLayer} onClick={() => set({ selLayer: l.id })}>
                   <svg viewBox="-0.6 -0.6 1.2 1.2" className="layer-thumb" aria-hidden="true" style={{ opacity: hidden ? 0.35 : 1 }}>
-                    {l.shape === 'text' ? <text x="0" y="0" fontSize="0.8" textAnchor="middle" dominantBaseline="central" fill={l.color} fontWeight="700">Aa</text> : <path d={SHAPES[l.shape].d} fill={l.color} stroke="var(--separator)" strokeWidth="0.03" fillRule="evenodd" />}
+                    {l.shape === 'text' ? <text x="0" y="0" fontSize="0.8" textAnchor="middle" dominantBaseline="central" fill={l.color} fontWeight="700">Aa</text> : l.shape === 'image' && l.image ? <image href={l.image} x="-0.5" y="-0.5" width="1" height="1" preserveAspectRatio="none" /> : <path d={l.shape === 'path' ? l.path ?? '' : SHAPES[l.shape].d} fill={l.color} stroke="var(--separator)" strokeWidth="0.03" fillRule="evenodd" />}
                   </svg>
-                  <span className={hidden ? 'dim' : ''}>{l.shape === 'text' ? `Text "${l.text ?? ''}"` : SHAPES[l.shape].name}</span>
+                  <span className={hidden ? 'dim' : ''}>{l.shape === 'text' ? `Text "${l.text ?? ''}"` : l.shape === 'path' ? 'Traced colour' : SHAPES[l.shape].name}</span>
                 </button>
                 <button className="icon-btn sm" aria-label={hidden ? 'Show layer' : 'Hide layer'} title={hidden ? 'Show layer' : 'Hide layer'} onClick={() => toggleHidden(l)}><Icon name={hidden ? 'eyeoff' : 'eye'} size={16} /></button>
                 <button className="icon-btn sm" aria-label="Move layer up" title="Bring forward" disabled={layers[layers.length - 1].id === l.id} onClick={() => move(l.id, 1)}><Icon name="up" size={16} /></button>

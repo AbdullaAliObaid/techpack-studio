@@ -82,9 +82,41 @@ export default function ConstructionPanel() {
         <div className="callout-box" role="status"><Icon name="check" size={16} /><span>{seamHint}</span></div>
       )}
 
+      {joining && (
+        <section className="tool-card" aria-label="Joining seams">
+          <h3>Join seams</h3>
+          <p className="step-hint" role="status">{step}</p>
+          <div className="range-rows">
+            <RangeRow tag="A" colorClass="a" r={seamDraft.a} name={refName(seamDraft.a)} length={la} units={units} />
+            <RangeRow tag="B" colorClass="b" r={seamDraft.b} name={refName(seamDraft.b)} length={lb} units={units} />
+          </div>
+          {ready && (
+            <>
+              <div className={`diff ${Math.abs(diff) < 0.2 ? 'ok' : ''}`}>
+                {Math.abs(diff) < 0.2 ? 'Same length. They match.' : `Difference ${fmt(Math.abs(diff), units)}. ${diff > 0 ? 'A is longer, so B stretches or A is eased.' : 'B is longer, so A stretches or B is eased.'}`}
+              </div>
+              <Row label="Flip direction of B"><Switch label="Flip direction of B" on={seamDraft.flip} onChange={(v) => set({ seamDraft: { ...seamDraft, flip: v } })} /></Row>
+            </>
+          )}
+          <div className="row wrap">
+            <button className="btn primary" disabled={!ready} onClick={confirm}><Icon name="check" size={16} /> Confirm</button>
+            <button className="btn" onClick={() => set({ seamDraft: EMPTY_SEAM_DRAFT })}>Start over</button>
+            <button className="btn ghost" onClick={() => useStore.getState().cancelTools()}>Done</button>
+          </div>
+        </section>
+      )}
+      {tool === 'pleat' && (
+        <section className="tool-card" aria-label="Adding pleats">
+          <h3>Add pleats</h3>
+          <p className="step-hint" role="status">Click an edge of a piece to place a pleat there. It goes on the side you click.</p>
+          <button className="btn block" onClick={() => useStore.getState().cancelTools()}>Done</button>
+        </section>
+      )}
+      {tool === 'pen' && <PenCard />}
+
       <PiecesSection />
 
-      <Disclosure id="con-seams" title="Seams" icon="seams" count={rows.length} defaultOpen={false}>
+      <Disclosure id="con-seams" title="Seams" icon="seams" count={rows.length}>
         {seams.length === 0 && <div className="group-note">This garment has no seam list yet. Custom seams still work.</div>}
         <ul className="seam-list">
           {rows.map((s) => {
@@ -101,34 +133,9 @@ export default function ConstructionPanel() {
         <p className="fit-note">Turn a seam off to leave that edge open. The 3D garment follows.</p>
       </Disclosure>
 
-      <Disclosure id="con-join" title="Join seams" icon="seams" count={edits?.customSeams.length ?? 0} open={joining}>
-        {!joining ? (
-          <>
-            <p className="group-note">Sew any stretch of one piece to a stretch of another. Each pick belongs to the side of the piece you click.</p>
-            <button className="btn block" onClick={() => set({ tool: 'seams', seamDraft: EMPTY_SEAM_DRAFT })}><Icon name="seams" size={16} /> Start joining</button>
-          </>
-        ) : (
-          <>
-            <p className="step-hint" role="status">{step}</p>
-            <div className="range-rows">
-              <RangeRow tag="A" colorClass="a" r={seamDraft.a} name={refName(seamDraft.a)} length={la} units={units} />
-              <RangeRow tag="B" colorClass="b" r={seamDraft.b} name={refName(seamDraft.b)} length={lb} units={units} />
-            </div>
-            {ready && (
-              <>
-                <div className={`diff ${Math.abs(diff) < 0.2 ? 'ok' : ''}`}>
-                  {Math.abs(diff) < 0.2 ? 'Same length. They match.' : `Difference ${fmt(Math.abs(diff), units)}. ${diff > 0 ? 'A is longer, so B stretches or A is eased.' : 'B is longer, so A stretches or B is eased.'}`}
-                </div>
-                <Row label="Flip direction of B"><Switch label="Flip direction of B" on={seamDraft.flip} onChange={(v) => set({ seamDraft: { ...seamDraft, flip: v } })} /></Row>
-              </>
-            )}
-            <div className="row wrap">
-              <button className="btn primary" disabled={!ready} onClick={confirm}><Icon name="check" size={16} /> Confirm</button>
-              <button className="btn" onClick={() => set({ seamDraft: EMPTY_SEAM_DRAFT })}>Start over</button>
-              <button className="btn ghost" onClick={() => useStore.getState().cancelTools()}>Done</button>
-            </div>
-          </>
-        )}
+      <Disclosure id="con-join" title="Join seams" icon="seams" count={edits?.customSeams.length ?? 0}>
+        <p className="group-note">Sew any stretch of one piece to a stretch of another. Each pick belongs to the side of the piece you click.</p>
+        <button className="btn block" disabled={joining} onClick={() => set({ tool: 'seams', seamDraft: EMPTY_SEAM_DRAFT })}><Icon name="seams" size={16} /> {joining ? 'Joining, see the card above' : 'Start joining'}</button>
         {!!edits?.customSeams.length && (
           <>
             <div className="sublabel">Your seams</div>
@@ -179,15 +186,8 @@ function PleatSection() {
   };
   const instOf = (x: object) => (x as { instance?: number }).instance;
   return (
-    <Disclosure id="con-pleats" title="Pleats" icon="pleat" count={pleats.length} defaultOpen={false} open={tool === 'pleat'}>
-      {tool !== 'pleat' ? (
-        <button className="btn block" onClick={() => set({ tool: 'pleat' })}><Icon name="pleat" size={16} /> Add a pleat</button>
-      ) : (
-        <>
-          <p className="step-hint" role="status">Click an edge of a piece to place a pleat there. It goes on the side you click.</p>
-          <button className="btn block" onClick={() => useStore.getState().cancelTools()}>Done</button>
-        </>
-      )}
+    <Disclosure id="con-pleats" title="Pleats" icon="pleat" count={pleats.length}>
+      <button className="btn block" disabled={tool === 'pleat'} onClick={() => set({ tool: 'pleat' })}><Icon name="pleat" size={16} /> {tool === 'pleat' ? 'Adding pleats, see the card above' : 'Add a pleat'}</button>
       {pleats.length > 0 && (
         <ul className="seam-list" style={{ marginTop: 8 }}>
           {pleats.map((p, i) => (
@@ -219,24 +219,13 @@ function PleatSection() {
 }
 
 function PiecesSection() {
-  const { project, selPiece, set, removePiece, updatePiece, tool, penDraft, penSnap } = useStore();
+  const { project, selPiece, set, removePiece, updatePiece } = useStore();
   const custom = project.pieces.filter((p) => p.role === 'custom');
   const sel = custom.find((p) => p.id === selPiece);
   const hosts = project.pieces.filter((q) => q.role !== 'custom');
   return (
-    <Disclosure id="con-pieces" title="Your pieces" icon="pattern" count={custom.length} open={tool === 'pen'}
+    <Disclosure id="con-pieces" title="Your pieces" icon="pattern" count={custom.length}
       action={<button className="btn small primary" onClick={() => openPieceFlow()}><Icon name="plus" size={14} /> New piece</button>}>
-      {tool === 'pen' && (
-        <div className="pen-block">
-          <p className="step-hint" role="status">{penDraft.length < 3 ? 'Click on the chart to add corners. Drag a little to make a point curved.' : 'Click the first point, or press Close shape, to finish.'}</p>
-          <Row label="Snap to grid"><Switch label="Snap to grid" on={penSnap} onChange={(v) => set({ penSnap: v })} /></Row>
-          <div className="row wrap">
-            <button className="btn" disabled={penDraft.length === 0} onClick={() => set({ penDraft: penDraft.slice(0, -1) })}>Undo point</button>
-            <button className="btn primary" disabled={penDraft.length < 3} onClick={() => openPieceFlow(penDraft)}><Icon name="check" size={16} /> Close shape</button>
-            <button className="btn ghost" onClick={() => useStore.getState().cancelTools()}>Cancel</button>
-          </div>
-        </div>
-      )}
       {custom.length === 0 && <div className="group-note">Pockets, panels and straps you draw or start from a template show up here. Press New piece to begin.</div>}
       <ul className="seam-list">
         {custom.map((p) => (
@@ -279,5 +268,22 @@ function PiecesSection() {
         </div>
       )}
     </Disclosure>
+  );
+}
+
+/** The pen tool's controls: a card above the sections so nothing has to be opened. */
+function PenCard() {
+  const { set, penDraft, penSnap } = useStore();
+  return (
+    <section className="tool-card" aria-label="Drawing a new piece">
+      <h3>Draw a piece</h3>
+      <p className="step-hint" role="status">{penDraft.length < 3 ? 'Click on the chart to add corners. Drag a little to make a point curved.' : 'Click the first point, or press Close shape, to finish.'}</p>
+      <Row label="Snap to grid"><Switch label="Snap to grid" on={penSnap} onChange={(v) => set({ penSnap: v })} /></Row>
+      <div className="row wrap">
+        <button className="btn" disabled={penDraft.length === 0} onClick={() => set({ penDraft: penDraft.slice(0, -1) })}>Undo point</button>
+        <button className="btn primary" disabled={penDraft.length < 3} onClick={() => openPieceFlow(penDraft)}><Icon name="check" size={16} /> Close shape</button>
+        <button className="btn ghost" onClick={() => useStore.getState().cancelTools()}>Cancel</button>
+      </div>
+    </section>
   );
 }

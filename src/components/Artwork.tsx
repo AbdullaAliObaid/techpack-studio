@@ -161,8 +161,10 @@ export function LayerShape({ l, pointer = true, ...rest }: { l: ShapeLayer; poin
         <text x={0} y={0} fontSize={l.h} textLength={l.w} lengthAdjust="spacingAndGlyphs" textAnchor="middle" dominantBaseline="central" fill={l.color} fontWeight={800} transform={`scale(${flip},1)`} style={{ fontFamily: 'var(--font)' }}>
           {l.text ?? ''}
         </text>
+      ) : l.shape === 'image' && l.image ? (
+        <image href={l.image} x={-0.5} y={-0.5} width={1} height={1} preserveAspectRatio="none" transform={`scale(${l.w * flip},${l.h})`} />
       ) : (
-        <path d={SHAPES[l.shape].d} transform={`scale(${l.w * flip},${l.h})`} fill={l.color} fillRule="evenodd" />
+        <path d={l.shape === 'path' ? l.path ?? '' : SHAPES[l.shape].d} transform={`scale(${l.w * flip},${l.h})`} fill={l.color} fillRule="evenodd" />
       )}
     </g>
   );
