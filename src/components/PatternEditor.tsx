@@ -11,6 +11,7 @@ import { fmt } from '../lib/units';
 import { pointInPoly } from '../lib/geometry';
 import { builtinSeams } from '../sim/seams';
 import type { Attachment, EdgeRef, Pleat } from '../data/edits';
+import { symmetryGroups } from '../data/symmetry';
 import { ArtworkGroup, isCloth, outlineD } from './Artwork';
 import { FabricDefs, InsideDecor, InsideLegend } from './ChartInside';
 import { canHostDesigns, fabricHex, imageFileOf, linkedPoints, openPhoto, pleatMarks, rootPiece, runD, runIndices, runMid, scaleAttachment, scaleLimits } from './editHelpers';
@@ -932,6 +933,7 @@ export default function PatternEditor() {
                 />
               );
             })}
+            <SymTint entries={entries} geos={geos} />
             <g ref={setLabelsEl} />
             <g ref={setTopEl} />
             {multiBox && <SelectionChip box={multiBox.box} count={multiBox.count} k={k} />}
@@ -967,6 +969,25 @@ const HUD: Record<string, string> = {
   note: 'Draw, add arrows or text notes on the chart. Notes print on the tech pack. Two fingers pan and zoom.',
   pen: 'Click to add corners. Drag for a curve. Click the first point to close. Backspace removes the last point. Escape cancels.',
 };
+
+/** Tool rail preview: tints the pieces Symmetry or Total symmetry would link, one colour per group. Changes nothing. */
+function SymTint({ entries, geos }: { entries: Entry[]; geos: Map<string, Geo> }) {
+  const mode = useStore((st) => st.symPreview);
+  const style = useStore((st) => st.project.garment);
+  const pieces = useStore((st) => st.project.pieces);
+  const groups = useMemo(() => (mode ? symmetryGroups(style, pieces, mode) : []), [mode, style, pieces]);
+  if (!mode || !groups.length) return null;
+  return (
+    <g pointerEvents="none" aria-hidden="true" data-sym-tint={mode}>
+      {entries.map((en) => {
+        const g = groups.find((q) => q.pieceIds.includes(en.src.id));
+        const geo = geos.get(en.key);
+        if (!g || !geo) return null;
+        return <path key={en.key} className="sym-tint" data-c={mode === 'total' ? 'total' : g.index % 6} transform={`translate(${en.piece.offset.x},${en.piece.offset.y})`} d={geo.d} vectorEffect="non-scaling-stroke" />;
+      })}
+    </g>
+  );
+}
 
 function PenPreview({ draft, hover, k, snap }: { draft: { x: number; y: number; smooth: boolean }[]; hover: Pt | null; k: number; snap: boolean }) {
   const px = (n: number) => n / k;

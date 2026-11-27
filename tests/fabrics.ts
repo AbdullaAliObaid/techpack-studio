@@ -213,6 +213,48 @@ const sameSeams = (style: StyleId, a: Piece[], b: Piece[], tol = 0.05) => {
     const sn = sameSeams(style, pieces, nk);
     pass(sn.ok, `${style}: neck widened at the shoulder -> back, collar or neckband follow${sn.bad.length ? ' (' + sn.bad.join(', ') + ')' : ''}`);
   }
+  // the other direction: edits on the sleeve, cuff, collar, neckband or waistband walk the body
+  for (const style of ['basic-tee', 'boxy-tee', 'polo', 'button-up', 'jacket'] as StyleId[]) {
+    const pieces = makePreset(style);
+    const sl = P(pieces, 'sleeve');
+    const drags: [string, string, number, number][] = [
+      ['sleeve cap up 1 cm', 'sleeve.0', 0, -1], ['sleeve cap 1 cm taller', 'sleeve.3', 0, 1], ['bicep out 1 cm', 'sleeve.3', 1, 0],
+    ];
+    for (const [what, key, dx, dy] of drags) {
+      const after = applyMoves(pieces, linkedMoves(style, pieces, sl.id, K(sl, key).id, dx, dy));
+      const sn = sameSeams(style, pieces, after, 0.1);
+      const armhole0 = len(P(pieces, 'front'), 'front.' + (3 + (style === 'polo' ? 2 : 0)), 'front.' + (5 + (style === 'polo' ? 2 : 0)));
+      const armhole1 = len(P(after, 'front'), 'front.' + (3 + (style === 'polo' ? 2 : 0)), 'front.' + (5 + (style === 'polo' ? 2 : 0)));
+      pass(sn.ok, `${style}: ${what} -> armhole re-walks (front ${armhole0.toFixed(2)} -> ${armhole1.toFixed(2)}), cap ease and every seam kept${sn.bad.length ? ' (' + sn.bad.join(', ') + ')' : ''}`);
+      pass(P(after, 'sleeve').points.every((q, i) => q.x === P(after, 'sleeve').points[i].x) && K(P(after, 'sleeve'), key).y === K(sl, key).y + dy, `${style}: ${what}, the sleeve keeps the point where it was dragged`);
+    }
+    if (style === 'button-up') {
+      const cf = P(pieces, 'cuff');
+      const c2 = applyMoves(pieces, linkedMoves(style, pieces, cf.id, K(cf, 'cuff.1').id, 0.7, 0));
+      const sc = sameSeams(style, pieces, c2);
+      pass(sc.ok && K(P(c2, 'sleeve'), 'sleeve.4').x > K(sl, 'sleeve.4').x + 0.5, `${style}: cuff 0.7 wider per side -> sleeve hem follows, seams walk${sc.bad.length ? ' (' + sc.bad.join(', ') + ')' : ''}`);
+    }
+    const co = pieces.find((p) => p.role === 'collar' || p.role === 'neckband');
+    if (co) {
+      const key = co.role === 'collar' ? 'collar.1' : 'neckband.1';
+      const c2 = applyMoves(pieces, linkedMoves(style, pieces, co.id, K(co, key).id, 0.6, 0));
+      const sc = sameSeams(style, pieces, c2);
+      pass(sc.ok && Math.abs(K(P(c2, 'front'), `front.${2 + (style === 'polo' ? 2 : 0)}`).x - K(P(pieces, 'front'), `front.${2 + (style === 'polo' ? 2 : 0)}`).x) > 0.05, `${style}: ${co.role} lengthened -> neckline follows, seams walk${sc.bad.length ? ' (' + sc.bad.join(', ') + ')' : ''}`);
+    }
+  }
+  for (const style of ['jeans', 'sweatpants'] as StyleId[]) {
+    const pieces = makePreset(style);
+    for (const role of ['waistband', 'cuff']) {
+      const pc = pieces.find((p) => p.role === role);
+      if (!pc) continue;
+      const k = role === 'waistband' ? 'waistband.2' : 'cuff.1';
+      let after = applyMoves(pieces, linkedMoves(style, pieces, pc.id, K(pc, k).id, 0.8, 0));
+      // the spec row measures the band's other long edge: widen it by the same amount, as a two point drag does
+      if (role === 'waistband') after = applyMoves(after, linkedMoves(style, after, pc.id, K(P(after, role), 'waistband.1').id, 0.8, 0));
+      const sc = sameSeams(style, pieces, after);
+      pass(sc.ok, `${style}: ${role} widened -> legs follow, seams walk${sc.bad.length ? ' (' + sc.bad.join(', ') + ')' : ''}`);
+    }
+  }
   // through the store
   const st = useStore.getState();
   st.newProject('jeans');
