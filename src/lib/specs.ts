@@ -4,7 +4,8 @@ import type { Attachment, Edits, Face, Hardware, Pleat } from '../data/edits';
 import { attachmentPolygons, outlinePolygon, SHAPES } from './shapes';
 import { builtinSeams, faceLabel, faceOf, instanceLabel } from '../sim/seams';
 import { labelMaterial, labelSewing, labelSize } from '../data/labels';
-import { FABRIC_CATEGORIES, FABRICS, PATTERNS, colorName, compositionOf, fabricById, fabricHex, patternLabel, withPatternDefaults, type FabricRef } from '../data/fabrics';
+import { FABRIC_CATEGORIES, FABRICS, PATTERNS, colorName, compositionOf, fabricById, fabricHex, fabricThickness, patternLabel, withPatternDefaults, type FabricRef } from '../data/fabrics';
+import { attachmentStack, stackOf, stackText } from '../data/stack';
 import type { Note, Outfit, Project } from '../store';
 import type { StyleId } from '../data/catalog';
 import { derivedGirths, EASE, RIB, frontOffset, isSplitFront, neckBase, POCKET } from '../data/draft';
@@ -628,18 +629,19 @@ export function fabricDetail(pf: FabricRef): string {
 /** Same fabric, colour and pattern: one row in a materials table. */
 export const fabricKey = (pf: FabricRef) => `${pf.id}|${pf.hex ? pf.hex.toLowerCase() : pf.color}|${pf.pattern ? JSON.stringify(withPatternDefaults(pf.pattern)) : ''}`;
 
-export interface CutRow { name: string; fabric: string; cut: number; note?: string; /** fabric with category, colour and pattern (fabricText) */ material?: string; /** colour and pattern (fabricDetail) */ detail?: string }
+export interface CutRow { name: string; fabric: string; cut: number; note?: string; /** the cloth layers it is made of with total thickness and weight: 'Cotton Jersey + Leather lining, 1.7 mm, 1080 g/m2' */ stack?: string; /** total thickness (mm) and weight (g/m2) of its layer stack */ thickness?: number; gsm?: number; /** fabric with category, colour and pattern (fabricText) */ material?: string; /** colour and pattern (fabricDetail) */ detail?: string }
 
 /** Cut list: every pattern piece with its cut count, then the cloth attachments (pockets, patches, straps, appliques). */
 export function cutList(pieces: Piece[], edits?: Edits, style?: StyleId): CutRow[] {
   const rows: CutRow[] = pieces.filter((p) => !(p.role === 'custom' && p.placement?.mode === 'patch')).map((p) => {
     const inner = edits?.insideFabric?.[p.id];
     const material = fabricText(p.fabric), detail = fabricDetail(p.fabric);
-    if (!inner) return { name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut, material, detail };
+    const S = stackOf(p, edits), st = { stack: stackText(S), thickness: round1(S.thickness), gsm: Math.round(S.gsm) };
+    if (!inner) return { name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut, material, detail, ...st };
     // the inside face in its own fabric (under collar, placket facing, lining look)
     const f = fabricById(inner.id), col = colorName(inner), pat = fabricInfo(inner).pattern;
     const what = style ? faceLabel(style, p, 'inside') : 'Inside';
-    return { name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut, material, detail, note: `Inside: ${f.name}${col ? `, ${col}` : ''}${pat ? `, ${pat}` : ''}${what !== 'Inside' ? ` (${what.toLowerCase()})` : ''}` };
+    return { name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut, material, detail, ...st, note: `Inside: ${f.name}${col ? `, ${col}` : ''}${pat ? `, ${pat}` : ''}${what !== 'Inside' ? ` (${what.toLowerCase()})` : ''}` };
   });
   const tags = labelReport(pieces, edits, style);
   for (const r of attachmentReport(pieces, edits, style)) {
@@ -650,7 +652,10 @@ export function cutList(pieces: Piece[], edits?: Edits, style?: StyleId): CutRow
     const up = pieces.find((p) => p.id === r.id);
     const ref = a?.fabric ?? up?.fabric ?? pieces.find((p) => p.name === r.host)?.fabric;
     const fab = fabricById(ref?.id ?? 'cotton');
-    rows.push({ name: r.name, fabric: fab.name, cut: r.cutPieces * r.copies, ...(ref ? { material: fabricText(ref), detail: fabricDetail(ref) } : {}), note: `${cap(r.kind)} on ${r.side}${r.cutPieces > 1 ? `, ${r.cutPieces} letters each` : ''}` });
+    const S = a ? attachmentStack(a, ref?.id ?? fab.id) : up ? stackOf(up, edits) : undefined;
+    const st = S ? { stack: stackText(S), thickness: round1(S.thickness), gsm: Math.round(S.gsm) } : {};
+    const lined = a?.lining ? `, lined with ${fabricById(a.lining.id).name}` : '';
+    rows.push({ name: r.name, fabric: fab.name, cut: r.cutPieces * r.copies, ...(ref ? { material: fabricText(ref), detail: fabricDetail(ref) } : {}), ...st, note: `${cap(r.kind)} on ${r.side}${r.cutPieces > 1 ? `, ${r.cutPieces} letters each` : ''}${lined}` });
   }
   return rows;
 }
@@ -836,12 +841,16 @@ export function pieceCutArea(p: Piece): number {
 
 export interface FabricBomRow {
   key: string;
-  /** outside = shell face; inside = a different fabric on the inside face of a piece; attachment = a pocket, patch or tag cut from its own cloth */
-  face: 'outside' | 'inside' | 'attachment';
+  /** outside = shell face; inside = a different fabric on the inside face of a piece; attachment = a pocket, patch or tag cut from its own cloth; lining = an attachment's own lining */
+  face: 'outside' | 'inside' | 'attachment' | 'lining';
   faceLabel: string;
   fabric: string;
   category: string;
   gsm: number;
+  /** thickness of one layer of this cloth (mm) */
+  thickness: number;
+  /** the layer stack of every piece the row covers that is made of more than one cloth: 'Front: Cotton Jersey + Leather lining, 1.7 mm, 1080 g/m2' */
+  stacks: string[];
   composition: string;
   colour: string;
   hex: string;
@@ -870,7 +879,7 @@ function bomBase(ref: FabricRef & { sheen?: string }) {
   const i = fabricInfo(ref), f = fabricById(ref.id);
   const pat = ref.pattern && ref.pattern.id !== 'solid' ? withPatternDefaults(ref.pattern) : undefined;
   return {
-    fabric: i.fabric, category: i.category, gsm: i.gsm, composition: compositionOf(f.id), colour: i.colour, hex: i.hex,
+    fabric: i.fabric, category: i.category, gsm: i.gsm, thickness: fabricThickness(f.id), composition: compositionOf(f.id), colour: i.colour, hex: i.hex,
     ...(pat ? { pattern: PATTERNS[pat.id]?.name ?? pat.id, repeat: `${Math.round(pat.scale * 10) / 10} cm${pat.rotation ? `, at ${Math.round(pat.rotation)} deg` : ''}`, colourway: i.colourway } : {}),
     construction: (pat ? (pat.method ?? 'printed') : 'plain') as 'plain' | 'woven' | 'printed',
     finish: ref.sheen ? SHEEN_NAME[ref.sheen] ?? ref.sheen : 'Natural finish of the cloth',
@@ -886,16 +895,17 @@ function bomBase(ref: FabricRef & { sheen?: string }) {
 export function fabricBom(pieces: Piece[], edits?: Edits, style?: StyleId, width = FABRIC_WIDTH, waste = MARKER_WASTE): FabricBomRow[] {
   const rows = new Map<string, FabricBomRow>();
   const order: string[] = [];
-  const add = (face: FabricBomRow['face'], ref: FabricRef & { sheen?: string }, where: string, area: number, count: number, insideToo?: string) => {
+  const add = (face: FabricBomRow['face'], ref: FabricRef & { sheen?: string }, where: string, area: number, count: number, insideToo?: string, stack?: string) => {
     const key = `${face}|${fabricKey(ref)}|${ref.sheen ?? ''}`;
     let r = rows.get(key);
     if (!r) {
-      r = { key, face, faceLabel: face === 'outside' ? 'Outside (shell)' : face === 'inside' ? 'Inside face' : 'Attachment cloth', ...bomBase(ref), where: [], insideToo: [], pieces: 0, areaCm2: 0, metres: 0, kg: 0, ref };
+      r = { key, face, faceLabel: face === 'outside' ? 'Outside (shell)' : face === 'inside' ? 'Inside face' : face === 'lining' ? 'Attachment lining' : 'Attachment cloth', ...bomBase(ref), stacks: [], where: [], insideToo: [], pieces: 0, areaCm2: 0, metres: 0, kg: 0, ref };
       rows.set(key, r);
       order.push(key);
     }
     if (!r.where.includes(where)) r.where.push(where);
     if (insideToo && !r.insideToo.includes(insideToo)) r.insideToo.push(insideToo);
+    if (stack && !r.stacks.includes(stack)) r.stacks.push(stack);
     r.pieces += count;
     r.areaCm2 += area * count;
   };
@@ -905,8 +915,9 @@ export function fabricBom(pieces: Piece[], edits?: Edits, style?: StyleId, width
     const label = p.cut > 1 ? `${p.name} (x${p.cut})` : p.name;
     const inner = edits?.insideFabric?.[p.id];
     const differs = inner && fabricKey(inner) !== fabricKey(p.fabric);
-    add('outside', p.fabric, label, pieceCutArea(p), p.cut, differs ? undefined : p.name);
-    if (differs) add('inside', inner, `${style ? faceLabel(style, p, 'inside') : 'Inside'}: ${p.name}${p.cut > 1 ? ` (x${p.cut})` : ''}`, pieceCutArea(p), p.cut);
+    const S = stackOf(p, edits), st = S.plies.length > 1 ? `${p.name}: ${stackText(S)}` : undefined;
+    add('outside', p.fabric, label, pieceCutArea(p), p.cut, differs ? undefined : p.name, st);
+    if (differs) add('inside', inner, `${style ? faceLabel(style, p, 'inside') : 'Inside'}: ${p.name}${p.cut > 1 ? ` (x${p.cut})` : ''}`, pieceCutArea(p), p.cut, undefined, st);
   }
   // user pieces patched onto the garment, and cloth attachments
   const atts = attachmentReport(pieces, edits, style);
@@ -922,14 +933,18 @@ export function fabricBom(pieces: Piece[], edits?: Edits, style?: StyleId, width
     if (a) for (const ring of attachmentPolygons(a)) area += Math.abs(signedArea(ring)) + perimeter(ring);
     else if (up) area = pieceCutArea(up);
     const same = !up && host && fabricKey(ref) === fabricKey(host.fabric);
-    add(up || same ? 'outside' : 'attachment', same ? host.fabric : ref, `${r.name} (${r.kind}${r.copies > 1 ? `, x${r.copies}` : ''})`, area, r.copies);
+    const S = a ? attachmentStack(a, ref.id) : up ? stackOf(up, edits) : undefined;
+    const st = S && S.plies.length > 1 ? `${r.name}: ${stackText(S)}` : undefined;
+    const where = `${r.name} (${r.kind}${r.copies > 1 ? `, x${r.copies}` : ''})`;
+    add(up || same ? 'outside' : 'attachment', same ? host.fabric : ref, where, area, r.copies, undefined, st);
+    if (a?.lining) add('lining', { id: a.lining.id, color: a.lining.color, ...(a.lining.hex ? { hex: a.lining.hex } : {}) }, where, area, r.copies, undefined, st);
   }
   const out = order.map((k) => rows.get(k)!);
   for (const r of out) {
     r.metres = (r.areaCm2 / width / 100) * waste;
     r.kg = (r.areaCm2 / 10000) * (r.gsm / 1000) * waste;
   }
-  const rank = { outside: 0, inside: 1, attachment: 2 } as const;
+  const rank = { outside: 0, inside: 1, attachment: 2, lining: 3 } as const;
   return out.sort((a, b) => rank[a.face] - rank[b.face]);
 }
 

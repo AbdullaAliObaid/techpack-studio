@@ -11,7 +11,9 @@ import { prepareImage, removeBackground, posterize, traceToPaths, toLayers, trac
 import { linkedMoves, applyMoves } from '../src/data/symmetry';
 import { makePreset, type Piece } from '../src/data/presets';
 import { outlineLength } from '../src/lib/geometry';
-import { cutList, fabricInfo, seamReport } from '../src/lib/specs';
+import { cutList, fabricBom, fabricInfo, seamReport } from '../src/lib/specs';
+import { fabricThickness } from '../src/data/fabrics';
+import { attachmentStack, stackOf } from '../src/data/stack';
 import { useStore } from '../src/store';
 import type { StyleId } from '../src/data/catalog';
 
@@ -442,6 +444,42 @@ console.log('\n== specs ==');
   pass(i.category === 'Shirting' && i.colour === 'Custom #123456' && i.hex === '#123456' && i.pattern === 'Gingham, 0.8 cm repeat, woven' && i.colourway === 'White / Navy', `fabric info: ${JSON.stringify(i)}`);
   const row = cutList(pieces)[0];
   pass(!!row.material?.includes('Oxford Cloth (Shirting)') && !!row.detail?.includes('Gingham') && row.fabric === 'Oxford Cloth', `cut list: ${row.material}`);
+}
+
+// ---------------------------------------------------------------- thickness and layer stacks
+console.log('\n== thickness and layer stacks ==');
+{
+  const T = FABRICS.map((f) => [f.id, fabricThickness(f.id)] as const);
+  pass(T.every(([, t]) => t >= 0.08 && t <= 3), `every fabric has a thickness 0.08..3 mm (${T.map(([i, t]) => `${i} ${t}`).join(', ')})`);
+  const th = (id: string) => fabricThickness(id);
+  pass(th('voile') < th('poplin') && th('poplin') < th('jersey') && th('jersey') < th('denim') && th('denim') < th('leather') && th('leather') < th('melton') && th('melton') < th('fleece'),
+    'thickness order: voile < poplin < jersey < denim < leather < melton < fleece');
+  const tee = makePreset('basic-tee');
+  const front = tee.find((p) => p.role === 'front')!;
+  const plain = stackOf(front);
+  const leather = stackOf(front, { insideFabric: { [front.id]: { id: 'leather', color: 0 } } });
+  const linen = stackOf(front, { insideFabric: { [front.id]: { id: 'linen', color: 0 } } });
+  const same = stackOf(front, { insideFabric: { [front.id]: { id: front.fabric.id, color: 2 } } });
+  pass(plain.plies.length === 1 && same.plies.length === 1 && plain.bend === fabricById('jersey').bend, 'no inside fabric (or the same cloth): one ply, the fabric as it is');
+  pass(leather.gsm === 180 + 900 && Math.abs(leather.thickness - 1.7) < 1e-9 && leather.stretch === 0.1, `jersey + leather lining: ${leather.gsm} g/m2, ${leather.thickness} mm, stretch ${leather.stretch}`);
+  pass(leather.bend > 5 * plain.bend && leather.bend > fabricById('leather').bend && leather.bend ** 2 > 0.81 + 0.0144, `leather lined bends as a laminate: ${leather.bend.toFixed(3)} (jersey ${plain.bend}, leather 0.9)`);
+  pass(linen.bend > plain.bend && linen.bend < leather.bend && linen.gsm === 340 && linen.stretch === 0.02, `jersey + linen lining: lighter and less stiff than leather (bend ${linen.bend.toFixed(3)}, ${linen.gsm} g/m2)`);
+  const pocket = { kind: 'pocket' as const, layers: [], fabric: { id: 'jersey', color: 0 } };
+  const lp = attachmentStack({ ...pocket, lining: { id: 'leather', color: 0 } }, 'jersey'), up = attachmentStack(pocket, 'jersey');
+  pass(lp.bend > 5 * up.bend && lp.thickness > up.thickness && lp.gsm > up.gsm, `pocket with a leather lining: bend ${lp.bend.toFixed(2)} vs ${up.bend}, ${lp.thickness} mm vs ${up.thickness} mm`);
+  const puff = attachmentStack({ kind: 'patch', layers: [{ id: 'l', shape: 'rect', x: 0, y: 0, w: 4, h: 4, rotation: 0, color: '#fff', relief: 2 }] }, 'canvas');
+  pass(puff.plies.length === 2 && puff.bend > fabricById('canvas').bend && puff.thickness > th('canvas'), `padded patch (2 mm relief): ${puff.plies.length} plies, ${puff.thickness} mm`);
+  const ext = stackOf(front, { insideFabric: { [front.id]: { id: 'fleece', color: 0 } } });
+  pass(ext.bend <= 3 && ext.gsm <= 2500 && ext.thickness <= 10, 'stacks are capped');
+  const edits = { attachments: [{ id: 'pk', kind: 'pocket' as const, name: 'Pocket', pieceId: front.id, x: 10, y: 25, rotation: 0, w: 12, h: 14, outline: 'rect' as const, layers: [], fabric: { id: 'jersey', color: 0 }, lining: { id: 'leather', color: 0 } }],
+    customSeams: [], detachedSeams: [], pleats: [], insideFabric: { [front.id]: { id: 'leather', color: 0 } } };
+  const rows = cutList(tee, edits, 'basic-tee');
+  const fr = rows.find((r) => r.name === front.name)!, pr = rows.find((r) => r.name === 'Pocket')!;
+  pass(fr.stack === 'Cotton Jersey + Leather lining, 1.7 mm, 1080 g/m2' && fr.thickness === 1.7 && fr.gsm === 1080, `cut list stack: ${fr.stack}`);
+  pass(!!pr?.stack?.includes('Leather lining') && !!pr.note?.includes('lined with Leather'), `cut list pocket: ${pr?.stack}; ${pr?.note}`);
+  const bom = fabricBom(tee, edits, 'basic-tee');
+  const shell = bom.find((r) => r.face === 'outside')!, lin = bom.find((r) => r.face === 'lining');
+  pass(shell.thickness === 0.5 && shell.stacks.some((s) => s.startsWith(`${front.name}: Cotton Jersey + Leather lining, 1.7 mm`)) && !!lin && lin.fabric === 'Leather', `fabric BOM layers: ${shell.stacks.join('; ')} | lining row ${lin?.fabric}`);
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall fabric checks passed');

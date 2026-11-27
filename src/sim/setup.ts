@@ -3,7 +3,8 @@
 // pleats, attachments, user pieces from src/data/edits.ts), then let the solver drape it.
 
 import type { GarmentType, Piece } from '../data/presets';
-import { fabricById } from '../data/fabrics';
+import { fabricById, fabricThickness } from '../data/fabrics';
+import { attachmentStack, combine, plyOf, reliefOf, reliefPly, stackOf, COUPLING, STACK_CAPS, type Stack } from '../data/stack';
 import { migrateGarment, styleById, type Style, type StyleId } from '../data/catalog';
 import { COLLAR_TIP, frontOffset, isSplitFront, RIB } from '../data/draft';
 import { bezAt, bbox, outlineLength, pointInPoly, samplePoly, sliceSpan, toBeziers, type PPoint, type Pt } from '../lib/geometry';
@@ -88,6 +89,10 @@ export interface Garment3D {
   sim: ClothSim;
   panels: PanelInst[];
   limits: Float32Array; // safe stretch per particle
+  /** cloth thickness per panel (cm): the whole layer stack (src/data/stack.ts), for drawing cut edges and hems */
+  panelThickness?: Float32Array;
+  /** extra distance a particle keeps off the body for the stack's added thickness (cm); absent when nothing is lined */
+  thick?: Float32Array;
   /** sew links (particle pairs) each seam added, by seam id: built-in ids, custom seam ids, 'pleat:<id>' */
   seamLinks: Record<string, [number, number][]>;
   /** body collider and per particle contact mode (0 normal, 1 none, 2 crease, 3 elastic), for the display check */
@@ -371,13 +376,17 @@ interface Mech {
   gather: number;
 }
 
-function mechanics(p: Piece, style: Style, opts: { collarUp?: boolean; legacyCollar?: boolean; label?: LabelMaterial; layers?: number } = {}): Mech {
+function mechanics(p: Piece, style: Style, opts: { collarUp?: boolean; legacyCollar?: boolean; label?: LabelMaterial; layers?: number; stack?: Stack } = {}): Mech {
   const fab = fabricById(p.fabric.id);
+  const S = opts.stack && opts.stack.plies.length > 1 ? opts.stack : undefined;
   let stretch = fab.stretch, bend = fab.bend, scK = 1, shaped = false, plate = false, gather = 1, foldBend = false;
   if (opts.label) {
     // a tag: its own material; a folded loop is two layers
     const L = opts.label, k = opts.layers ?? 1;
-    return { stretch: L.stretch, sc: L.stretch * 0.3 * H2, bc: (0.05 / (L.bend * L.bend * k * k)) * H2, shaped: false, plate: false, gather: 1, foldBend: false };
+    // a lined or backed tag: the lining plies laminated onto the tag material
+    const Lb = S ? Math.min(STACK_CAPS.bend, Math.sqrt((L.bend * k) ** 2 + (S.bend ** 2 - (S.plies[0].bend) ** 2))) : L.bend * k;
+    const Ls = S ? Math.min(L.stretch, S.stretch) : L.stretch;
+    return { stretch: Ls, sc: Ls * 0.3 * H2, bc: (0.05 / (Lb * Lb)) * H2, shaped: false, plate: false, gather: 1, foldBend: false };
   }
   const knit = !!style.details.rib;
   const ribTrim = fab.id === 'rib' || (knit && (p.role === 'neckband' || p.role === 'cuff' || (p.role === 'collar' && style.family === 'polo')));
@@ -409,6 +418,12 @@ function mechanics(p: Piece, style: Style, opts: { collarUp?: boolean; legacyCol
   if (p.role === 'collar' && (style.family === 'shirt' || style.family === 'jacket') && !opts.legacyCollar) foldBend = true;
   // popped up: the stand and fall are pressed flat in line, so the collar holds itself up round the neck
   if (p.role === 'collar' && opts.collarUp) { foldBend = true; bend *= style.family === 'polo' ? 4 : 2; }
+  if (S) {
+    // a layer stack (a lining, a lined pocket, padding): the role's own stiffening scales with the laminate, and
+    // nothing stretches further than its least stretchy ply (a rib trim is cut short and stretched on: it keeps its give)
+    bend = Math.min(STACK_CAPS.bend * Math.max(1, bend / fab.bend), bend * (S.bend / Math.max(0.02, fab.bend)));
+    if (!ribTrim) stretch = Math.min(stretch, S.stretch);
+  }
   return { stretch, sc: stretch * 0.3 * scK * H2, bc: (0.05 / (bend * bend)) * H2, shaped, plate, gather, foldBend };
 }
 
@@ -431,7 +446,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   // on a mesh too coarse to hold the fold; choosing 'down' or 'up' gives the arranged collar
   const legacyCollar = edits.collar === undefined;
   /** mech: a tag's own material (weight, stiffness), two layers for a folded loop */
-  const insts: (PanelInst & { place: Placer; shape?: Placer; mech?: { label: LabelMaterial; layers: number } })[] = [];
+  const insts: (PanelInst & { place: Placer; shape?: Placer; mech?: { label: LabelMaterial; layers: number }; stack?: Stack })[] = [];
   let count = 0;
   /** place: where each pattern point starts; shape: the rest shape of a pre-shaped part (defaults to place) */
   const add = (piece: Piece, mirror: boolean, place: Placer, mesh?: PanelMesh, shape?: Placer) => {
@@ -867,7 +882,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   // the placement is the mirror image in 3D but the attachment itself is not flipped (letters still read the right way),
   // so its own coords are mirrored into the host's before placing.
   interface Pin { v: number; hp: Pt } // attachment vertex and the host pattern point it is sewn to
-  const pins: { A: PanelInst; H: PanelInst; face: Face; pins: Pin[]; layer: { v: number; hp: Pt }[] }[] = [];
+  const pins: { A: PanelInst; H: PanelInst; face: Face; pins: Pin[]; layer: { v: number; hp: Pt }[]; gap: number }[] = [];
   const toHost = (x: number, y: number, rot: number) => {
     const c = Math.cos((rot * Math.PI) / 180), s = Math.sin((rot * Math.PI) / 180);
     return (q: Pt): Pt => ({ x: x + q.x * c - q.y * s, y: y + q.x * s + q.y * c });
@@ -875,7 +890,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   /** host copies an edit goes on: the chosen copy, or every copy when none is chosen */
   const hostsOf = (pieceId: string, instance?: number) => instance !== undefined ? [instOf(pieceId, instance)].filter((q): q is (typeof insts)[number] => !!q) : copiesOf(pieceId);
   const mirrorLocal = (H: PanelInst, q: Pt): Pt => (H.mirror ? { x: -q.x, y: q.y } : q);
-  const attachSpecs: { id: string; kind: ClothKind; piece: Piece; local: Pt; host: string; instance?: number; xf: (q: Pt) => Pt; w: number; h: number; face: Face; tag?: { mat: LabelMaterial; sew: ReturnType<typeof labelSewing> } }[] = [];
+  const attachSpecs: { id: string; kind: ClothKind; piece: Piece; local: Pt; host: string; instance?: number; xf: (q: Pt) => Pt; w: number; h: number; face: Face; tag?: { mat: LabelMaterial; sew: ReturnType<typeof labelSewing> }; stack: Stack }[] = [];
   for (const a0 of edits.attachments) {
     // a tag without a size gets the standard 5 x 2.5 cm
     const a = a0.kind === 'label' ? { ...a0, ...labelSize(a0) } : a0;
@@ -891,15 +906,44 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
       const bb = bbox(poly);
       const piece: Piece = { id: a.id, name: a.name, role: 'custom', cut: 1, offset: { x: 0, y: 0 }, symmetric: false, points: pts, fabric: a.fabric ?? host.fabric, specs: [] };
       // a letter's size for meshing is its own box; its position stays in the attachment's coords
-      attachSpecs.push({ id: a.id, kind: a.kind as ClothKind, piece, local: { x: 0, y: 0 }, host: host.id, instance: a.instance, xf: toHost(a.x, a.y, a.rotation), w: rings.length > 1 ? bb.w : a.w, h: rings.length > 1 ? bb.h : a.h, face, ...(tag ? { tag } : {}) });
+      attachSpecs.push({ id: a.id, kind: a.kind as ClothKind, piece, local: { x: 0, y: 0 }, host: host.id, instance: a.instance, xf: toHost(a.x, a.y, a.rotation), w: rings.length > 1 ? bb.w : a.w, h: rings.length > 1 ? bb.h : a.h, face, ...(tag ? { tag } : {}), stack: attachmentStack(a, host.fabric.id) });
     });
   }
   for (const up of pieces.filter((q) => q.role === 'custom' && q.placement?.mode === 'patch' && q.placement.hostPieceId)) {
     const pl = up.placement!, bb = bbox(up.points);
-    attachSpecs.push({ id: up.id, kind: 'patch', piece: up, local: { x: bb.minX + bb.w / 2, y: bb.minY + bb.h / 2 }, host: pl.hostPieceId!, instance: pl.instance, xf: toHost(pl.x ?? 0, pl.y ?? 0, pl.rotation ?? 0), w: bb.w, h: bb.h, face: 'outside' });
+    attachSpecs.push({ id: up.id, kind: 'patch', piece: up, local: { x: bb.minX + bb.w / 2, y: bb.minY + bb.h / 2 }, host: pl.hostPieceId!, instance: pl.instance, xf: toHost(pl.x ?? 0, pl.y ?? 0, pl.rotation ?? 0), w: bb.w, h: bb.h, face: 'outside', stack: stackOf(up, edits) });
   }
-  for (const at of attachSpecs) {
+  // stacked cloth: a patch laid over another patch (layered emblems) sits on top of the cloth under it. Later attachments
+  // lie over earlier ones. `below` is the height of the stack under an attachment (mm): the most of (height under the
+  // one it covers + that one's own thickness) over every attachment it covers by at least 30% of its area.
+  const localPoly = (at: (typeof attachSpecs)[number]) => at.piece.points.map((q) => at.xf({ x: q.x - at.local.x, y: q.y - at.local.y }));
+  const polys = attachSpecs.map(localPoly);
+  const below = attachSpecs.map(() => 0);
+  const covers: number[][] = attachSpecs.map(() => []);
+  const sharesCopy = (a?: number, b?: number) => a === undefined || b === undefined || a === b;
+  attachSpecs.forEach((at, i) => {
+    if (at.kind === 'strap') return;
+    const P = polys[i], bb = bbox(P), samples: Pt[] = [];
+    for (let gx = 0; gx < 7; gx++) for (let gy = 0; gy < 7; gy++) {
+      const q = { x: bb.minX + ((gx + 0.5) / 7) * bb.w, y: bb.minY + ((gy + 0.5) / 7) * bb.h };
+      if (pointInPoly(P, q)) samples.push(q);
+    }
+    if (!samples.length) return;
+    for (let j = 0; j < i; j++) {
+      const o = attachSpecs[j];
+      if (o.id === at.id || o.host !== at.host || o.face !== at.face || o.kind === 'strap' || !sharesCopy(o.instance, at.instance)) continue;
+      const cov = samples.filter((q) => pointInPoly(polys[j], q)).length / samples.length;
+      if (cov < 0.3) continue;
+      covers[i].push(j);
+      below[i] = Math.max(below[i], below[j] + o.stack.thickness);
+    }
+  });
+  /** a region of a panel made locally stiffer (dB, in bend^2) and heavier (dGsm): cloth stacked on it, raised artwork */
+  const stiffen: { P: PanelInst; inside: (q: Pt) => boolean; dB: number; dGsm: number }[] = [];
+  for (const [i, at] of attachSpecs.entries()) {
     const hosts = hostsOf(at.host, at.instance);
+    // the stack height under it lifts it off the host (capped: a very tall stack would pull its pins loose)
+    const gap = LAYER_GAP + Math.min(1, below[i] / 10);
     if (!hosts.length) continue;
     const mesh = meshPanel(at.piece.points, Math.min(spacing, Math.max(at.kind === 'applique' ? 0.45 : 0.6, Math.min(at.w, at.h) / 4)));
     if (mesh.tris.length < 3) continue;
@@ -940,10 +984,21 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
           const t = (long === 'x' ? u - at.local.x : v - at.local.y) / (Lh || 1); // -1..1 along the strap
           bump = 0.19 * 2 * Lh * SLACK * Math.cos((Math.max(-1, Math.min(1, t)) * Math.PI) / 2);
         }
-        return onHost(H, hpOf({ x: u, y: v }), LAYER_GAP + 0.3 + bump, at.face).p;
+        return onHost(H, hpOf({ x: u, y: v }), gap + 0.3 + bump, at.face).p;
       }, mesh);
       A.attach = { id: at.id, kind: at.kind, host: hostIdx, face: at.face };
       if (at.tag) A.mech = { label: at.tag.mat, layers: at.tag.sew.method === 'loop' ? 2 : 1 };
+      if (at.stack.plies.length > 1) (A as (typeof insts)[number]).stack = at.stack;
+      if (covers[i].length) {
+        // stitched through the cloth under it, the stack bends together over the overlap: the host there takes the
+        // bonding (parallel axis) share of the laminate; each ply's own stiffness is in its own panel already
+        const hostPly = plyOf(H.piece.fabric.id);
+        const plies = [...at.stack.plies, ...covers[i].flatMap((j) => attachSpecs[j].stack.plies), hostPly];
+        const dB = Math.max(0, combine(plies, COUPLING.sewn).bend ** 2 - plies.reduce((s, q) => s + q.bend * q.bend, 0));
+        const mine = at.piece.points.map((q) => hpOf(q));
+        const under = covers[i].map((j) => attachSpecs[j].piece.points.map((q) => attachSpecs[j].xf(mirrorLocal(H, { x: q.x - attachSpecs[j].local.x, y: q.y - attachSpecs[j].local.y }))));
+        if (dB > 0) stiffen.push({ P: H, inside: (q) => pointInPoly(mine, q) && under.some((u) => pointInPoly(u, q)), dB, dGsm: 0 });
+      }
       // its show face: the side of its winding that faces away from the host cloth
       {
         let nx = 0, ny = 0, nz = 0;
@@ -952,7 +1007,26 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
         const off = onHost(H, hpOf(at.local), 0, at.face).n;
         signs.set(A, nx * off[0] + ny * off[1] + nz * off[2] >= 0 ? 1 : -1);
       }
-      pins.push({ A, H, face: at.face, pins: sewnIdx.map((v) => ({ v, hp: hpOf(mesh.uv[v]) })), layer: mesh.uv.map((q, v) => ({ v, hp: hpOf(q) })) });
+      pins.push({ A, H, face: at.face, pins: sewnIdx.map((v) => ({ v, hp: hpOf(mesh.uv[v]) })), layer: mesh.uv.map((q, v) => ({ v, hp: hpOf(q) })), gap });
+    }
+  }
+
+  // raised artwork printed or stitched into the host (puff print, padded embroidery): the cloth under each raised layer
+  // is a little stiffer and heavier (a soft foam ply fused on, src/data/stack.ts reliefPly)
+  for (const a of edits.attachments) {
+    if ((a.kind !== 'print' && a.kind !== 'embroidery') || !(reliefOf(a) > 0)) continue;
+    for (const H of hostsOf(a.pieceId, a.instance)) {
+      const hostPly = plyOf(H.piece.fabric.id), xf = toHost(a.x, a.y, a.rotation);
+      for (const l of a.layers) {
+        if (!((l.relief ?? 0) > 0)) continue;
+        const rp = reliefPly(l.relief!), dB = Math.max(0, combine([rp, hostPly], COUPLING.fused).bend ** 2 - hostPly.bend ** 2);
+        const c = Math.cos((l.rotation * Math.PI) / 180), sn = Math.sin((l.rotation * Math.PI) / 180);
+        const box = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
+          const x = (u * l.w) / 2, y = (v * l.h) / 2;
+          return xf(mirrorLocal(H, { x: l.x + x * c - y * sn, y: l.y + x * sn + y * c }));
+        });
+        stiffen.push({ P: H, inside: (q) => pointInPoly(box, q), dB, dGsm: rp.gsm });
+      }
     }
   }
 
@@ -1115,7 +1189,10 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   const band = pieces.find((p) => p.role === 'waistband' && p.elastic);
   const bandGather = band ? Math.min(1, band.elastic! / (Math.max(...band.points.map((q) => q.x)) * 2)) : 1;
   for (const pi of insts) {
-    const M = mechanics(pi.piece, style, { collarUp: collarIs === 'up', legacyCollar, ...(pi.mech ?? {}) });
+    // a pattern piece with a different cloth inside: the two bend, weigh and stretch as one stack
+    if (!pi.attach) { const S = stackOf(pi.piece, edits); if (S.plies.length > 1) pi.stack = S; }
+    const M = mechanics(pi.piece, style, { collarUp: collarIs === 'up', legacyCollar, ...(pi.mech ?? {}), ...(pi.stack ? { stack: pi.stack } : {}) });
+    const bend0 = bend.length;
     const { uv, tris } = pi.mesh;
     const o = pi.offset;
     const legTop = Math.min(...pi.piece.points.map((q) => q.y));
@@ -1152,6 +1229,34 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
         }
       }
     }
+    // regions stiffened by cloth stacked on them or raised artwork: bending links whose middle lies inside
+    const mine = stiffen.filter((r) => r.P === pi);
+    if (mine.length) for (let k = bend0; k < bend.length; k++) {
+      const e = bend[k];
+      if (!(e[3] > 0) || e[3] > M.bc * 1.5) continue; // rigid links and pressed creases keep theirs
+      const m = { x: (uv[e[0] - o].x + uv[e[1] - o].x) / 2, y: (uv[e[0] - o].y + uv[e[1] - o].y) / 2 };
+      const dB = mine.reduce((s, r) => s + (r.inside(m) ? r.dB : 0), 0);
+      if (dB > 0) { const B0 = (0.05 * H2) / e[3]; e[3] = (0.05 * H2) / Math.min(STACK_CAPS.bend ** 2, B0 + dB); }
+    }
+    if (pi.stack && !M.plate && !M.shaped) {
+      // a stiff stack bends over a longer span than one cloth: links across about two mesh spacings carry the stiffness
+      // it adds, so it folds in fewer, larger creases instead of the fine wrinkles of its outside cloth alone
+      const dB = pi.stack.bend ** 2 - fabricById(pi.piece.fabric.id).bend ** 2;
+      if (dB > 0.02) {
+        // two rings (about 2 and 3 spacings): stiffness shared between them
+        const c2 = (0.05 / Math.min(STACK_CAPS.bend ** 2, dB)) * H2, lo = (1.7 * spacing) ** 2, hi = (3.2 * spacing) ** 2;
+        const cell = 3.2 * spacing, grid = new Map<string, number[]>();
+        uv.forEach((q, a) => { const k = `${Math.floor(q.x / cell)},${Math.floor(q.y / cell)}`; (grid.get(k) ?? grid.set(k, []).get(k)!).push(a); });
+        uv.forEach((q, a) => {
+          const gx = Math.floor(q.x / cell), gy = Math.floor(q.y / cell);
+          for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const b of grid.get(`${gx + dx},${gy + dy}`) ?? []) {
+            if (b <= a) continue;
+            const d2 = (q.x - uv[b].x) ** 2 + (q.y - uv[b].y) ** 2;
+            if (d2 > lo && d2 < hi) bend.push([o + a, o + b, len(a, b), c2]);
+          }
+        });
+      }
+    }
     if (M.plate) {
       // a stiff plate: tie every point to its neighbours a few cm away, keeping the pre-curved shape
       for (let a = 0; a < uv.length; a++) for (let b = a + 1; b < uv.length; b++) {
@@ -1167,12 +1272,12 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   const layerIdx: number[] = [], layerW: number[] = [];
   const layerNear: NonNullable<Garment3D['layerNear']> = [];
   const skipPanel = new Int32Array(count).fill(-1);
-  for (const { A, H, face, pins: list, layer: lay } of pins) {
+  for (const { A, H, face, pins: list, layer: lay, gap } of pins) {
     for (const { v, hp } of list) {
       const L = locate(H.mesh, hp);
       L.v.forEach((c) => {
         const q = H.mesh.uv[c];
-        bend.push([A.offset + v, H.offset + c, Math.hypot(hp.x - q.x, hp.y - q.y, LAYER_GAP), 0]);
+        bend.push([A.offset + v, H.offset + c, Math.hypot(hp.x - q.x, hp.y - q.y, gap), 0]);
       });
     }
     const hostIdx = insts.indexOf(H as (typeof insts)[number]);
@@ -1197,7 +1302,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
       const nw = cross(sub3(P[1], P[0]), sub3(P[2], P[0]));
       const out = onHost(Hp, hp, 0, face).n;
       layerIdx.push(A.offset + v, H.offset + L.v[0], H.offset + L.v[1], H.offset + L.v[2]);
-      layerW.push(L.w[0], L.w[1], L.w[2], LAYER_GAP, dot3(nw, out) >= 0 ? 1 : -1);
+      layerW.push(L.w[0], L.w[1], L.w[2], gap, dot3(nw, out) >= 0 ? 1 : -1);
       const tris: number[] = [], sg: number[] = [];
       for (let t = 0; t < HT.length; t += 3) {
         const cx = tc[(t / 3) * 2] - hp.x, cy = tc[(t / 3) * 2 + 1] - hp.y;
@@ -1405,15 +1510,31 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   // fabric weight: heavier cloth (higher gsm) hangs and folds more under the same stiffness
   const panelOf = new Uint16Array(count), uvs = new Float32Array(count * 2);
   let heaviest = 0;
+  // a stack weighs all its plies; it is thicker than its outside cloth, so it keeps further off the body
+  const thick = new Float32Array(count);
+  let thickest = 0;
+  let heavier = 1; // most weight a stack adds over its outside cloth
+  const panelThickness = new Float32Array(insts.length);
   insts.forEach((pi, k) => {
-    const gsm = pi.mech ? pi.mech.label.gsm * pi.mech.layers : fabricById(pi.piece.fabric.id).gsm;
+    const S = pi.stack;
+    const gsm = pi.mech ? pi.mech.label.gsm * pi.mech.layers + (S ? S.gsm - S.plies[0].gsm : 0) : S ? S.gsm : fabricById(pi.piece.fabric.id).gsm;
     if (!pi.mech) heaviest = Math.max(heaviest, gsm); // a small tag does not set the layer spacing of the garment
+    const extra = S && !pi.attach ? Math.max(0, S.thickness - fabricThickness(pi.piece.fabric.id)) / 10 : 0; // cm
+    if (extra > 0) { thick.fill(extra, pi.offset, pi.offset + pi.mesh.uv.length); thickest = Math.max(thickest, extra); }
+    if (S && !pi.attach) heavier = Math.max(heavier, S.gsm / fabricById(pi.piece.fabric.id).gsm);
+    panelThickness[k] = (S ? S.thickness : fabricThickness(pi.piece.fabric.id)) / 10;
+    const heavy = stiffen.filter((r) => r.P === pi && r.dGsm > 0);
     pi.mesh.uv.forEach((q, i) => {
       const v = pi.offset + i;
-      sim.invMass[v] = Math.min(2, 250 / gsm);
+      const g = heavy.length ? gsm + heavy.reduce((s, r) => s + (r.inside(q) ? r.dGsm : 0), 0) : gsm;
+      sim.invMass[v] = Math.min(2, 250 / Math.min(STACK_CAPS.gsm, g));
       panelOf[v] = k; uvs[v * 2] = q.x; uvs[v * 2 + 1] = q.y;
     });
   });
+  if (thickest > 0) sim.collider = contactCollider(contact, body3d, thick);
+  // the solver caps a constraint's impulse per substep (maxMove), and a heavier point moves less for the same impulse:
+  // scaled up by the added weight, a lined garment closes its seams as fast as the unlined one
+  if (heavier > 1) sim.maxMove *= heavier;
   const group = new Int32Array(count).map((_, i) => i);
   const find = (i: number): number => (group[i] === i ? i : (group[i] = find(group[i])));
   for (const [a, b] of sew) group[find(a)] = find(b);
@@ -1469,11 +1590,11 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   // the cloth folded into the crease between the thighs is out of sight: layers there may overlap freely
   for (let i = 0; i < count; i++) if (contact[i] === 2) nearSeam[i] = 1;
   sim.nearSeam = nearSeam;
-  sim.selfRadius = Math.min(spacing * 0.45, 0.5 + heaviest / 1500); // thicker cloth keeps layers further apart
+  sim.selfRadius = Math.min(spacing * 0.45, 0.5 + heaviest / 1500 + thickest); // thicker cloth keeps layers further apart
   const panelSign = Int8Array.from(insts, (P) => signOf(P));
   return {
-    sim, panels: insts.map(({ place: _p, shape: _s, mech: _m, ...rest }) => rest), limits, seamLinks, body: body3d, contact, panelSign, collar: collarIs, foldLayers,
-    style: style.id, edits, buttoned, ...(layerNear.length ? { layerNear } : {}),
+    sim, panels: insts.map(({ place: _p, shape: _s, mech: _m, stack: _k, ...rest }) => rest), limits, seamLinks, body: body3d, contact, panelSign, collar: collarIs, foldLayers,
+    style: style.id, edits, buttoned, panelThickness, ...(thickest > 0 ? { thick } : {}), ...(layerNear.length ? { layerNear } : {}),
   };
 }
 
@@ -1521,7 +1642,22 @@ export function carryWithHead(sim: ClothSim, body: unknown, from: number, to: nu
  * The solver's collider for a per particle contact mode (Garment3D.contact): 0 normal, 1 none (a visor held off the
  * body by its band), 2 may sink up to 3.5 cm (the crease between the thighs), 3 elastic (grips 6x harder).
  */
-export function contactCollider(contact: Uint8Array, body3d: BodyLike): NonNullable<ClothSim['collider']> {
+export function contactCollider(contact: Uint8Array, body3d: BodyLike, thick?: Float32Array): NonNullable<ClothSim['collider']> {
+  if (thick) {
+    // a thick stack (a lined piece) keeps its own thickness further off the skin than single cloth
+    const inner = contactCollider(contact, body3d);
+    return {
+      project: (p, j, out) => {
+        const x = thick[j / 3], c = contact[j / 3];
+        if (!(x > 0) || c === 1 || c === 2) return inner.project(p, j, out);
+        const t = body3d.thickness;
+        body3d.thickness = t + x;
+        const hit = inner.project(p, j, out);
+        body3d.thickness = t;
+        return hit;
+      },
+    };
+  }
   if (!contact.some((v) => v)) return body3d;
   return {
     project: (p, j, out) => {
