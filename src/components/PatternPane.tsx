@@ -9,6 +9,8 @@ import DesignBar from './DesignBar';
 import FaceBar, { FaceFlip } from './FaceBar';
 import DesignDock from './DesignDock';
 import { useDockMode } from './dock';
+import { OutfitPatterns } from './Outfits';
+import { useOutfit } from './uiData';
 
 export default function PatternPane() {
   const { project, showBothSides, set } = usePick('project', 'showBothSides', 'set');
@@ -16,6 +18,7 @@ export default function PatternPane() {
   const hasPairs = project.pieces.some((p) => copiesOf(project.garment, p) === 2);
   const n = project.pieces.length;
   const mode = useDockMode();
+  const inOutfit = !!useOutfit();
   return (
     <section className="pane pattern" aria-label="Pattern workspace">
       <PaneTitle icon="pattern" title="Pattern" meta={`${style} · ${n} ${n === 1 ? 'piece' : 'pieces'}`}>
@@ -29,6 +32,7 @@ export default function PatternPane() {
       <FaceBar />
       <DesignBar />
       <div className="pane-body">
+        {inOutfit && <OutfitPatterns />}
         <Toolbar />
         <div className={`pattern-main ${mode}`}>
           {mode === 'side' && <DesignDock mode="side" />}

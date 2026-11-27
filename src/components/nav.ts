@@ -2,6 +2,7 @@ import { useStore, type NewFlow, type Project } from '../store';
 import { freshProject } from '../store';
 import { deleteProject, listProjects, saveProject } from '../lib/projects';
 import { CATALOG, CATEGORIES, type Category, type Style } from '../data/catalog';
+import { installOutfitFallback, leaveOutfit, outfitApi } from './uiData';
 
 /* Navigation between Home, the new project flow and the editor, plus the few helpers they share. */
 
@@ -42,6 +43,7 @@ export function openNewFlow(mode: NewFlow['mode'], from: NewFlow['from']) {
 }
 
 export function openProject(p: Project) {
+  leaveOutfit();
   const st = useStore.getState();
   if (st.project.id !== p.id) {
     flushSave();
@@ -113,4 +115,12 @@ export function since(ts: number, now = Date.now()): string {
   if (days === 1) return 'Yesterday';
   if (days < 7) return `${days} days ago`;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() === n.getFullYear() ? undefined : 'numeric' });
+}
+
+/** Open a saved outfit in the editor. */
+export function openOutfitNav(id: string) {
+  installOutfitFallback();
+  flushSave();
+  outfitApi().openOutfit(id);
+  useStore.getState().setScreen('editor');
 }
