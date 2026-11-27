@@ -1625,3 +1625,8 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .dz-base-badge { margin-left: 6px; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-text); font-size: 11px; font-weight: 600; }
 .add-pic { width: 100%; }
 .ctx-menu.material, .band-tip.material { background: color-mix(in oklch, var(--bg-elevated) 96%, transparent); }
+
+/* spot picked on the 3D garment, marked on the pattern */
+.probe-pulse { transform-box: fill-box; transform-origin: center; animation: probe-pulse 0.9s ease-out 2; }
+@keyframes probe-pulse { from { opacity: 1; transform: scale(0.4); } to { opacity: 0.25; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .probe-pulse { animation: none; } }

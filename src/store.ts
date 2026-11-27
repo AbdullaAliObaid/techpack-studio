@@ -151,6 +151,9 @@ export function writeTheme(t: ThemePref) {
 export interface MultiItem { pieceId: string; pointId: string; key: string }
 export interface GroupMove { pieceId: string; pointId: string; x: number; y: number }
 
+/** a spot picked on the 3D garment, shown on the pattern chart (piece local cm, as hitCloth returns it) */
+export interface Probe { pieceId: string; instance: number; x: number; y: number; at: number }
+
 export interface State {
   theme: ThemePref;
   inspectorTab: InspectorTab;
@@ -310,6 +313,8 @@ export interface State {
   resetPose: () => void;
   loadProject: (p: Project) => void;
   rename: (name: string) => void;
+  /** the last spot clicked on the 3D garment, marked on the pattern */
+  probe: Probe | null;
   // --- workspaces (Construct, Design, Finish, Tech pack) and the Design workspace ---
   workspace: Workspace;
   setWorkspace: (w: Workspace) => void;
@@ -725,6 +730,7 @@ export const useStore = create<State>((set, get) => {
     loadProject: (p) => set((s) => ({ project: withCollar({ ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1, sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' })),
     rename: (name) => set((s) => ({ project: { ...s.project, name, updatedAt: Date.now() } })),
 
+    probe: null,
     workspace: 'shape',
     designMode: 'patch',
     paintTab: 'edge',

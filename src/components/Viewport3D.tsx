@@ -1,6 +1,8 @@
+import { useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { ContactShadows, OrbitControls } from '@react-three/drei';
 import { useStore, usePick } from '../store';
+import { hitCloth } from '../three/hitCloth';
 import { SKIN_TONES } from '../three/body';
 import { MODES } from '../sim/pose';
 import { fabricById } from '../data/fabrics';
@@ -24,6 +26,7 @@ const Tgl = ({ on, icon, label, onChange }: { on: boolean; icon: string; label: 
 export default function Viewport3D() {
   const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode } = usePick('project', 'view3d', 'showBody', 'skin', 'showJoints', 'showGarment', 'showTape', 'units', 'set', 'draping', 'drapePeak', 'redrapeToken', 'simStatus', 'mode');
   const { body, pieces, garment } = project;
+  const downAt = useRef<{ x: number; y: number; b: number } | null>(null);
   const tv = useCssVars(['--viewport', '--floor', '--hemi-ground', '--shadow-opacity'] as const);
   const stretch = view3d === 'stretch';
   const H = body.height;
@@ -41,6 +44,15 @@ export default function Viewport3D() {
     </PaneTitle>
     <div
       className="viewport"
+      onPointerDown={(e) => { downAt.current = { x: e.clientX, y: e.clientY, b: e.button }; }}
+      onPointerUp={(e) => {
+        // a plain click on the garment (no drag, no orbit) marks that spot on the pattern
+        const d = downAt.current; downAt.current = null;
+        if (!d || d.b !== 0 || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
+        if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+        const h = hitCloth(e.clientX, e.clientY);
+        useStore.setState({ probe: h ? { pieceId: h.pieceId, instance: h.instance ?? 0, x: h.x, y: h.y, at: Date.now() } : null });
+      }}
       onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }}
       onDrop={(e) => { const f = imageFileOf(e.dataTransfer.files); if (f) { e.preventDefault(); openPhoto(f); } }}
     >

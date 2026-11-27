@@ -967,6 +967,7 @@ export default function PatternEditor() {
             <g ref={setTopEl} />
             {multiBox && <SelectionChip box={multiBox.box} count={multiBox.count} k={k} />}
             <NotesLayer k={k} entries={entries} tool={{ ...noteTool, active: notesOn }} />
+            <ProbeMarker k={k} entries={entries} />
             <GuideLayer k={k} />
             <MarqueeLayer k={k} />
             {hover && tool !== 'pen' && <HoverOverlay hover={hover} entries={entries} geos={geos} k={k} />}
@@ -1383,6 +1384,26 @@ function HoverOverlay({ hover, entries, geos, k }: { hover: { cand: Cand; wx: nu
         <text x={8} y={sub ? 14 : 11} dominantBaseline="central" fontSize={12} fontWeight={600} fill="var(--label)">{text}</text>
         {sub && <text x={8} y={28} dominantBaseline="central" fontSize={11} fill="var(--text-2)">{sub}</text>}
       </g>
+    </g>
+  );
+}
+
+/** The spot last clicked on the 3D garment, marked on its pattern piece (both copies follow the side clicked). */
+function ProbeMarker({ k, entries }: { k: number; entries: Entry[] }) {
+  const probe = useStore((s) => s.probe);
+  if (!probe) return null;
+  const en = entries.find((e) => e.src.id === probe.pieceId && e.inst === probe.instance) ?? entries.find((e) => e.src.id === probe.pieceId);
+  if (!en) return null;
+  const w = toWorldPt(en, { x: probe.x, y: probe.y });
+  const px = (n: number) => n / k;
+  return (
+    <g className="probe-mark" key={probe.at} pointerEvents="none" transform={`translate(${w.x} ${w.y})`}>
+      <circle r={px(18)} fill="none" stroke="var(--accent)" strokeWidth={px(1.5)} className="probe-pulse" />
+      <circle r={px(5)} fill="var(--accent)" stroke="var(--bg)" strokeWidth={px(1.5)} />
+      <path d={`M${px(-12)} 0H${px(-7)}M${px(7)} 0H${px(12)}M0 ${px(-12)}V${px(-7)}M0 ${px(7)}V${px(12)}`} stroke="var(--accent)" strokeWidth={px(1.5)} />
+      <text x={px(14)} y={px(-12)} fontSize={px(11)} fill="var(--accent)" style={{ paintOrder: 'stroke', stroke: 'var(--bg)', strokeWidth: px(3) }}>
+        {`From 3D · ${probe.x.toFixed(1)}, ${probe.y.toFixed(1)} cm`}
+      </text>
     </g>
   );
 }
