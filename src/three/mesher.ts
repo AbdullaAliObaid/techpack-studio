@@ -263,6 +263,14 @@ export class PosedCollider {
    * pieces (its tuning and the strain readings rest on them); the display check turns this on.
    */
   skinning = false;
+  /**
+   * Soft skin (src/sim/softSkin.ts): per cloth particle, how deep the skin under it is pressed in (cm), so the cloth sits
+   * in the dent; and, from the solver, how far each particle was pushed out (summed over substeps) and the standing
+   * body point it touched, which drive the dent. Null: hard skin.
+   */
+  soft: { dent: Float32Array; press: Float32Array; q: Float32Array } | null = null;
+  /** which cloth particle a query is for when it is not p[i] of the simulation (the display lift); -1 = i / 3 */
+  particle = -1;
   M = new Float64Array(NBONES * 12);
   Mprev = new Float64Array(NBONES * 12);
   Minv = new Float64Array(NBONES * 12);
@@ -441,8 +449,27 @@ export class PosedCollider {
   }
 
   project(p: Float32Array, i: number, out: { nx: number; ny: number; nz: number; depth: number; vx?: number; vy?: number; vz?: number }): boolean {
+    const S = this.soft;
+    if (!S) return this.project0(p, i, out);
+    // soft skin: the surface under this particle is pressed in by its dent
+    const k = this.particle >= 0 ? this.particle : i / 3, t = this.thickness, dent = S.dent[k] || 0;
+    this.thickness = t - dent;
+    const hit = this.project0(p, i, out);
+    this.thickness = t;
+    if (hit && this.particle < 0 && this.lastHit) {
+      S.press[k] += out.depth;
+      S.q[k * 3] = this.q[0]; S.q[k * 3 + 1] = this.q[1]; S.q[k * 3 + 2] = this.q[2];
+    }
+    return hit;
+  }
+
+  /** true when the last project0 hit a body surface (not a joint cap); this.q then holds the standing body point */
+  private lastHit = false;
+
+  private project0(p: Float32Array, i: number, out: { nx: number; ny: number; nz: number; depth: number; vx?: number; vy?: number; vz?: number }): boolean {
     out.depth = 0;
     out.vx = 0; out.vy = 0; out.vz = 0;
+    this.lastHit = false;
     const G = this.grid;
     let hit = false;
     let done = 0; // chains already handled for this point
@@ -478,6 +505,7 @@ export class PosedCollider {
         out.ny = M[o + 4] * nx + M[o + 5] * ny + M[o + 6] * nz;
         out.nz = M[o + 8] * nx + M[o + 9] * ny + M[o + 10] * nz;
         out.depth += depth;
+        this.lastHit = true;
         const Pp = this.Mprev, q0 = r[0], q1 = r[1], q2 = r[2];
         out.vx = p[i] - (Pp[o] * q0 + Pp[o + 1] * q1 + Pp[o + 2] * q2 + Pp[o + 3]);
         out.vy = p[i + 1] - (Pp[o + 4] * q0 + Pp[o + 5] * q1 + Pp[o + 6] * q2 + Pp[o + 7]);
@@ -497,7 +525,7 @@ export class PosedCollider {
         const cb = CHAIN_BONES[c];
         if (cb[0] !== b && cb[1] !== b && cb[2] !== b) continue;
         done |= 1 << c;
-        if (this.skinned(p, i, c, qx, qy, qz, out, seat && c === 0)) hit = true;
+        if (this.skinned(p, i, c, qx, qy, qz, out, seat && c === 0)) { hit = true; this.lastHit = true; }
       }
     }
     if (this.useCaps) for (const c of this.caps) {
