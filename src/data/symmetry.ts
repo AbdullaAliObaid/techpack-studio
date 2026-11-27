@@ -71,7 +71,9 @@ function specFor(style: StyleId): Spec | null {
       const m = /^(front|back)\.(\d+)(m?)$/.exec(key);
       if (!m || m[1] !== role) return null;
       const i = Number(m[2]) - (role === 'front' ? fo : 0);
-      if (i < 2 || i > 7) return null;
+      // 2..7: shoulder, armhole, underarm, waist and hem side; 8 and 9: the hem towards and at centre (front and back
+      // hem centre, and the shirt tail curve), so dragging the centre bottom point of one moves the other too
+      if (i < 2 || i > 9) return null;
       return role === 'front' ? { role: 'back', key: `back.${i}${m[3]}` } : { role: 'front', key: `front.${i + fo}${m[3]}` };
     },
     walks: {
@@ -143,7 +145,9 @@ export function linkedMoves(style: StyleId, pieces: Piece[], pieceId: string, po
   const mate = spec.partners(piece.role, pt.key);
   const matePiece = mate ? pieces.find((p) => p.role === mate.role) : undefined;
   const matePt = mate && matePiece?.points.find((q) => q.key === mate.key);
-  if (matePiece && matePt) shift(pts, matePiece.id, matePt.id, dx, dy, acc);
+  // a point on the centre line stays on it: its mate only follows up and down
+  const onCentre = Math.abs(pt.x) < 0.05 || (!!matePt && Math.abs(matePt.x) < 0.05);
+  if (matePiece && matePt) shift(pts, matePiece.id, matePt.id, onCentre ? 0 : dx, dy, acc);
 
   // walk the seams the edit touched. A walk can move a point another seam uses (the underarm after a sleeve cap
   // edit), so the groups are walked again until nothing moves; every walk targets the same "before + change" length,

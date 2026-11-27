@@ -1632,3 +1632,7 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .probe-pulse { transform-box: fill-box; transform-origin: center; animation: probe-pulse 0.9s ease-out 2; }
 @keyframes probe-pulse { from { opacity: 1; transform: scale(0.4); } to { opacity: 0.25; transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .probe-pulse { animation: none; } }
+
+/* sideways rows being dragged with the mouse (src/components/dragScroll.ts) */
+.drag-scrolling { cursor: grabbing; user-select: none; scroll-behavior: auto !important; }
+.drag-scrolling * { cursor: grabbing; }

@@ -1,4 +1,5 @@
 import { commitBlockDraft } from './components/blockDraw';
+import { installDragScroll } from './components/dragScroll';
 import { allPointsOf } from './components/multi';
 import { useEffect, useRef, useState } from 'react';
 import TopBar from './components/TopBar';
@@ -35,6 +36,8 @@ const inertIf = (on: boolean) => (on ? ({ inert: '' } as Record<string, string>)
 
 export default function App() {
   useApplyTheme();
+  // press and drag (or wheel) to roll through every sideways row of options
+  useEffect(() => installDragScroll(), []);
   const STACK = '(max-width: 960px) and (orientation: portrait)';
   const [stacked, setStacked] = useState(() => window.matchMedia(STACK).matches);
   const [split, setSplit] = useState(() => (window.matchMedia(STACK).matches ? 52 : window.innerWidth < 1300 ? 56 : 52));

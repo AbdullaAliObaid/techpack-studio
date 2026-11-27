@@ -629,6 +629,17 @@ export const useStore = create<State>((set, get) => {
           };
         }),
       );
+      // symmetry also keeps the centre line in step across pieces: dragging the centre front hem moves the centre
+      // back hem up or down with it (only the matching centre point, no seam walking)
+      const pt0 = project.pieces.find((p) => p.id === pieceId)?.points.find((q) => q.id === pointId);
+      if (symmetry && pt0 && pt0.mirror === pt0.id && Math.abs(y - pt0.y) > 1e-6) {
+        const mates = linkedMoves(project.garment, project.pieces, pieceId, pointId, 0, y - pt0.y).filter((m) => {
+          if (m.pieceId === pieceId) return false;
+          const q = project.pieces.find((p) => p.id === m.pieceId)?.points.find((r) => r.id === m.pointId);
+          return !!q && q.mirror === q.id;
+        });
+        if (mates.length) setPieces(applyMoves(get().project.pieces, mates));
+      }
     },
 
     movePiece: (pieceId, offset) => setPieces(mapPiece(get().project.pieces, pieceId, (p) => ({ ...p, offset }))),
