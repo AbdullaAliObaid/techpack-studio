@@ -1610,3 +1610,18 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 @keyframes ptpulse { 0% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .mfield-num.mf-pulse, .dim-text.mf-flash, .edge-len.mf-flash, .pt-pulse { animation-duration: 0.01s; } }
 .mfield-num.inline { display: block; width: 100%; height: 100%; }
+
+/* ---------- context menu ---------- */
+.ctx-menu {
+  position: fixed; z-index: 90; display: flex; flex-direction: column; padding: 6px; border-radius: 14px; background: var(--bg-elevated);
+  border: 0.5px solid oklch(0 0 0 / 0.1); box-shadow: 0 12px 40px oklch(0 0 0 / 0.22); animation: pop 120ms ease-out;
+}
+:root[data-theme='dark'] .ctx-menu { border-color: oklch(1 0 0 / 0.14); box-shadow: 0 12px 40px oklch(0 0 0 / 0.5); }
+.ctx-menu .menu-row { min-height: 40px; border-radius: 8px; }
+.ctx-menu .menu-row.danger { color: var(--red-text, var(--red)); }
+.ctx-menu .menu-row kbd { margin-left: auto; font: inherit; font-size: 11px; color: var(--text-2); }
+.ctx-menu .menu-row:disabled { opacity: 0.4; }
+.band-tip { position: fixed; z-index: 95; pointer-events: none; padding: 6px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; border: 0.5px solid oklch(0 0 0 / 0.1); }
+.dz-base-badge { margin-left: 6px; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-text); font-size: 11px; font-weight: 600; }
+.add-pic { width: 100%; }
+.ctx-menu.material, .band-tip.material { background: color-mix(in oklch, var(--bg-elevated) 96%, transparent); }

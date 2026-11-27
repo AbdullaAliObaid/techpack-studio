@@ -13,6 +13,7 @@ import { uid } from '../lib/units';
 import { designHost, imageFileOf, PHOTO_EVENT, prepareImage, cropBitmap, removeBackground, posterize, traceToPaths, traceSilhouette, toLayers, bitmapToDataUrl, dataUrlKb, downscale, hasAlpha, type Bitmap, type PhotoTarget } from './editHelpers';
 import { copiesOf, instanceName } from './sides';
 import { Disclosure, LenInput, Row, Seg, Switch } from './controls';
+import type { DLayer } from './designDoc';
 import Icon from './Icon';
 
 type Mode = 'print' | 'stitch' | 'cut';
@@ -20,12 +21,12 @@ const MAX_THREADS = 12;
 const BIG_KB = 400;
 
 export default function PhotoSheet() {
-  const [src, setSrc] = useState<{ bmp: Bitmap; target?: PhotoTarget } | null>(null);
+  const [src, setSrc] = useState<{ bmp: Bitmap; target?: PhotoTarget; forDesign: boolean } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async (file: Blob, target?: PhotoTarget) => {
-      try { setErr(null); setSrc({ bmp: await prepareImage(file, 1024), target }); } catch (e) { setErr((e as Error).message); setSrc(null); }
+      try { setErr(null); const st = useStore.getState(); setSrc({ bmp: await prepareImage(file, 1024), target, forDesign: st.workspace === 'design' && st.designMode === 'patch' }); } catch (e) { setErr((e as Error).message); setSrc(null); }
     };
     const onEvent = (e: Event) => { const d = (e as CustomEvent<{ file: Blob; target?: PhotoTarget }>).detail; void load(d.file, d.target); };
     const onPaste = (e: ClipboardEvent) => {
@@ -50,10 +51,10 @@ export default function PhotoSheet() {
         </div>
       </div>, document.body);
   }
-  return src ? <Sheet key={src.bmp.data.length + src.bmp.w} bmp={src.bmp} target={src.target} onClose={() => setSrc(null)} /> : null;
+  return src ? <Sheet key={src.bmp.data.length + src.bmp.w} bmp={src.bmp} target={src.target} forDesign={src.forDesign} onClose={() => setSrc(null)} /> : null;
 }
 
-function Sheet({ bmp, target, onClose }: { bmp: Bitmap; target?: PhotoTarget; onClose: () => void }) {
+function Sheet({ bmp, target, forDesign, onClose }: { bmp: Bitmap; target?: PhotoTarget; forDesign: boolean; onClose: () => void }) {
   const { project, selPiece, selAttachment, selInstance, showBothSides, designFace, units, addAttachment, openDesign, set } = usePick('project', 'selPiece', 'selAttachment', 'selInstance', 'showBothSides', 'designFace', 'units', 'addAttachment', 'openDesign', 'set');
   const [mode, setMode] = useState<Mode>('print');
   const [crop, setCrop] = useState({ l: 0, r: 0, t: 0, b: 0 }); // percent trimmed from each side
@@ -97,7 +98,29 @@ function Sheet({ bmp, target, onClose }: { bmp: Bitmap; target?: PhotoTarget; on
   const big = kb > BIG_KB;
   const transparent = hasAlpha(cleaned);
 
+  /** Patch designer: the picture becomes layers of the design. The first layer of a cloth patch is its base, so a cut picture or a
+   *  picture with its background removed gives the patch the picture's silhouette. */
+  const addToDesign = () => {
+    const st = useStore.getState();
+    const doc = st.design;
+    let layers: DLayer[];
+    if (mode === 'print') {
+      const sil = transparent ? traceSilhouette(posterize(small, 2)) : '';
+      layers = [{ id: uid(), shape: 'image', x: 0, y: 0, w: W, h: H, rotation: 0, color: '#ffffff', image: printUrl, name: 'Picture', ...(sil ? { outlinePath: sil } : {}) }];
+    } else if (mode === 'stitch') {
+      layers = toLayers(paths, palette, W, H).map((l, i) => ({ ...l, name: `Stitched picture ${i + 1}` }) as DLayer);
+    } else {
+      const sil = poster ? traceSilhouette(poster) : '';
+      const first: DLayer[] = sil && !doc.layers.length ? [{ id: uid(), shape: 'path', x: 0, y: 0, w: W, h: H, rotation: 0, color: palette[0] ?? '#1d3b6e', path: sil, name: 'Picture base' }] : [];
+      layers = [...first, ...toLayers(paths.filter((p) => p.ci !== 0), palette, W, H).map((l, i) => ({ ...l, name: `Picture colour ${i + 1}` }) as DLayer)];
+    }
+    st.setDesign({ layers: [...doc.layers, ...layers] });
+    st.set({ designSel: layers.length ? [layers[0].id] : [] });
+    onClose();
+  };
+
   const add = () => {
+    if (forDesign) { addToDesign(); return; }
     if (!hostPiece) return;
     const base = { rotation: 0, w: W, h: H, outline: 'rect' as const };
     let x = target?.x ?? 0, y = target?.y ?? 0;
@@ -131,7 +154,7 @@ function Sheet({ bmp, target, onClose }: { bmp: Bitmap; target?: PhotoTarget; on
     <div className="sheet-backdrop" role="presentation" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="sheet photo-sheet material" role="dialog" aria-modal="true" aria-labelledby="photo-title">
         <div className="flow-head">
-          <h2 id="photo-title" style={{ flex: 1 }}>Add a photo <small>to {where}</small></h2>
+          <h2 id="photo-title" style={{ flex: 1 }}>Add a picture <small>{forDesign ? 'to your design' : `to ${where}`}</small></h2>
           <button className="icon-btn" aria-label="Close" title="Close" onClick={onClose}><Icon name="close" size={18} /></button>
         </div>
 
@@ -201,7 +224,7 @@ function Sheet({ bmp, target, onClose }: { bmp: Bitmap; target?: PhotoTarget; on
         <div className="flow-actions">
           <span className="spacer" />
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={!hostPiece || (mode !== 'print' && !paths.length)} onClick={add}>{mode === 'print' ? 'Print on' : mode === 'stitch' ? 'Stitch onto' : 'Cut and sew onto'} {where}</button>
+          <button className="btn primary" disabled={(!forDesign && !hostPiece) || (mode !== 'print' && !paths.length)} onClick={add}>{forDesign ? 'Add to the design' : <>{mode === 'print' ? 'Print on' : mode === 'stitch' ? 'Stitch onto' : 'Cut and sew onto'} {where}</>}</button>
         </div>
       </div>
     </div>,

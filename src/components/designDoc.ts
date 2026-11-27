@@ -4,6 +4,7 @@
 import type { Attachment, Band, Outline, Sheen, ShapeLayer } from '../data/edits';
 import type { Piece } from '../data/presets';
 import { uid } from '../lib/units';
+import { outlinePolygon, pathPolygon, shapePolygon } from '../lib/shapes';
 
 export type Workspace = 'shape' | 'seams' | 'fabric' | 'paint' | 'design' | 'trims' | 'fit' | 'outfit' | 'finish' | 'review' | 'techpack';
 /** In bar order. `key` is the Cmd or Ctrl number shortcut (the visible ones are numbered in order, see workspaceKey). */
@@ -51,6 +52,8 @@ export interface DLayer extends ShapeLayer {
   /** embroidery thread fill */
   stitch?: Stitch;
   font?: FontId;
+  /** picture layers: silhouette (path in the unit box) when the background was removed, so the picture can be a patch base */
+  outlinePath?: string;
 }
 export interface DGroup { id: string; name: string; hidden?: boolean; locked?: boolean }
 
@@ -105,18 +108,58 @@ export function flatten(doc: Pick<DesignDoc, 'layers' | 'groups'>): ShapeLayer[]
   return out;
 }
 
-export function attachmentPatch(doc: DesignDoc): Pick<Attachment, 'kind' | 'name' | 'w' | 'h' | 'outline' | 'layers' | 'thread' | 'sheen' | 'fabric'> {
-  const cloth = doc.makeAs === 'patch' || doc.makeAs === 'applique';
+/** The first layer of a cloth patch or appliqué is its base: it defines the outline, whatever shape it is. */
+export const isCloth = (doc: Pick<DesignDoc, 'makeAs'>) => doc.makeAs === 'patch' || doc.makeAs === 'applique';
+export function baseLayer(doc: Pick<DesignDoc, 'makeAs' | 'layers'>): DLayer | null {
+  return isCloth(doc) ? doc.layers.find((l) => !l.hidden) ?? null : null;
+}
+const rot = (pts: { x: number; y: number }[], deg: number, flip?: boolean) => {
+  const r = (deg * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
+  return pts.map((q) => { const x = flip ? -q.x : q.x; return { x: Math.round((x * c - q.y * s) * 1000) / 1000, y: Math.round((x * s + q.y * c) * 1000) / 1000 }; });
+};
+/** Outline points of a base layer, centred on its own middle (cm). */
+export function basePolygon(l: DLayer): { x: number; y: number }[] {
+  let ring: { x: number; y: number }[] = [];
+  if (l.shape === 'path' && l.path) ring = pathPolygon(l.path, l.w, l.h);
+  else if (l.shape === 'image' && l.outlinePath) ring = pathPolygon(l.outlinePath, l.w, l.h);
+  else if (l.shape !== 'text' && l.shape !== 'image' && l.shape !== 'path') ring = shapePolygon(l.shape, l.w, l.h)[0] ?? [];
+  if (ring.length < 3) ring = outlinePolygon('rect', l.w, l.h);
+  return rot(ring, l.rotation, l.flipX);
+}
+const bounds = (pts: { x: number; y: number }[]) => {
+  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+  return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+};
+
+export function attachmentPatch(doc: DesignDoc): Pick<Attachment, 'kind' | 'name' | 'w' | 'h' | 'outline' | 'points' | 'layers' | 'thread' | 'sheen' | 'fabric'> {
+  const cloth = isCloth(doc);
+  const base = baseLayer(doc);
+  if (cloth && base) {
+    // the base is the cloth: its colour is the cloth colour and its outline the patch outline; everything else is centred on it
+    const pts = basePolygon(base);
+    const bb = bounds(pts);
+    const rest = flatten({ layers: doc.layers.filter((l) => l !== base || base.shape === 'image'), groups: doc.groups }).map((l) => ({ ...l, x: Math.round((l.x - base.x) * 100) / 100, y: Math.round((l.y - base.y) * 100) / 100 }));
+    return {
+      kind: doc.makeAs, name: doc.name, w: Math.max(0.5, Math.round(bb.w * 100) / 100), h: Math.max(0.5, Math.round(bb.h * 100) / 100), outline: 'custom', points: pts, layers: rest, thread: doc.thread, sheen: doc.sheen,
+      fabric: { id: 'canvas', color: 0, hex: base.shape === 'image' ? doc.cloth : base.color },
+    };
+  }
   return {
     kind: doc.makeAs, name: doc.name, w: doc.w, h: doc.h, outline: doc.outline, layers: flatten(doc), thread: doc.thread, sheen: doc.sheen,
     fabric: cloth ? { id: 'canvas', color: 0, hex: doc.cloth } : undefined,
   };
 }
 
-/** A design from an attachment already on the garment (outline layers stay as layers of their own). */
+/** A design from an attachment already on the garment: cloth gets its outline back as the base layer. */
 export function docFromAttachment(a: Attachment): DesignDoc {
   const kind = a.kind === 'patch' || a.kind === 'applique' || a.kind === 'embroidery' || a.kind === 'print' ? a.kind : 'patch';
-  return { ...newDesign(), name: a.name, makeAs: kind, w: a.w, h: a.h, outline: a.outline === 'custom' || a.outline === 'shape' ? 'rounded' : a.outline, cloth: a.fabric?.hex ?? '#1d3b6e', thread: a.thread ?? '#e9e2cf', sheen: a.sheen ?? 'matte', layers: a.layers.map((l) => ({ ...l }) as DLayer), placedId: a.id, pieceId: a.pieceId, instance: a.instance ?? 0 };
+  const doc: DesignDoc = { ...newDesign(), name: a.name, makeAs: kind, w: a.w, h: a.h, outline: a.outline === 'custom' || a.outline === 'shape' ? 'rounded' : a.outline, cloth: a.fabric?.hex ?? '#1d3b6e', thread: a.thread ?? '#e9e2cf', sheen: a.sheen ?? 'matte', layers: a.layers.map((l) => ({ ...l }) as DLayer), placedId: a.id, pieceId: a.pieceId, instance: a.instance ?? 0 };
+  if (kind === 'patch' || kind === 'applique') {
+    const pts = a.outline === 'custom' && a.points?.length ? a.points : outlinePolygon(a.outline === 'shape' ? 'rect' : a.outline, a.w, a.h);
+    const d = 'M' + pts.map((q) => `${Math.round((q.x / a.w) * 1000) / 1000} ${Math.round((q.y / a.h) * 1000) / 1000}`).join('L') + 'Z';
+    doc.layers = [newLayer('path', { w: a.w, h: a.h, path: d, color: doc.cloth, name: 'Base' }), ...doc.layers];
+  }
+  return doc;
 }
 
 export const newLayer = (shape: ShapeLayer['shape'], over: Partial<DLayer> = {}): DLayer => ({ id: uid(), shape, x: 0, y: 0, w: 3, h: 3, rotation: 0, color: '#f2c94c', opacity: 1, ...over });

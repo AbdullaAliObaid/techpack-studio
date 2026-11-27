@@ -18,6 +18,7 @@ import Home from './components/Home';
 import NewFlow from './components/NewFlow';
 import { nudgePatch } from './components/editHelpers';
 import { OutfitBar } from './components/Outfits';
+import { ContextMenuHost } from './components/ContextMenu';
 import { installOutfitFallback } from './components/uiData';
 import DesignCanvas from './components/DesignCanvas';
 import DesignLibrary from './components/DesignLibrary';
@@ -131,6 +132,7 @@ export default function App() {
           window.dispatchEvent(new CustomEvent('tps-nudge', { detail: { dx: k === 'arrowright' ? step : k === 'arrowleft' ? -step : 0, dy: k === 'arrowdown' ? step : k === 'arrowup' ? -step : 0 } }));
         } else if (k === 'delete' || k === 'backspace') {
           if (st.tool === 'note' && st.selNote) st.removeNote(st.selNote);
+          else if (st.workspace === 'paint' && st.paintTab === 'bands' && st.selBand) st.removeBand(st.selBand);
           else if (st.selAttachment) st.removeAttachment(st.selAttachment);
           else if (st.selPleat) st.removePleat(st.selPleat);
           else if (st.selPiece && st.selPoint) st.deletePoint(st.selPiece, st.selPoint);
@@ -187,6 +189,7 @@ export default function App() {
       </main>
       <PieceFlow />
       <PhotoSheet />
+      <ContextMenuHost />
       </div>
       <div className="layer home-layer" data-state={screen === 'home' ? 'active' : screen === 'new' && newFrom === 'home' ? 'under' : 'gone'} {...inertIf(screen !== 'home')}>
         <Home />

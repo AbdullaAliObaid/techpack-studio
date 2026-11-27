@@ -23,7 +23,7 @@ export default function ColourBlockPanel() {
       <div className="sublabel">Look</div>
       <Seg label="Look" value={cb.look} options={[{ id: 'dyed', label: 'Dyed' }, { id: 'printed', label: 'Printed' }]} onChange={(look) => up({ look })} />
       <Seg label="Finish" value={cb.sheen} options={[{ id: 'matte', label: 'Matte' }, { id: 'satin', label: 'Satin' }, { id: 'glossy', label: 'Glossy' }]} onChange={(sheen) => up({ sheen })} />
-      <div className="sublabel">Quick blocks</div>
+      <div className="sublabel">Quick edges</div>
       <label className="kv"><span>Height</span><LenInput label="Edge paint height" units={units} value={cb.h} min={0.5} max={80} onChange={(h) => up({ h })} /></label>
       <div className="agrid" role="group" aria-label="Quick edges">
         {QUICK.map((q) => (

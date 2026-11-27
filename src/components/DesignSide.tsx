@@ -9,6 +9,8 @@ import { RELIEF_PRESETS, attachmentPatch, docFromAttachment, type Blend, type DL
 import { pieceBottom, pieceTop } from './designDoc';
 import { ALL_ITEMS } from './designShapes';
 import { uid } from '../lib/units';
+import { AddPicture } from './DesignLibrary';
+import { baseLayer } from './designDoc';
 import Icon from './Icon';
 import type { Outline } from '../data/edits';
 
@@ -255,7 +257,8 @@ function Layers() {
         <button className="icon-btn sm" aria-label="Duplicate layer" title="Duplicate (Ctrl+D)" disabled={!sel.length} onClick={dup}><Icon name="copy" size={16} /></button>
         <button className="icon-btn sm danger" aria-label="Delete layer" title="Delete" disabled={!sel.length} onClick={del}><Icon name="trash" size={16} /></button>
       </div>
-      {layers.length === 0 && <div className="group-note dz-empty">Pick a shape from the library to start painting your design. Each shape is its own layer.</div>}
+      <AddPicture />
+      {layers.length === 0 && <div className="group-note dz-empty">{design.makeAs === 'patch' || design.makeAs === 'applique' ? 'Pick a shape or add a picture. The first one you add is the base and sets the outline of the patch, so start with a circle, a star or a shield if you want one.' : 'Pick a shape from the library to start painting your design. Each shape is its own layer.'}</div>}
       <ul className="dz-layers" aria-label="Layers, top first">
         {rows.map((r, i) => {
           if (!r.l) {
@@ -279,6 +282,7 @@ function Layers() {
                     : <path d={l.shape === 'path' ? l.path ?? '' : SHAPES[l.shape].d} fill={l.color} stroke="var(--separator)" strokeWidth="0.03" fillRule="evenodd" />}
                 </svg>
                 <span className={isHidden(l) ? 'dim' : ''}>{l.name ?? lib?.name ?? nameOf(l)}</span>
+                {baseLayer(design)?.id === l.id && <small className="dz-base-badge">Base</small>}
                 {(l.relief ?? 0) !== 0 && <small className="dz-relief-tag">{(l.relief ?? 0) > 0 ? '+' : ''}{(l.relief ?? 0).toFixed(1)}</small>}
               </button>
               <button className="icon-btn sm" aria-label={isHidden(l) ? 'Show layer' : 'Hide layer'} title={isHidden(l) ? 'Show' : 'Hide'} onClick={() => patchOne(l.id, { hidden: !l.hidden })}><Icon name={isHidden(l) ? 'eyeoff' : 'eye'} size={16} /></button>
