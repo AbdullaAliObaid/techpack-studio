@@ -21,7 +21,7 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 }
 
 export default function Toolbar() {
-  const { tool, symmetry, totalSymmetry, setTotalSymmetry, showMeasure, showStitch, snapOn, set } = usePick('tool', 'symmetry', 'totalSymmetry', 'setTotalSymmetry', 'showMeasure', 'showStitch', 'snapOn', 'set');
+  const { tool, symmetry, totalSymmetry, setTotalSymmetry, showMeasure, showStitch, snapOn, showNotes, set } = usePick('tool', 'symmetry', 'totalSymmetry', 'setTotalSymmetry', 'showMeasure', 'showStitch', 'snapOn', 'showNotes', 'set');
   const t = (v: Tool) => () => set({ tool: v });
   // build tools open their controls in the Construction tab and drop any half finished action
   const build = (v: Tool) => () => set({
@@ -38,6 +38,7 @@ export default function Toolbar() {
       <Group title="Create">
         <Btn on={tool === 'pen'} label="Pen" tip="Pen: draw a new piece (D)" icon="pen" onClick={build('pen')} />
         <Btn on={tool === 'seams'} label="Seam" tip="Seam: join or open seams (J)" icon="seams" onClick={build('seams')} />
+        <Btn on={tool === 'note'} label="Notes" tip="Notes: draw, add arrows and text on the chart (N)" icon="note" onClick={() => set({ tool: 'note', showNotes: true })} />
         <Btn on={tool === 'pleat'} label="Pleat" tip="Pleat: click an edge to add one (L)" icon="pleat" onClick={build('pleat')} />
       </Group>
       <Group title="Show">
@@ -47,6 +48,7 @@ export default function Toolbar() {
           tip="Total symmetry (T): link every mating piece. Move a point on one jeans leg and it moves on all four leg pieces, the same way the front and back bodies and both sleeves move together."
           onClick={() => { setTotalSymmetry(!totalSymmetry); if (!totalSymmetry) set({ symmetry: true }); }} />
         <Btn on={snapOn} label="Snap" tip="Snap: dragged points line up with other points and the grainline. Hold Option to turn it off for one drag." icon="snap" onClick={() => set({ snapOn: !snapOn })} />
+        <Btn on={showNotes} label="Show notes" tip="Show notes on the chart" icon="noteshow" onClick={() => set({ showNotes: !showNotes })} />
         <Btn on={showStitch} label="Stitch lines" tip="Stitch lines: cut line 1 cm outside the sewing line" icon="stitch" onClick={() => set({ showStitch: !showStitch })} />
       </Group>
       <Group title="View">

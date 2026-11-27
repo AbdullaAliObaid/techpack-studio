@@ -8,6 +8,7 @@ import { uid } from '../lib/units';
 import { exportTechPack } from '../lib/exportPdf';
 import { piecesToDxf } from '../lib/exportDxf';
 import { flushSave, goHome, openNewFlow } from './nav';
+import { exportProjectFile, shareProjects } from './uiData';
 
 export default function TopBar() {
   const { project, units, past, future, set, undo, redo, loadProject, rename, theme, drawer } = usePick('project', 'units', 'past', 'future', 'set', 'undo', 'redo', 'loadProject', 'rename', 'theme', 'drawer');
@@ -91,6 +92,8 @@ export default function TopBar() {
             <div className="menu wide" role="menu">
               <button role="menuitem" className="menu-row" onClick={() => { setMenu(null); goHome(); }}><Icon name="home" size={18} /><span>All projects</span></button>
               <button role="menuitem" className="menu-row" onClick={() => { setMenu(null); openNewFlow('change', 'editor'); }}><Icon name="garment" size={18} /><span>Change style of this project…</span></button>
+              <button role="menuitem" className="menu-row" onClick={() => { setMenu(null); void shareProjects([project]); }}><Icon name="share" size={18} /><span>Share…</span></button>
+              <button role="menuitem" className="menu-row" onClick={() => { setMenu(null); exportProjectFile([project]); }}><Icon name="folder" size={18} /><span>Export file</span></button>
               <div className="menu-sep" role="separator" />
               <div className="menu-label">Saved on this device</div>
               {list.length === 0 && <div className="menu-empty">No saved projects yet</div>}
@@ -121,8 +124,13 @@ export default function TopBar() {
                 <small>Cover with 3D render, pattern sheet, specs, fit, seams, materials</small>
               </button>
               <button role="menuitem" onClick={() => { exportDxf(); setMenu(null); }}>
-                <b>Pattern pieces (DXF)</b>
+                <b>Pattern (DXF)</b>
                 <small>Full size, cut and sewing lines, grain lines, in mm</small>
+              </button>
+              <div className="menu-label">Share with people</div>
+              <button role="menuitem" onClick={() => { exportProjectFile([project]); setMenu(null); }}>
+                <b>Project file (.techit)</b>
+                <small>Others can import it into their tech-it and keep editing</small>
               </button>
             </div>
           )}

@@ -7,6 +7,9 @@ import { listProjects } from '../lib/projects';
 import Icon from './Icon';
 import { Sketch } from './Sketches';
 import { flushSave, pickGroups, type PickGroup } from './nav';
+import { BodyChoice } from './BodyPresets';
+import { allBodyPresets, leaveOutfit, sameBody } from './uiData';
+import type { Body } from '../three/body';
 
 /* New project flow. Step 1: category. Step 2: style (with fit and body as quick options). Step 3: name and create.
    The same picker, with a warning in the last step, changes the style of the open project. */
@@ -24,6 +27,8 @@ export default function NewFlow() {
   const [styleId, setStyleId] = useState<StyleId | null>(null);
   const [fit, setFit] = useState<Fit>('regular');
   const [sex, setSex] = useState<'male' | 'female'>('male');
+  const [bodyId, setBodyId] = useState('builtin-male');
+  const [bodyPick, setBodyPick] = useState<Body | undefined>(undefined);
   const [name, setName] = useState('');
   const [named, setNamed] = useState(false);
   const headRef = useRef<HTMLHeadingElement>(null);
@@ -37,6 +42,7 @@ export default function NewFlow() {
     if (!active) return;
     setStep(0); setDir('fwd'); setGroupId(null); setStyleId(null); setNamed(false);
     setFit(project.fit ?? 'regular'); setSex(project.body.sex === 'female' ? 'female' : 'male');
+    { const m = allBodyPresets().find((p) => sameBody(p.body, project.body)); setBodyId(m?.id ?? (project.body.sex === 'female' ? 'builtin-female' : 'builtin-male')); setBodyPick(undefined); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, newFlow.mode]);
 
@@ -62,8 +68,9 @@ export default function NewFlow() {
   const create = () => {
     if (!styleId) return;
     const st = useStore.getState();
+    leaveOutfit();
     if (change) st.restyle(styleId);
-    else st.createProject({ style: styleId, name: name || suggestion(styleId), fit, sex });
+    else st.createProject({ style: styleId, name: name || suggestion(styleId), fit, sex, body: bodyPick });
     flushSave();
     st.setScreen('editor');
   };
@@ -137,7 +144,7 @@ export default function NewFlow() {
                   </div>
                   <div className="quick-item">
                     <span className="quick-label" id="q-body">Body</span>
-                    <SexSeg value={sex} onChange={setSex} labelledBy="q-body" />
+                    <BodyChoice value={bodyId} labelledBy="q-body" onChange={(id, b) => { setBodyId(id); setBodyPick(b); setSex(b.sex === 'female' ? 'female' : 'male'); }} />
                   </div>
                 </div>
               )}
@@ -179,8 +186,8 @@ export default function NewFlow() {
                       </div>
                       <div className="quick-item">
                         <span className="quick-label" id="f-body">Body</span>
-                        <SexSeg value={sex} onChange={setSex} labelledBy="f-body" />
-                        <small>You can change measurements later in the Body tab.</small>
+                        <BodyChoice value={bodyId} labelledBy="f-body" onChange={(id, b) => { setBodyId(id); setBodyPick(b); setSex(b.sex === 'female' ? 'female' : 'male'); }} />
+                        <small>Save your own in the Body tab and pick it here.</small>
                       </div>
                     </div>
                     <button type="submit" className="btn primary big">Create project</button>
@@ -200,13 +207,6 @@ function FitSeg({ value, onChange, labelledBy }: { value: Fit; onChange: (f: Fit
   return (
     <div className="seg" role="group" aria-labelledby={labelledBy}>
       {FITS.map((f) => <button type="button" key={f} className={value === f ? 'on' : ''} aria-pressed={value === f} onClick={() => onChange(f)}>{f[0].toUpperCase() + f.slice(1)}</button>)}
-    </div>
-  );
-}
-function SexSeg({ value, onChange, labelledBy }: { value: 'male' | 'female'; onChange: (s: 'male' | 'female') => void; labelledBy: string }) {
-  return (
-    <div className="seg" role="group" aria-labelledby={labelledBy}>
-      {(['male', 'female'] as const).map((s) => <button type="button" key={s} className={value === s ? 'on' : ''} aria-pressed={value === s} onClick={() => onChange(s)}>{s === 'male' ? 'Male' : 'Female'}</button>)}
     </div>
   );
 }
