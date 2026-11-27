@@ -95,6 +95,29 @@ export class ClothSim {
   contactCount = 0;
   /** friction between garments (0 slides freely, 1 sticks) */
   contactFriction = 0.25;
+  /**
+   * While sewing (no gravity, no friction), no particle rises more than this above its start height (cm, 0 = off).
+   * A tight band (a rib neckband cut short, a collar, an elastic waist) closing round a body that narrows upward
+   * (shoulders into the neck) otherwise climbs it with the whole garment, and is left in the neck with a fold caught
+   * at the waist once gravity comes on. Local moves of a few cm, which the seams need, stay free.
+   */
+  sewRise = 0;
+  private startY: Float32Array | null = null;
+  /**
+   * Pulled by hand (the 3D view's Pull mode): particle grabV is drawn toward grabT every substep by grabK of the way
+   * (a soft spring: the cloth round it follows through its own constraints, gravity and the body still act). -1 = none.
+   */
+  grabV = -1;
+  grabT = new Float32Array(3);
+  grabK = 0.5;
+  /** pinned particles (held where they were pinned) and their own inverse mass, given back when unpinned */
+  pins = new Map<number, number>();
+  /** hold particle v where it is (true) or let it go (false) */
+  pin(v: number, on: boolean) {
+    if (v < 0 || v >= this.n) return;
+    if (on && !this.pins.has(v)) { this.pins.set(v, this.invMass[v]); this.invMass[v] = 0; this.vel.fill(0, v * 3, v * 3 + 3); }
+    if (!on && this.pins.has(v)) { this.invMass[v] = this.pins.get(v)!; this.pins.delete(v); }
+  }
   /** called at the start of every frame (outfits rebind their layer contacts here) */
   frameHook: (() => void) | null = null;
   /** frames of the sewing phase: low gravity, no friction, so seams can close before the cloth settles */
@@ -203,8 +226,18 @@ export class ClothSim {
           }
         }
       }
+      if (sewing && this.sewRise > 0) {
+        const sy = (this.startY ??= (() => { const a = new Float32Array(n); for (let i = 0; i < n; i++) a[i] = pos[i * 3 + 1]; return a; })());
+        const cap = this.sewRise;
+        for (let i = 0; i < n; i++) { const m = sy[i] + cap; if (pos[i * 3 + 1] > m) pos[i * 3 + 1] = m; }
+      }
       // while sewing (no gravity) a layer may be put right in one go, so folds and pockets start on the right side
       if (this.layerIdx) this.layers(pos, sewing ? Infinity : this.layerStep);
+      // pulled by hand: last in the substep, so the point is where the hand put it and the cloth follows next substep
+      if (this.grabV >= 0 && this.invMass[this.grabV]) {
+        const j = this.grabV * 3, k = this.grabK, T = this.grabT;
+        pos[j] += (T[0] - pos[j]) * k; pos[j + 1] += (T[1] - pos[j + 1]) * k; pos[j + 2] += (T[2] - pos[j + 2]) * k;
+      }
       for (let i = 0; i < n; i++) {
         const j = i * 3;
         // a point held in place (invMass 0) carries no speed: it starts from rest when it is let go

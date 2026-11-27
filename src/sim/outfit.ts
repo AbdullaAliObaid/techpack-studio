@@ -32,6 +32,8 @@ export const OUTFIT_GAP = 0.3;
 const REACH = 2.0;
 /** start shape: each layer a garment lies over pushes it this much further off the skin (cm) */
 const LAYER_STEP = 0.9;
+/** passes of the display layering (displayOutfit) */
+const DISPLAY_PASSES = 4;
 
 export interface OutfitInput {
   project: Project;
@@ -170,6 +172,7 @@ export function assembleOutfit(items: OutfitInput[], body: Body, collider?: Clot
   sim.sewFrames = sewFrames || Math.max(...built.map((b) => b.G.sim.sewFrames));
   sim.panelOf = panelOf; sim.uv = uv; sim.seamGroup = group; sim.nearSeam = nearSeam;
   sim.selfRadius = selfRadius; sim.garmentOf = garmentOf; sim.crossRadius = OUTFIT_GAP;
+  sim.sewRise = Math.max(...built.map((b) => b.G.sim.sewRise));
   if (layerIdx.length) { sim.layerIdx = layerIdx; sim.layerW = layerW; if (anySkip) sim.skipPanel = skipPanel; }
   sim.collider = contactCollider(contact, col);
 
@@ -368,8 +371,8 @@ export function displayOutfit(O: Outfit3D, out: Float32Array) {
   displayPositions(O, out);
   const I = O.sim.contactIdx, W = O.sim.contactW;
   if (!I || !W) return;
-  // two passes: a middle layer pushed out by the one under it then pushes the one over it
-  for (let pass = 0; pass < 2; pass++) for (let e = 0, k = 0; e < O.sim.contactCount * 4; e += 4, k += 5) {
+  // a few passes: a middle layer pushed out by the one under it then pushes the one over it
+  for (let pass = 0; pass < DISPLAY_PASSES; pass++) for (let e = 0, k = 0; e < O.sim.contactCount * 4; e += 4, k += 5) {
     const a = I[e] * 3, h0 = I[e + 1] * 3, h1 = I[e + 2] * 3, h2 = I[e + 3] * 3;
     const ux = out[h1] - out[h0], uy = out[h1 + 1] - out[h0 + 1], uz = out[h1 + 2] - out[h0 + 2];
     const vx = out[h2] - out[h0], vy = out[h2 + 1] - out[h0 + 1], vz = out[h2 + 2] - out[h0 + 2];

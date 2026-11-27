@@ -184,6 +184,8 @@ export interface State {
   setSmoothMany: (items: { pieceId: string; pointId: string }[], smooth: boolean) => void;
   view3d: 'fabric' | 'stretch';
   showBody: boolean;
+  /** 3D view: pull the cloth by hand (drag a point; Shift-click pins one) instead of orbiting */
+  pullMode: boolean;
   skin: number;
   showJoints: boolean;
   showGarment: boolean;
@@ -472,6 +474,7 @@ export const useStore = create<State>((set, get) => {
     },
     view3d: 'fabric',
     showBody: true,
+    pullMode: false,
     skin: 1,
     showJoints: false,
     showGarment: true,

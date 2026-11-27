@@ -22,7 +22,7 @@ const Tgl = ({ on, icon, label, onChange }: { on: boolean; icon: string; label: 
 );
 
 export default function Viewport3D() {
-  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode } = usePick('project', 'view3d', 'showBody', 'skin', 'showJoints', 'showGarment', 'showTape', 'units', 'set', 'draping', 'drapePeak', 'redrapeToken', 'simStatus', 'mode');
+  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode, pullMode } = usePick('project', 'view3d', 'showBody', 'skin', 'showJoints', 'showGarment', 'showTape', 'units', 'set', 'draping', 'drapePeak', 'redrapeToken', 'simStatus', 'mode', 'pullMode');
   const { body, pieces, garment } = project;
   const tv = useCssVars(['--viewport', '--floor', '--hemi-ground', '--shadow-opacity'] as const);
   const stretch = view3d === 'stretch';
@@ -69,6 +69,9 @@ export default function Viewport3D() {
           <Tgl on={showGarment} icon="garment" label="Garment" onChange={(v) => set({ showGarment: v })} />
           <Tgl on={showJoints} icon="joints" label="Joints" onChange={(v) => set({ showJoints: v })} />
           <Tgl on={showTape} icon="tape" label="Tape" onChange={(v) => set({ showTape: v })} />
+          <button className={`tgl ${pullMode ? 'on' : ''}`} aria-pressed={pullMode} title={pullMode ? 'Stop pulling the cloth' : 'Pull the cloth by hand. Shift-click pins a point'} onClick={() => set({ pullMode: !pullMode })}>
+            <Icon name="pan" size={16} /><span>Pull</span>
+          </button>
         </div>
       </div>
 
