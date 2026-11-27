@@ -14,7 +14,7 @@ const msgs: { type: string; [k: string]: unknown }[] = [];
 const g = globalThis as unknown as { self: unknown; postMessage: (m: never) => void };
 g.self = globalThis;
 g.postMessage = (m: never) => msgs.push(m);
-await import('../src/sim/worker');
+const W = await import('../src/sim/worker');
 const send = (d: unknown) => (globalThis as unknown as { onmessage: (e: { data: unknown }) => void }).onmessage({ data: d });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -86,6 +86,53 @@ for (const [name, acts, before] of cases) {
   } else r = await run(style, acts, before);
   const ok = r.bad === 0 && Math.abs(r.hi - ref.hi) < 3 && Math.abs(r.lo - ref.lo) < 4;
   verdict(ok, `${name}: y ${r.lo.toFixed(1)}..${r.hi.toFixed(1)}, NaN ${r.bad}`);
+}
+
+// ---- soft skin (src/sim/softSkin.ts): tight cloth presses the skin in, loose cloth and no cloth leave it as measured ----
+{
+  console.log('\n== soft skin ==');
+  const S0 = W.softSkin()!;
+  /** deepest dent (mm) among body vertices whose standing height is in [y0, y1] */
+  const dentIn = (y0: number, y1: number) => {
+    const S = W.softSkin()! as unknown as { rest: Float32Array; dent: Float32Array };
+    let m = 0;
+    for (let v = 0; v < S.dent.length; v++) { const y = S.rest[v * 3 + 1]; if (y >= y0 && y <= y1) m = Math.max(m, S.dent[v]); }
+    return m * 10;
+  };
+  /** build, drape until it sleeps; returns the mean soft skin ms per frame */
+  const drapeOn = async (style: StyleId, simBody: typeof body) => {
+    const pieces = makePreset(style, body);
+    msgs.length = 0;
+    send({ type: 'build', garment: style, pieces, body: simBody, warm: false, spacing: 1.8, edits: styleEdits(style, pieces, body) });
+    let frames = 0, ms = 0, last: { sleeping: boolean } | null = null;
+    const t0 = Date.now();
+    let seen = -1;
+    while (Date.now() - t0 < 60000) { await sleep(10); for (const m of msgs.splice(0)) if (m.type === 'frame') { frames++; last = m as never; } if (W.softMs !== seen) { seen = W.softMs; ms += W.softMs; } if (last?.sleeping) break; }
+    // the soft skin runs every other frame: its cost per frame is half the cost of a run
+    return ms / Math.max(1, frames);
+  };
+  verdict(!!S0, 'soft skin built with the body');
+  // a loose tee: chest, waist and hip girths stay exactly as measured
+  await drapeOn('basic-tee', body);
+  const tee = Math.max(dentIn(f.chestH - 4, f.chestH + 4), dentIn(f.waistH - 4, f.waistH + 4), dentIn(f.hipH - 4, f.hipH + 4));
+  verdict(tee === 0, `loose tee: dent at chest, waist and hip girths ${tee.toFixed(2)} mm (must be 0)`);
+  // jeans drafted for an 84 cm waist on an 89 cm waist: the waistband is 5 cm too small and presses in
+  const tight = { ...body, waist: body.waist + 5 };
+  const ms = await drapeOn('jeans', tight);
+  const ft = bodyFrame(tight);
+  const waist = dentIn(ft.waistH - 10, ft.waistH + 2);
+  verdict(waist >= 2 && waist <= 13, `tight jeans waistband presses the waist in ${waist.toFixed(1)} mm (2 to 13)`);
+  verdict(ms < 3, `soft skin costs ${ms.toFixed(2)} ms per frame (under 3)`);
+  // turned off: every dent goes at once
+  send({ type: 'soft', on: false });
+  await sleep(200);
+  verdict(dentIn(0, 300) === 0, 'soft skin off: no dents');
+  send({ type: 'soft', on: true });
+  // no garment on a fresh body: no dents
+  msgs.length = 0;
+  send({ type: 'build', garment: 'basic-tee', pieces: [], body: { ...body, height: body.height + 1 }, warm: false, spacing: 1.8 });
+  await sleep(3000);
+  verdict(dentIn(0, 300) === 0, 'no garment: no dents');
 }
 
 console.log(fails ? `\n${fails} worker path check(s) failed` : '\nworker path: all ok');

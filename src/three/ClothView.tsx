@@ -56,6 +56,9 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
   const [bodyGeo, setBodyGeo] = useState<THREE.BufferGeometry | null>(null);
   const pose = useRef<{ mode: Mode; t: number; custom?: CustomPose }>({ mode: 'stand', t: 0 });
   const customPose = useStore((s) => s.customPose);
+  const softSkin = useStore((s) => s.softSkin);
+  /** standing body positions and normals: soft skin dents move vertices in from these (worker 'skin' message) */
+  const bodyRest = useRef<{ pos: Float32Array; nrm: Float32Array } | null>(null);
   const bones = useMemo(() => Array.from({ length: NBONES }, () => { const b = new THREE.Bone(); b.matrixAutoUpdate = false; return b; }), []);
   const skinned = useMemo(() => {
     if (!bodyGeo) return null;
@@ -111,6 +114,7 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
         g.setAttribute('skinWeight', new THREE.BufferAttribute(m.skinWeight, 4));
         g.setIndex(new THREE.BufferAttribute(m.indices, 1));
         g.computeBoundingSphere();
+        bodyRest.current = { pos: (m.positions as Float32Array).slice(), nrm: (m.normals as Float32Array).slice() };
         setBodyGeo((old) => {
           old?.dispose();
           return g;
@@ -132,6 +136,21 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
           return { geo, fabrics: m.fabrics, pat: vertexPattern(m, piecesRef.current) };
         });
         setIf({ draping: true, simStatus: 'Simulating fabric…' });
+      } else if (m.type === 'skin') {
+        // soft skin: each body vertex pressed in along its standing normal (the skinned mesh poses it from there)
+        const R = bodyRest.current, d = m.dent as Float32Array;
+        setBodyGeo((g) => {
+          const attr = g?.getAttribute('position') as THREE.BufferAttribute | undefined;
+          if (!g || !R || !attr || attr.count !== d.length || R.pos.length !== d.length * 3) return g;
+          const P = attr.array as Float32Array;
+          for (let v = 0, j = 0; v < d.length; v++, j += 3) {
+            const k = d[v];
+            P[j] = R.pos[j] - R.nrm[j] * k; P[j + 1] = R.pos[j + 1] - R.nrm[j + 1] * k; P[j + 2] = R.pos[j + 2] - R.nrm[j + 2] * k;
+          }
+          attr.needsUpdate = true;
+          return g;
+        });
+        invalidate();
       } else if (m.type === 'details') {
         setDetails(m);
       } else if (m.type === 'hardware') {
@@ -233,6 +252,10 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
   useEffect(() => {
     worker.postMessage({ type: 'pose', pose: customPose });
   }, [customPose, worker]);
+
+  useEffect(() => {
+    worker.postMessage({ type: 'soft', on: softSkin });
+  }, [softSkin, worker]);
 
   const paint = (geo: THREE.BufferGeometry, ratios: Float32Array) => {
     const col = geo.getAttribute('color') as THREE.BufferAttribute;

@@ -52,7 +52,7 @@ export function BodyFields({ advanced }: { advanced: boolean }) {
 }
 
 export function BodyType() {
-  const { project, skin, set, setLink, setBodyPreset } = usePick('project', 'skin', 'set', 'setLink', 'setBodyPreset');
+  const { project, skin, softSkin, set, setLink, setBodyPreset } = usePick('project', 'skin', 'softSkin', 'set', 'setLink', 'setBodyPreset');
   const body = project.body;
   return (
     <>
@@ -68,6 +68,8 @@ export function BodyType() {
           ))}
         </div>
       </div>
+      <Row label="Soft skin"><Switch label="Soft skin" on={softSkin} onChange={(v) => set({ softSkin: v })} /></Row>
+      <p className="group-note">Tight clothes press into the skin a little, like on a real body.</p>
       <Row label="Pattern follows body"><Switch label="Pattern follows body" on={project.linkPattern} onChange={setLink} /></Row>
       <p className="group-note">Turn off to test a fixed pattern on different bodies.</p>
     </>

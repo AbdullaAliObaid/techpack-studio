@@ -16,6 +16,7 @@ import { boneMatrices, clampPose, invert, lerpPose, poseAt, poseDistance, stepPo
 import { ZERO_POSE, type CustomPose, type Edits } from '../data/edits';
 import { loadBody, saveBody } from './bodyCache';
 import type { BodyMesh } from '../three/mesher';
+import { SoftSkin } from './softSkin';
 
 let bodyKey = '';
 let collider: PosedCollider | null = null;
@@ -43,6 +44,18 @@ function applyPose(dt = 0) {
 }
 
 let G: Garment3D | null = null;
+/** soft skin (src/sim/softSkin.ts) of the current body, and whether it is on (the 3D view's Soft skin toggle) */
+let soft: SoftSkin | null = null;
+let softOn = true;
+let softRatio = new Float32Array(0);
+/** ms the last soft skin update took, and the soft skin itself (tests read them) */
+export let softMs = 0;
+export const softSkin = () => soft;
+function postSkin() {
+  if (!soft) return;
+  const dent = soft.dent.slice();
+  (self as unknown as Worker).postMessage({ type: 'skin', dent }, [dent.buffer]);
+}
 let timer: ReturnType<typeof setTimeout> | null = null;
 let gen = 0;
 
@@ -74,7 +87,13 @@ type BuildMsg =
    */
   | { type: 'grab'; vertex: number; target: [number, number, number] }
   | { type: 'release' }
-  | { type: 'pin'; vertex: number; on: boolean };
+  | { type: 'pin'; vertex: number; on: boolean }
+  /**
+   * Soft skin on or off. On, tight cloth presses the skin in (a 'skin' message per changed frame carries the dent per
+   * body vertex, cm inward along the standing normal: Float32Array, same order as the body positions). Off, the dents
+   * are cleared at once (one 'skin' message of zeros) and the cloth settles on the hard surface.
+   */
+  | { type: 'soft'; on: boolean };
 
 let attachments: Attachment[] = [];
 /** outfit: attachments per garment project (the outfit message brings them, an attachments message updates one) */
@@ -148,6 +167,18 @@ function loopFrame(myGen: number) {
   G.sim.substepHook = floating ? null : (k, n) => applyPose(((k + 1) / n) / 60);
   G.sim.awake = floating ? false : grabbing ? true : mode === 'custom' ? poseT < 1.2 || simTime - poseMovedAt < 1.0 : mode !== 'stand' || poseT < 1.2;
   G.sim.step();
+  // soft skin at 30 Hz: dents change slowly next to the cloth, and it halves the cost
+  if (soft && softOn && collider?.soft && (G.sim.frames & 1) === 0) {
+    const ts = performance.now();
+    // how hard the cloth is stretched, as a share of its safe stretch (as the Stretch-Risk-O-Meter reads it)
+    const n = G.sim.n;
+    if (softRatio.length !== n) softRatio = new Float32Array(n);
+    G.sim.strain(softRatio);
+    for (let i = 0; i < n; i++) softRatio[i] = Math.max(0, softRatio[i] - 0.01) / Math.max(0.01, G.limits[i]);
+    soft.update(softRatio);
+    softMs = performance.now() - ts;
+    if (soft.takeChanged()) postSkin();
+  }
   if (floatPending && G.sim.sleeping) { floatPending = false; setFloat(G, true); }
   simTime += 1 / 60;
   const pos = new Float32Array(G.sim.n * 3);
@@ -242,6 +273,17 @@ async function handle(m: BuildMsg) {
     }
     return;
   }
+  if (m.type === 'soft') {
+    if (softOn === m.on) return;
+    softOn = m.on;
+    if (soft) {
+      soft.on = softOn;
+      if (!softOn) { soft.dent.fill(0); soft.contact.dent.fill(0); soft.takeChanged(); postSkin(); }
+    }
+    if (collider) collider.soft = softOn && soft ? soft.contact : null;
+    if (G && !floating && G.sim.sleeping) { G.sim.sleeping = false; if (timer) clearTimeout(timer); loop(gen); }
+    return;
+  }
   if (m.type === 'attachments') {
     if (m.projectId !== undefined && outfitOf(G)) outfitAttachments.set(m.projectId, m.attachments);
     else attachments = m.attachments;
@@ -262,6 +304,9 @@ async function handle(m: BuildMsg) {
     frame = bodyFrame(m.body);
     const fr = frame;
     collider = new PosedCollider(mesh.grid, [fr.ankleH + 6, fr.crotchH + 1], fr);
+    // before the display arrays are handed to the page
+    soft = new SoftSkin(mesh, fr, m.body.sex === 'female');
+    soft.on = softOn;
     bodyKey = key;
     (self as unknown as Worker).postMessage(
       { type: 'body', positions: mesh.positions, normals: mesh.normals, indices: mesh.indices, skinIndex: mesh.skinIndex, skinWeight: mesh.skinWeight },
@@ -273,6 +318,8 @@ async function handle(m: BuildMsg) {
   modeStart = simTime + (m.warm ? 0 : 2.0);
   motionPeak = 0;
   motionPeakInfo = null;
+  // the garment is placed and sewn against the hard body (old dents belong to the old cloth's particles)
+  if (collider) collider.soft = null;
   let next: Garment3D | null;
   if (m.type === 'outfit') {
     const O = assembleOutfit(m.items, m.body, collider!, m.spacing);
@@ -286,6 +333,11 @@ async function handle(m: BuildMsg) {
     if (next && m.warm && G && !outfitOf(G)) warmStart(next, G);
   }
   if (!next) { G = null; return; }
+  if (soft && collider) {
+    soft.bind(next.sim.n);
+    soft.substeps = next.sim.substeps;
+    collider.soft = softOn ? soft.contact : null;
+  }
   // a build while the body is hidden floats too: the cloth is sewn in the air round where the body was
   floatPending = floating;
   G = next;
