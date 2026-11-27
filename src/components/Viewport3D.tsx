@@ -24,7 +24,7 @@ const Tgl = ({ on, icon, label, onChange }: { on: boolean; icon: string; label: 
 );
 
 export default function Viewport3D() {
-  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode } = usePick('project', 'view3d', 'showBody', 'skin', 'showJoints', 'showGarment', 'showTape', 'units', 'set', 'draping', 'drapePeak', 'redrapeToken', 'simStatus', 'mode');
+  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode, pullMode } = usePick('project', 'view3d', 'showBody', 'skin', 'showJoints', 'showGarment', 'showTape', 'units', 'set', 'draping', 'drapePeak', 'redrapeToken', 'simStatus', 'mode', 'pullMode');
   const { body, pieces, garment } = project;
   const downAt = useRef<{ x: number; y: number; b: number } | null>(null);
   const tv = useCssVars(['--viewport', '--floor', '--hemi-ground', '--shadow-opacity'] as const);
@@ -48,7 +48,8 @@ export default function Viewport3D() {
       onPointerUp={(e) => {
         // a plain click on the garment (no drag, no orbit) marks that spot on the pattern
         const d = downAt.current; downAt.current = null;
-        if (!d || d.b !== 0 || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
+        // Pull mode: a press on the cloth grabs it (src/three/Pull.tsx), it does not mark the pattern
+        if (!d || d.b !== 0 || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey || useStore.getState().pullMode) return;
         if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
         const h = hitCloth(e.clientX, e.clientY);
         useStore.setState({ probe: h ? { pieceId: h.pieceId, instance: h.instance ?? 0, x: h.x, y: h.y, at: Date.now() } : null });
@@ -81,6 +82,9 @@ export default function Viewport3D() {
           <Tgl on={showGarment} icon="garment" label="Garment" onChange={(v) => set({ showGarment: v })} />
           <Tgl on={showJoints} icon="joints" label="Joints" onChange={(v) => set({ showJoints: v })} />
           <Tgl on={showTape} icon="tape" label="Tape" onChange={(v) => set({ showTape: v })} />
+          <button className={`tgl ${pullMode ? 'on' : ''}`} aria-pressed={pullMode} title={pullMode ? 'Stop pulling the cloth' : 'Pull the cloth by hand. Shift-click pins a point'} onClick={() => set({ pullMode: !pullMode })}>
+            <Icon name="pan" size={16} /><span>Pull</span>
+          </button>
         </div>
       </div>
 

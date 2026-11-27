@@ -137,6 +137,8 @@ export type BodyLike = {
 export const DISPLAY_MARGIN = 0.25;
 /** edge midpoints and triangle centres of the displayed cloth keep this far off the skin (cm) */
 const CHORD_MARGIN = 0.1;
+/** while sewing, no cloth point rises more than this above where it started (cm) */
+export const SEW_RISE = 3;
 /** cloth points closer than this to the skin get their edges and triangles checked for display (cm) */
 const NEAR = 1.0;
 
@@ -1378,6 +1380,8 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   sim.substeps = SUB;
   // hat pieces start in place, practically sewn: gravity and friction from the start keep them seated on the head
   if (hat) sim.sewFrames = 6;
+  // the garment can not climb the body while its seams close (see ClothSim.sewRise)
+  else sim.sewRise = SEW_RISE;
   sim.pos.set(init);
   sim.prev.set(sim.pos);
   // body contact per particle: 0 normal, 1 none (a visor is held off the body by its band),

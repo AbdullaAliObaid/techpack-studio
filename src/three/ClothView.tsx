@@ -12,6 +12,7 @@ import type { DetailsMsg } from '../sim/details';
 import Prints from './Prints';
 import { clothMaterials } from './detailsCloth';
 import Hardware from './Hardware';
+import Pull from './Pull';
 import type { HardwareMsg } from '../sim/detailsHardware';
 import { vertexPattern, type VertexPattern } from './printsAdapter';
 import { useSnapshotRegistration } from './snapshots';
@@ -167,6 +168,7 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
   // an outfit: every visible garment in one simulation (src/sim/outfit.ts); the open project is the live copy of its
   // garment, the others come as saved. `others` keeps their attachments and inside fabrics for the materials and prints
   const outfit = useStore((s) => s.outfit);
+  const pullMode = useStore((s) => s.pullMode);
   const liveProject = useStore((s) => s.project);
   const others = useRef<{ attachments: Attachment[]; insideFabric: Edits['insideFabric'] }>({ attachments: [], insideFabric: {} });
   const outfitKey = outfit ? JSON.stringify({ b: outfit.body, i: outfit.items.filter((i) => !i.hidden).map((i) => [i.projectId, i.layer, i.tuck]), a: liveProject.id, g: type, p: pieces, e: simKey }) : '';
@@ -182,8 +184,9 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
     const rest = items.filter((i) => i.project.id !== live.id).map((i) => i.project.edits);
     others.current = { attachments: rest.flatMap((e) => e?.attachments ?? []), insideFabric: Object.assign({}, ...rest.map((e) => e?.insideFabric ?? {})) };
     if (!items.length) { setTopo((old) => { old?.geo.dispose(); return null; }); lastOutfit.current = null; return; }
-    // the same garments with one of them edited warm start from the drape; a new body or a garment added or removed drapes again
-    const shape = JSON.stringify({ b: outfit.body, ids: items.map((i) => i.project.id) });
+    // the same garments with one of them edited warm start from the drape; a new body, a garment added, removed,
+    // moved to another layer or tucked the other way drapes again (the garments must pass each other)
+    const shape = JSON.stringify({ b: outfit.body, ids: items.map((i) => [i.project.id, i.layer, i.tuck]) });
     const warm = lastOutfit.current === shape;
     const first = lastOutfit.current === null;
     const t = setTimeout(() => {
@@ -308,6 +311,7 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
       {showGarment && topo && hardware && <Hardware data={hardware} geo={topo.geo} visible={!stretch} updater={hardwareUpdater} />}
       {showGarment && topo && attachDetails && <Details data={attachDetails} geo={topo.geo} visible={!stretch} updater={attachUpdater} />}
       {showGarment && topo && details && <Details data={details} geo={topo.geo} visible={!stretch} updater={detailUpdater} />}
+      {showGarment && topo && <Pull geo={topo.geo} worker={worker} enabled={pullMode && showBody} />}
     </group>
   );
 }

@@ -32,6 +32,8 @@ export const OUTFIT_GAP = 0.3;
 const REACH = 2.0;
 /** start shape: each layer a garment lies over pushes it this much further off the skin (cm) */
 const LAYER_STEP = 0.9;
+/** passes of the display layering (displayOutfit) */
+const DISPLAY_PASSES = 4;
 
 export interface OutfitInput {
   project: Project;
@@ -64,8 +66,10 @@ export interface Outfit3D extends Garment3D {
   garments: OutfitGarment[];
   /** ordered garment pairs [inner, outer] that touch each other */
   pairs: [number, number][];
-  /** rebuild the layer contacts now (also runs at the start of every frame) */
+  /** rebuild the layer contacts now (also runs at the start of every other frame) */
   rebind: () => void;
+  /** let every garment go at once (a warm start: they are all sewn already) */
+  release: () => void;
 }
 
 const TOP_ARM = new Set(['sleeve', 'cuff']);
@@ -168,6 +172,7 @@ export function assembleOutfit(items: OutfitInput[], body: Body, collider?: Clot
   sim.sewFrames = sewFrames || Math.max(...built.map((b) => b.G.sim.sewFrames));
   sim.panelOf = panelOf; sim.uv = uv; sim.seamGroup = group; sim.nearSeam = nearSeam;
   sim.selfRadius = selfRadius; sim.garmentOf = garmentOf; sim.crossRadius = OUTFIT_GAP;
+  sim.sewRise = Math.max(...built.map((b) => b.G.sim.sewRise));
   if (layerIdx.length) { sim.layerIdx = layerIdx; sim.layerW = layerW; if (anySkip) sim.skipPanel = skipPanel; }
   sim.collider = contactCollider(contact, col);
 
@@ -191,13 +196,30 @@ export function assembleOutfit(items: OutfitInput[], body: Body, collider?: Clot
     sim, panels, limits, seamLinks, body: col, contact, panelSign: Int8Array.from(panelSign), collar: built[0].G.collar,
     // the outfit as a whole: the first garment's style; every garment's buttoned pairs (ids are unique per project)
     style: built[0].G.style, edits: built[0].G.edits, buttoned: built.flatMap(({ G }) => G.buttoned ?? []),
-    foldLayers: nAttachLayers, ...(layerNear.length ? { layerNear } : {}), garments, pairs, rebind: () => {},
+    foldLayers: nAttachLayers, ...(layerNear.length ? { layerNear } : {}), garments, pairs, rebind: () => {}, release: () => {},
   };
   const binder = contactBinder(O, bodyFrame(body));
   O.rebind = binder;
+  // dressing in order: a garment is held in its start shape until the ones under it are sewn, then it is sewn over
+  // them (all of it in the gravity free sewing phase, which is that much longer)
+  const per = sim.sewFrames, maxRank = Math.max(...rank);
+  const held = new Map<number, Float32Array>();
+  if (maxRank > 0 && !(globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.NOSTAGE) {
+    garments.forEach((g, k) => {
+      if (!rank[k]) return;
+      held.set(k, sim.invMass.slice(g.start, g.start + g.count));
+      sim.invMass.fill(0, g.start, g.start + g.count);
+    });
+    sim.sewFrames = per * (maxRank + 1);
+  }
+  const stage = () => {
+    if (!held.size) return;
+    for (const [k, m] of held) if (sim.frames >= rank[k] * per) { sim.invMass.set(m, garments[k].start); held.delete(k); }
+  };
+  O.release = () => { sim.frames = Math.max(sim.frames, maxRank * per); stage(); };
   // rebound every other frame: in between, the barycentric binding slides along with the cloth
   let tick = 0;
-  sim.frameHook = () => { if ((tick++ & 1) === 0) binder(); };
+  sim.frameHook = () => { stage(); if ((tick++ & 1) === 0) binder(); };
   binder();
   return O;
 }
@@ -351,8 +373,8 @@ export function displayOutfit(O: Outfit3D, out: Float32Array) {
   displayPositions(O, out);
   const I = O.sim.contactIdx, W = O.sim.contactW;
   if (!I || !W) return;
-  // two passes: a middle layer pushed out by the one under it then pushes the one over it
-  for (let pass = 0; pass < 2; pass++) for (let e = 0, k = 0; e < O.sim.contactCount * 4; e += 4, k += 5) {
+  // a few passes: a middle layer pushed out by the one under it then pushes the one over it
+  for (let pass = 0; pass < DISPLAY_PASSES; pass++) for (let e = 0, k = 0; e < O.sim.contactCount * 4; e += 4, k += 5) {
     const a = I[e] * 3, h0 = I[e + 1] * 3, h1 = I[e + 2] * 3, h2 = I[e + 3] * 3;
     const ux = out[h1] - out[h0], uy = out[h1 + 1] - out[h0 + 1], uz = out[h1 + 2] - out[h0 + 2];
     const vx = out[h2] - out[h0], vy = out[h2 + 1] - out[h0 + 1], vz = out[h2 + 2] - out[h0 + 2];
@@ -371,7 +393,8 @@ export function displayOutfit(O: Outfit3D, out: Float32Array) {
 /**
  * Warm start an outfit from the previous one: every garment that was already in it (same project, same pieces)
  * starts from its drape. If a garment is new or changed beyond a warm start, the whole outfit keeps the full sewing
- * phase (the warm garments only settle again) so the new one can be sewn.
+ * phase (the warm garments only settle again) so the new one can be sewn; if the last outfit was still being sewn,
+ * sewing carries on from where it was.
  */
 export function warmStartOutfit(next: Outfit3D, prev: Outfit3D): boolean {
   let all = true, any = false;
@@ -385,8 +408,16 @@ export function warmStartOutfit(next: Outfit3D, prev: Outfit3D): boolean {
     if (ok) any = true; else all = false;
   }
   next.sim.prev.set(next.sim.pos);
-  next.sim.frames = 0;
-  next.sim.sewFrames = all ? 4 : sewFrames;
+  next.sim.sewFrames = sewFrames;
+  if (prev.sim.frames < prev.sim.sewFrames) {
+    // the last outfit was still being sewn (an edit right after opening it): carry on sewing where it was, or the
+    // garments not yet sewn would get gravity and fall off
+    next.sim.frames = Math.min(prev.sim.frames, sewFrames);
+  } else if (all) {
+    next.release();
+    next.sim.frames = 0;
+    next.sim.sewFrames = 4; // already sewn, just settle
+  } else next.sim.frames = 0;
   if (any) next.rebind();
   return any;
 }

@@ -1,5 +1,5 @@
 // Run: npx tsx tests/drape.ts   (every catalog style drapes on the default body; BODY=female for the female preset)
-// Sections (argv[2]): a style id, 'edits', 'collar', 'collar-edits', 'hats'.
+// Sections (argv[2]): a style id, 'edits', 'collar', 'collar-edits', 'hats', 'height'.
 // Checks: no NaN, seams closed, strain sane, the garment stays where it belongs (hats on the head, pants on the hips).
 import { makePreset } from '../src/data/presets';
 import { CATALOG } from '../src/data/catalog';
@@ -461,6 +461,48 @@ if (!only || only === 'hats') {
     const b = hatPose(G, f);
     const ok = b.axis < 2 && Math.abs(b.y - a.y) < 1 && b.lr < 1 && b.fb < 4 && b.y > f.headBandH;
     verdict(ok, `${g.padEnd(11)} after 20 s: crown centre ${b.axis.toFixed(2)} cm off the head axis, moved ${(b.y - a.y).toFixed(2)} cm, brim tilt left/right ${b.lr.toFixed(2)} cm, front/back ${b.fb.toFixed(2)} cm`);
+  }
+}
+
+// ---- other heights: a top must not climb the body while sewn (it left the collar in the neck and a fold caught at the
+// waist at 173 cm); drape on the posed collider the app uses, collar worn down as new projects have it ----
+if (!only || only === 'height') {
+  console.log('\n== height 173 ==');
+  const body = { ...DEFAULT_BODY, height: 173 };
+  const fb = bodyFrame(body);
+  const FB = calibratedField(body), gridB = meshField(FB).grid;
+  for (const g of ['basic-tee', 'button-up', 'polo', 'jacket', 'jeans'] as StyleId[]) {
+    const col = new PosedCollider(gridB, [fb.ankleH + 6, fb.crotchH + 1], fb);
+    const pieces = makePreset(g, body);
+    const G = assemble(g, pieces, body, SP, col, pieces.some((p) => p.role === 'collar') ? E({ collar: 'down' }) : undefined)!;
+    G.sim.awake = true; // the worker keeps it awake for the first seconds
+    let k = 0, rise = 0;
+    const neckband = G.panels.filter((p) => p.piece.role === 'collar' || p.piece.role === 'neckband');
+    const y0 = neckband.length ? Math.max(...neckband.flatMap((p) => p.mesh.uv.map((_, i) => G.sim.pos[(p.offset + i) * 3 + 1]))) : 0;
+    while (k < 420) {
+      G.sim.step(); k++;
+      if (neckband.length && k <= G.sim.sewFrames) rise = Math.max(rise, Math.max(...neckband.flatMap((p) => p.mesh.uv.map((_, i) => G.sim.pos[(p.offset + i) * 3 + 1]))) - y0);
+    }
+    // folds: along each pattern column of the body pieces, places where the cloth runs back up (a catch)
+    let folds = 0;
+    for (const P of G.panels) {
+      if (P.attach || (P.piece.role !== 'front' && P.piece.role !== 'back')) continue;
+      const cols = new Map<number, number[]>();
+      P.mesh.uv.forEach((q, i) => { const c = Math.round(q.x / 2); if (!cols.has(c)) cols.set(c, []); cols.get(c)!.push(i); });
+      for (const idx of cols.values()) {
+        idx.sort((a, b) => P.mesh.uv[a].y - P.mesh.uv[b].y);
+        for (let j = 1; j < idx.length; j++) if (P.mesh.uv[idx[j]].y - P.mesh.uv[idx[j - 1]].y > 1 && G.sim.pos[(P.offset + idx[j]) * 3 + 1] > G.sim.pos[(P.offset + idx[j - 1]) * 3 + 1] + 0.3) folds++;
+      }
+    }
+    // collar or neckband inside the neck
+    const probe = new PosedCollider(gridB); probe.thickness = -0.2;
+    const tmp = new Float32Array(3), o = { nx: 0, ny: 0, nz: 0, depth: 0 };
+    let inNeck = 0, nb = 0;
+    for (const P of neckband) for (let i = 0; i < P.mesh.uv.length; i++) { nb++; tmp.set(G.sim.pos.subarray((P.offset + i) * 3, (P.offset + i) * 3 + 3)); if (probe.project(tmp, 0, o)) inNeck++; }
+    let mx = -1e9; for (let i = 1; i < G.sim.pos.length; i += 3) mx = Math.max(mx, G.sim.pos[i]);
+    const top = g !== 'jeans';
+    const ok = folds <= 5 && inNeck === 0 && (top ? mx > fb.neckH - 1 && mx < fb.neckH + 10 && rise < 4 : mx > fb.waistH - 6 && mx < fb.waistH + 3);
+    verdict(ok, `${g.padEnd(10)} at 173 cm: ${folds} folds on the body pieces, top at ${mx.toFixed(1)} (neck ${fb.neckH.toFixed(1)}, waist ${fb.waistH.toFixed(1)})${top ? `, collar rose ${rise.toFixed(1)} cm while sewn, ${inNeck} of ${nb} collar points in the neck` : ''}`);
   }
 }
 

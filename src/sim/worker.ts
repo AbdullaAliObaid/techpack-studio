@@ -64,7 +64,16 @@ type BuildMsg =
    * The body display is off: the cloth floats in its draped shape (no gravity, no body, no movement) until it is
    * turned back on, when the normal simulation picks up from that shape. Builds while floating float too.
    */
-  | { type: 'float'; on: boolean };
+  | { type: 'float'; on: boolean }
+  /**
+   * Pull by hand: cloth vertex `vertex` (index into the built cloth) is drawn toward `target` (world cm) like a soft
+   * spring while the pointer is down; send it again as the pointer moves. 'release' lets go: the cloth settles from
+   * where it was left. 'pin' holds a vertex in place (on) or lets it go (off); pins last until the next build.
+   * Ignored while floating.
+   */
+  | { type: 'grab'; vertex: number; target: [number, number, number] }
+  | { type: 'release' }
+  | { type: 'pin'; vertex: number; on: boolean };
 
 let attachments: Attachment[] = [];
 /** outfit: attachments per garment project (the outfit message brings them, an attachments message updates one) */
@@ -104,6 +113,8 @@ const display = (g: Garment3D, out: Float32Array) => { const O = outfitOf(g); if
 
 // ---- float: the body display is off, the cloth holds its draped shape in the air ----
 let floating = false;
+/** a vertex is being pulled by hand: the cloth stays awake */
+let grabbing = false;
 /** frames a garment rebuilt while floating is still stepped (seams close, in the air) before it freezes */
 let floatSettle = 0;
 
@@ -116,6 +127,14 @@ function wake() {
 }
 
 function loop(myGen: number) {
+  try { loopFrame(myGen); } catch (err) {
+    // a frame that throws must not stop the drape silently: say so, and stop this simulation
+    console.warn('simulation frame failed', err);
+    (self as unknown as Worker).postMessage({ type: 'status', text: `Simulation stopped: ${String((err as Error)?.message ?? err)}` });
+  }
+}
+
+function loopFrame(myGen: number) {
   if (!G || myGen !== gen) return;
   const t0 = performance.now();
   const poseT = simTime - modeStart;
@@ -123,7 +142,7 @@ function loop(myGen: number) {
   posePrev = poseCur;
   if (mode === 'custom' && poseDistance(poseCur, poseTarget) > 0) { poseCur = stepPose(poseCur, poseTarget, POSE_SPEED / 60); poseMovedAt = simTime; }
   G.sim.substepHook = floating ? null : (k, n) => applyPose(((k + 1) / n) / 60);
-  G.sim.awake = floating ? false : mode === 'custom' ? poseT < 1.2 || simTime - poseMovedAt < 1.0 : mode !== 'stand' || poseT < 1.2;
+  G.sim.awake = floating ? false : grabbing ? true : mode === 'custom' ? poseT < 1.2 || simTime - poseMovedAt < 1.0 : mode !== 'stand' || poseT < 1.2;
   if (floating && floatSettle-- <= 0) G.sim.sleeping = true;
   G.sim.step();
   simTime += 1 / 60;
@@ -199,6 +218,26 @@ async function handle(m: BuildMsg) {
     }
     return;
   }
+  if (m.type === 'grab' || m.type === 'release' || m.type === 'pin') {
+    if (!G || floating) return;
+    const sim = G.sim;
+    if (m.type === 'grab') {
+      if (m.vertex < 0 || m.vertex >= sim.n) return;
+      sim.grabV = m.vertex; sim.grabT.set(m.target);
+      grabbing = true;
+    } else if (m.type === 'release') {
+      sim.grabV = -1;
+      grabbing = false;
+    } else sim.pin(m.vertex, m.on);
+    if (sim.sleeping || m.type !== 'grab') {
+      // awake again from where it is (never back through the sewing phase)
+      sim.sleeping = false;
+      sim.frames = Math.max(sim.frames, sim.sewFrames + 1);
+      if (timer) clearTimeout(timer);
+      loop(gen);
+    }
+    return;
+  }
   if (m.type === 'attachments') {
     if (m.projectId !== undefined && outfitOf(G)) outfitAttachments.set(m.projectId, m.attachments);
     else attachments = m.attachments;
@@ -246,6 +285,7 @@ async function handle(m: BuildMsg) {
   // a build while the body is hidden floats too: the cloth is sewn in the air round where the body was
   if (floating) { setFloat(next, true); next.sim.sleeping = false; floatSettle = m.warm ? 20 : 90; }
   G = next;
+  grabbing = false;
   gen++;
   const index: number[] = [];
   const groups: { start: number; count: number; panel: number }[] = [];
