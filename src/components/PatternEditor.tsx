@@ -1,4 +1,5 @@
 import BandStripes from './BandStripes';
+import { inspectAttachment, inspectPiece } from './inspect';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { useStore, usePick } from '../store';
@@ -930,6 +931,13 @@ export default function PatternEditor() {
           onPointerCancel={onPointerUp}
           onPointerLeave={() => setHover(null)}
           onContextMenu={(e) => e.preventDefault()}
+          onDoubleClick={(e) => {
+            // double click a trim or design to edit it, a piece to edit its fabric
+            if (useStore.getState().tool !== 'select') return;
+            const t = (e.target as Element).closest('[data-kind]') as HTMLElement | null;
+            if (t?.dataset.kind === 'attach' && t.dataset.att) inspectAttachment(t.dataset.att);
+            else if (t?.dataset.kind === 'piece' && t.dataset.piece) inspectPiece(t.dataset.piece, t.dataset.inst === undefined ? null : Number(t.dataset.inst));
+          }}
         >
           {grid}
           <g transform={`translate(${view.x},${view.y}) scale(${k})`}>

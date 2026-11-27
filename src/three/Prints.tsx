@@ -10,7 +10,8 @@ import { registerHitCloth, type ClothHit } from './hitCloth';
 import { NONE, type VertexPattern } from './printsAdapter';
 import { fabricHex as hexOf } from './fabricAdapter';
 import { patternFill, isPlain } from './detailsPattern';
-import { artVersion, drawLayer, fontOf, fillRuleOf, hasPictures, subscribeArt, unitPath } from './detailsArt';
+import { artVersion, drawLayer, drawText, fillRuleOf, hasPictures, subscribeArt, unitPath } from './detailsArt';
+import { stripeCorners } from '../data/bandGeom';
 import { bandRanges, type BandStripe } from '../components/designDoc';
 import { applyLook, cottonTile, grainTile, labelLook, sheenLook, weaveTile, type LabelLook } from './detailsLook';
 
@@ -162,10 +163,7 @@ function stitchLayer(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2
     x.globalCompositeOperation = 'destination-in';
     x.fillStyle = '#000';
     if (l.shape === 'text') {
-      x.font = fontOf(l, Math.max(0.5, l.h));
-      x.textAlign = 'center';
-      x.textBaseline = 'middle';
-      x.fillText(l.text ?? '', 0, 0, w);
+      drawText(x, l, Math.max(0.5, l.h), w);
     } else {
       x.save(); x.scale(l.w, l.h); x.fill(unitPath(l)!, fillRuleOf(l)); x.restore();
     }
@@ -180,7 +178,7 @@ function stitchLayer(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2
     x.lineWidth = 0.075;
     x.setLineDash([0.16, 0.045]);
     x.lineCap = 'round';
-    if (l.shape === 'text') { x.font = fontOf(l, Math.max(0.5, l.h)); x.textAlign = 'center'; x.textBaseline = 'middle'; x.strokeText(l.text ?? '', 0, 0, w); }
+    if (l.shape === 'text') { drawText(x, l, Math.max(0.5, l.h), w, 'stroke'); }
     else { x.scale(l.w, l.h); x.lineWidth = 0.075 / Math.max(l.w, l.h); x.setLineDash([0.16 / Math.max(l.w, l.h), 0.045 / Math.max(l.w, l.h)]); x.stroke(unitPath(l)!); }
     x.restore();
   };
@@ -339,6 +337,13 @@ const reliefOf = (a: Attachment) => (a.kind !== 'embroidery' && a.kind !== 'labe
  * are summed in two scratch canvases (light on black, 'lighter' adds up stacked layers) and combined onto the grey.
  * Band methods add a little: woven is a fine rib, sewn a stitched stripe with grooves at its edges.
  */
+/** a band stripe: a parallelogram when the band is tilted (src/data/bandGeom.ts) */
+function fillStripe(c: CanvasRenderingContext2D, s: BandStripe, xa: number, xb: number) {
+  c.beginPath();
+  stripeCorners(s, xa, xb).forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+  c.closePath();
+  c.fill();
+}
 function paintRelief(hc: CanvasRenderingContext2D, W: number, H: number, k: number, b: Bounds, arts: Attachment[], own: string | undefined, flip: boolean, bands: { method: string; stripes: BandStripe[] }[]) {
   const pc = scratchCanvas(0, W, H), nc = scratchCanvas(1, W, H);
   const pg = pc.getContext('2d')!, ng = nc.getContext('2d')!;
@@ -364,11 +369,11 @@ function paintRelief(hc: CanvasRenderingContext2D, W: number, H: number, k: numb
       pg.save();
       pg.globalAlpha = level(bd.method === 'sewn' ? 0.7 : 0.35);
       pg.fillStyle = '#fff';
-      pg.fillRect(b.x0 - 1, s.y0, b.w + 2, s.y1 - s.y0);
+      fillStripe(pg, s, b.x0 - 1, b.x0 + b.w + 1);
       pg.restore();
       if (bd.method === 'sewn') {
         ng.save(); ng.globalAlpha = level(0.5); ng.strokeStyle = '#fff'; ng.lineWidth = 0.07; ng.setLineDash([0.22, 0.12]);
-        for (const y of [s.y0 + 0.12, s.y1 - 0.12]) { ng.beginPath(); ng.moveTo(b.x0 - 1, y); ng.lineTo(b.x0 + b.w + 1, y); ng.stroke(); }
+        for (const y of [s.y0 + 0.12, s.y1 - 0.12]) { ng.beginPath(); ng.moveTo(b.x0 - 1, y + (s.slope ?? 0) * (b.x0 - 1)); ng.lineTo(b.x0 + b.w + 1, y + (s.slope ?? 0) * (b.x0 + b.w + 1)); ng.stroke(); }
         ng.restore();
       } else {
         // woven rib: fine horizontal ribs along the stripe
@@ -579,7 +584,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
           ctx.setTransform(1, 0, 0, 1, 0, 0);
           ctx.clearRect(0, 0, slot.canvas.width, slot.canvas.height);
           ctx.setTransform(k, 0, 0, k, -b.x0 * k, -b.y0 * k);
-          for (const bd of myBands) for (const q of bd.stripes) { ctx.fillStyle = q.color; ctx.fillRect(b.x0 - 1, q.y0, b.w + 2, q.y1 - q.y0); }
+          for (const bd of myBands) for (const q of bd.stripes) { ctx.fillStyle = q.color; fillStripe(ctx, q, b.x0 - 1, b.x0 + b.w + 1); }
           for (const a of inkArt) drawInk(ctx, a, a.id === own, a.id !== own && a.kind !== 'print', a.id === sel ? accent : null, flip);
           slot.tex.needsUpdate = true;
           inkMat.visible = inkArt.length > 0 || myBands.length > 0;
@@ -702,6 +707,8 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
 
     const down = (e: PointerEvent) => {
       if (!visible || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      // Camera mode: a drag only moves the view, nothing on the garment is picked up
+      if (useStore.getState().view3dMode === 'camera') { tap = { x: e.clientX, y: e.clientY }; return; }
       const h = hit(e.clientX, e.clientY, false);
       const a = h ? attachmentAt(listRef.current, h.pieceId, h.instance, h.x, h.y) : null;
       if (!h || !a) { tap = { x: e.clientX, y: e.clientY }; return; }

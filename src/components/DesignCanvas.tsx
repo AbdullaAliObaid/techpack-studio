@@ -7,6 +7,8 @@ import { fontOf } from '../three/detailsArt';
 import { isCloth, newLayer, type DLayer, type DesignDoc } from './designDoc';
 import { imageFileOf, openPhoto } from './editHelpers';
 import { uid } from '../lib/units';
+import { designTargets, layerBox, snapBox, unionBox } from './designSnap';
+import type { Guide } from './snap';
 import Icon from './Icon';
 
 const GRIDS = [0.1, 0.25, 0.5, 1, 2, 5];
@@ -96,7 +98,8 @@ export default function DesignCanvas() {
   const [size, setSize] = useState({ w: 600, h: 500 });
   const [view, setView] = useState({ k: 24, x: 300, y: 250 });
   const [grid, setGrid] = useState(true);
-  const [snap, setSnap] = useState(true);
+  const snap = useStore((s) => s.snapOn);
+  const [guides, setGuides] = useState<Guide[]>([]);
   const [tool, setTool] = useState<'select' | 'pen'>('select');
   const [pen, setPen] = useState<PenPt[]>([]);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
@@ -234,13 +237,16 @@ export default function DesignCanvas() {
     }
     if (d.kind === 'move') {
       let dx = p.x - d.start.x, dy = p.y - d.start.y;
-      if (d.ids.length === 1 && snap && !e.altKey) {
+      if (snap && !e.altKey) {
+        // magnet: piece edges, centre lines and the other layers, then the grid for any axis that found nothing
+        const mv = layers.filter((q) => d.ids.includes(q.id)).map((q) => layerBox({ ...q, x: d.orig[q.id].x + dx, y: d.orig[q.id].y + dy }));
+        const rest = layers.filter((q) => !d.ids.includes(q.id) && !q.hidden).map(layerBox);
+        const r = snapBox(unionBox(mv), designTargets(design.w, design.h, rest), 7 / view.k);
         const o = d.orig[d.ids[0]];
-        let nx = snapV(o.x + dx, false), ny = snapV(o.y + dy, false);
-        if (Math.abs(o.x + dx) * view.k < 6) nx = 0; // centre guides
-        if (Math.abs(o.y + dy) * view.k < 6) ny = 0;
-        dx = nx - o.x; dy = ny - o.y;
-      }
+        if (r.dx === 0 && !r.guides.some((g) => g.axis === 'x')) dx = snapV(o.x + dx, false) - o.x; else dx += r.dx;
+        if (r.dy === 0 && !r.guides.some((g) => g.axis === 'y')) dy = snapV(o.y + dy, false) - o.y; else dy += r.dy;
+        setGuides(r.guides);
+      } else setGuides([]);
       patchLayers(d.ids, (l) => ({ x: round(d.orig[l.id].x + dx), y: round(d.orig[l.id].y + dy) }));
       return;
     }
@@ -258,7 +264,7 @@ export default function DesignCanvas() {
       patchLayers([l.id], () => (e.shiftKey ? { w: round(w), h: round(Math.max(0.3, snapV(Math.abs(ly) * 2, e.altKey))) } : { w: round(w), h: round(w * d.ratio) }));
     }
   };
-  const up = () => { drag.current = null; };
+  const up = () => { drag.current = null; setGuides([]); };
 
   const wheel = (e: React.WheelEvent) => {
     const r = svg.current!.getBoundingClientRect();
@@ -331,6 +337,13 @@ export default function DesignCanvas() {
               )}
             </g>
           )}
+          {guides.length > 0 && (
+            <g pointerEvents="none" stroke="var(--purple)" strokeWidth={px(1.2)}>
+              {guides.map((g, i) => (g.axis === 'x'
+                ? <line key={i} x1={g.at} x2={g.at} y1={Math.min(g.a, -design.h / 2) - 1} y2={Math.max(g.b, design.h / 2) + 1} />
+                : <line key={i} y1={g.at} y2={g.at} x1={Math.min(g.a, -design.w / 2) - 1} x2={Math.max(g.b, design.w / 2) + 1} />))}
+            </g>
+          )}
           {bbox && <rect x={bbox.x0} y={bbox.y0} width={bbox.x1 - bbox.x0} height={bbox.y1 - bbox.y0} fill="none" stroke="var(--accent)" strokeWidth={px(1.5)} strokeDasharray={`${px(5)} ${px(3)}`} pointerEvents="none" />}
           {/* pen in progress */}
           {tool === 'pen' && pen.length > 0 && (
@@ -363,7 +376,11 @@ export default function DesignCanvas() {
         <button aria-label="Fit artboard" title="Fit artboard (F)" onClick={() => fit()}><Icon name="fit" size={18} /></button>
         <span className="dz-sep" />
         <button className={grid ? 'on' : ''} aria-pressed={grid} aria-label="Show grid" title="Grid" onClick={() => setGrid(!grid)}><Icon name="grid" size={18} /></button>
-        <button className={snap ? 'on' : ''} aria-pressed={snap} aria-label="Snap to grid" title="Snap to grid and centre (hold Alt to skip)" onClick={() => setSnap(!snap)}><Icon name="snap" size={18} /></button>
+      </div>
+      <div className="chart-mods material" role="toolbar" aria-label="Editing modifiers">
+        <button className={`mod ${snap ? 'on' : ''}`} aria-pressed={snap} title="Snap: layers line up with the piece edges, the centre lines and other layers. Hold Alt to turn it off for one drag." onClick={() => set({ snapOn: !snap })}>
+          <Icon name="snap" size={18} /><span>Snap</span>
+        </button>
       </div>
       {tool === 'pen' && (
         <div className="dz-hint material" role="status">

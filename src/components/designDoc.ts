@@ -4,6 +4,7 @@
 import type { Attachment, Band, Outline, Sheen, ShapeLayer } from '../data/edits';
 import type { Piece } from '../data/presets';
 import { uid } from '../lib/units';
+import { bandSlope } from '../data/bandGeom';
 import { outlinePolygon, pathPolygon, shapePolygon } from '../lib/shapes';
 
 export type Workspace = 'shape' | 'seams' | 'fabric' | 'paint' | 'design' | 'trims' | 'fit' | 'outfit' | 'finish' | 'review' | 'techpack';
@@ -131,9 +132,17 @@ const bounds = (pts: { x: number; y: number }[]) => {
   return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 };
 
-export function attachmentPatch(doc: DesignDoc): Pick<Attachment, 'kind' | 'name' | 'w' | 'h' | 'outline' | 'points' | 'layers' | 'thread' | 'sheen' | 'fabric'> {
+export function attachmentPatch(doc: DesignDoc): Pick<Attachment, 'kind' | 'name' | 'w' | 'h' | 'outline' | 'points' | 'layers' | 'thread' | 'sheen' | 'fabric'> & Partial<Pick<Attachment, 'shape' | 'text'>> {
   const cloth = isCloth(doc);
   const base = baseLayer(doc);
+  if (cloth && base && base.shape === 'text' && base.text?.trim()) {
+    // letters as the cloth: the patch is cut letter by letter (not a box round the text)
+    const rest = flatten({ layers: doc.layers.filter((l) => l !== base), groups: doc.groups }).map((l) => ({ ...l, x: Math.round((l.x - base.x) * 100) / 100, y: Math.round((l.y - base.y) * 100) / 100 }));
+    return {
+      kind: doc.makeAs, name: doc.name, w: Math.max(0.5, Math.round(base.w * 100) / 100), h: Math.max(0.5, Math.round(base.h * 100) / 100), outline: 'shape', shape: 'text', text: base.text.trim(), layers: rest, thread: doc.thread, sheen: doc.sheen,
+      fabric: { id: 'canvas', color: 0, hex: base.color },
+    };
+  }
   if (cloth && base) {
     // the base is the cloth: its colour is the cloth colour and its outline the patch outline; everything else is centred on it
     const pts = basePolygon(base);
@@ -154,7 +163,9 @@ export function attachmentPatch(doc: DesignDoc): Pick<Attachment, 'kind' | 'name
 export function docFromAttachment(a: Attachment): DesignDoc {
   const kind = a.kind === 'patch' || a.kind === 'applique' || a.kind === 'embroidery' || a.kind === 'print' ? a.kind : 'patch';
   const doc: DesignDoc = { ...newDesign(), name: a.name, makeAs: kind, w: a.w, h: a.h, outline: a.outline === 'custom' || a.outline === 'shape' ? 'rounded' : a.outline, cloth: a.fabric?.hex ?? '#1d3b6e', thread: a.thread ?? '#e9e2cf', sheen: a.sheen ?? 'matte', layers: a.layers.map((l) => ({ ...l }) as DLayer), placedId: a.id, pieceId: a.pieceId, instance: a.instance ?? 0 };
-  if (kind === 'patch' || kind === 'applique') {
+  if ((kind === 'patch' || kind === 'applique') && a.outline === 'shape' && a.shape === 'text' && a.text) {
+    doc.layers = [newLayer('text', { w: a.w, h: a.h, text: a.text, color: doc.cloth, name: 'Letters' }), ...doc.layers];
+  } else if (kind === 'patch' || kind === 'applique') {
     const pts = a.outline === 'custom' && a.points?.length ? a.points : outlinePolygon(a.outline === 'shape' ? 'rect' : a.outline, a.w, a.h);
     const d = 'M' + pts.map((q) => `${Math.round((q.x / a.w) * 1000) / 1000} ${Math.round((q.y / a.h) * 1000) / 1000}`).join('L') + 'Z';
     doc.layers = [newLayer('path', { w: a.w, h: a.h, path: d, color: doc.cloth, name: 'Base' }), ...doc.layers];
@@ -178,15 +189,22 @@ export function pieceBottom(p: Piece): number {
 const BAND_ROLES = new Set(['front', 'back']);
 export const bandSkips = (b: Band, p: Piece) => (b.skip ? b.skip.includes(p.id) : !BAND_ROLES.has(p.role));
 
-export interface BandStripe { y0: number; y1: number; color: string }
+export interface BandStripe {
+  /** the stripe's top and bottom at pattern x = 0 (the centre line) */
+  y0: number; y1: number; color: string;
+  /** dy/dx when the band is tilted (see src/data/bandGeom.ts); 0 or missing = level */
+  slope?: number;
+}
 /** Where the band's stripes sit on one piece, in that piece's own pattern coordinates (cm), or null when it skips the piece. */
 export function bandRanges(b: Band, p: Piece): BandStripe[] | null {
   if (bandSkips(b, p) || !b.stripes.length) return null;
   const total = b.stripes.reduce((s, q) => s + q.height, 0);
   let y = b.from === 'shoulder' ? pieceTop(p) + b.offset : pieceBottom(p) - b.offset - total;
-  const lo = Math.min(...p.points.map((q) => q.y)), hi = Math.max(...p.points.map((q) => q.y));
+  const slope = bandSlope(b, p.role);
+  const reach = Math.abs(slope) * Math.max(...p.points.map((q) => Math.abs(q.x)));
+  const lo = Math.min(...p.points.map((q) => q.y)) - reach, hi = Math.max(...p.points.map((q) => q.y)) + reach;
   const out: BandStripe[] = [];
-  for (const s of b.stripes) { out.push({ y0: y, y1: y + s.height, color: s.color }); y += s.height; }
+  for (const s of b.stripes) { out.push({ y0: y, y1: y + s.height, color: s.color, ...(slope ? { slope } : {}) }); y += s.height; }
   if (out[out.length - 1].y1 < lo || out[0].y0 > hi) return null;
   return out;
 }

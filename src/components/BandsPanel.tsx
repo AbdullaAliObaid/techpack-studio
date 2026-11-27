@@ -1,6 +1,6 @@
 // "Band across the garment": a stripe set (rugby / polo chest band) at a height measured from the shoulder or the hem.
 import { useStore, usePick } from '../store';
-import { ColorField, LenInput, Row, Seg, SubLabel } from './controls';
+import { ColorField, LenInput, NumInput, Row, Seg, SubLabel } from './controls';
 const BAND_SWATCH = ['#c0392b', '#ffffff', '#16315f', '#111111', '#d9b45a', '#1f5d3a'];
 import { bandSkips } from './designDoc';
 import type { Band } from '../data/edits';
@@ -35,6 +35,8 @@ export default function BandsPanel() {
           <SubLabel>Position</SubLabel>
           <Row label="Measure from"><Seg<Band['from']> label="Measure from" full={false} value={band.from} options={[{ id: 'shoulder', label: 'Shoulder' }, { id: 'hem', label: 'Hem' }]} onChange={(v) => updateBand(band.id, { from: v })} /></Row>
           <Row label="Distance"><LenInput units={units} label="Band distance" value={band.offset} min={0} max={120} onChange={(v) => updateBand(band.id, { offset: v })} /></Row>
+          <Row label="Angle"><NumInput label="Band angle in degrees" unit="°" value={band.angle ?? 0} min={-60} max={60} step={1} digits={0} onChange={(v) => updateBand(band.id, { angle: Math.round(v) })} /></Row>
+          <div className="group-note">Tilt the band to turn it around the garment. It stays continuous at the side seams. You can also drag the round handle on the chart, and Shift snaps to 15 degrees.</div>
           <div className="group-note">Top edge of the band, {band.offset} cm {band.from === 'shoulder' ? 'down from the high point shoulder' : 'up from the hem'}. Total height {Math.round(total * 10) / 10} cm.</div>
 
           <SubLabel>Stripes, top to bottom</SubLabel>

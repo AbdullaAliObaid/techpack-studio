@@ -28,9 +28,8 @@ export interface DesignOpts {
 
 export const DEFAULT_OPTS: DesignOpts = { ink: '#eb5757', thread: '#f2c94c', text: 'ABC' };
 
-/** Block capitals, width follows the number of letters. */
-export const clean = (t: string) => (t.toUpperCase().replace(/[^A-Z0-9 &!?.\-+]/g, '').slice(0, 12) || 'A');
-export const textWidth = (t: string, h: number) => Math.max(h * 0.8, clean(t).length * h * 0.72);
+import { clean, textWidth } from './artworkMethod';
+export { clean, textWidth };
 
 const withFabric = (a: AttachTemplate, o: DesignOpts): AttachTemplate => ({ ...a, ...(o.fabric ? { fabric: { ...o.fabric } } : {}), thread: o.thread });
 

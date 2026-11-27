@@ -7,6 +7,8 @@ import { listProjects } from '../lib/projects';
 import Icon from './Icon';
 import { Sketch } from './Sketches';
 import { flushSave, pickGroups, type PickGroup } from './nav';
+import DesignShelf from './DesignShelf';
+import type { Design } from '../data/designs';
 import { BodyChoice } from './BodyPresets';
 import { allBodyPresets, leaveOutfit, sameBody } from './uiData';
 import type { Body } from '../three/body';
@@ -73,6 +75,14 @@ export default function NewFlow() {
     else st.createProject({ style: styleId, name: name || suggestion(styleId), fit, sex, body: bodyPick });
     flushSave();
     st.setScreen('editor');
+  };
+
+  /** an example design opens as a new project, the open one is saved first */
+  const openDesign = (d: Design) => {
+    const st = useStore.getState();
+    flushSave();
+    leaveOutfit();
+    if (st.loadDesign(d)) { flushSave(); st.setScreen('editor'); }
   };
 
   // keyboard: Escape steps back, Enter creates on the last step
@@ -150,11 +160,14 @@ export default function NewFlow() {
               )}
               <div className="style-grid">
                 {group.styles.map((s) => (
-                  <button key={s.id} className={`style-card ${s.id === styleId ? 'on' : ''}`} onClick={() => pickStyle(s.id)} aria-label={`${s.name}. ${s.blurb}`}>
-                    <span className="style-art"><Sketch id={s.id} decorative /></span>
-                    <span className="style-name">{s.name}</span>
-                    <span className="style-blurb">{s.blurb}</span>
-                  </button>
+                  <div key={s.id} className="style-item">
+                    <button className={`style-card ${s.id === styleId ? 'on' : ''}`} onClick={() => pickStyle(s.id)} aria-label={`${s.name}. ${s.blurb}`}>
+                      <span className="style-art"><Sketch id={s.id} decorative /></span>
+                      <span className="style-name">{s.name}</span>
+                      <span className="style-blurb">{s.blurb}</span>
+                    </button>
+                    <DesignShelf style={s.id} onPick={openDesign} />
+                  </div>
                 ))}
               </div>
             </>
