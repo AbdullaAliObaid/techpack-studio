@@ -1,5 +1,6 @@
 // Inspector: four sections (Garment, Construction, Body, Specs), each with titled, collapsible groups.
 import { useStore, type InspectorTab, usePick } from '../store';
+import type { PieceFabric } from '../data/presets';
 import { CATALOG, migrateGarment } from '../data/catalog';
 import { fabricById } from '../data/fabrics';
 import { fitTable, garmentSpecs, pieceSpecs, seamReport } from '../lib/specs';
@@ -83,8 +84,14 @@ export function CollarControl() {
 
 /** Outside and inside of the garment: a two face preview of the selected piece, a default for the whole garment, and the chart face. */
 function FacesSection() {
-  const { project, selPiece, viewFace, set, setInsideFabric, setInsideAll } = usePick('project', 'selPiece', 'viewFace', 'set', 'setInsideFabric', 'setInsideAll');
+  const { project, selPiece, viewFace, set, setInsideFabric, setInsideAll, commit, updatePiece } = usePick('project', 'selPiece', 'viewFace', 'set', 'setInsideFabric', 'setInsideAll', 'commit', 'updatePiece');
   const piece = project.pieces.find((p) => p.id === selPiece);
+  /** outside fabric of one piece, or of every piece (null) */
+  const setOutside = (pieceId: string | null, f: PieceFabric) => {
+    commit();
+    if (pieceId) updatePiece(pieceId, { fabric: { ...f } });
+    else useStore.setState((s) => ({ project: { ...s.project, pieces: s.project.pieces.map((p) => ({ ...p, fabric: { ...f } })), updatedAt: Date.now() } }));
+  };
   const inside = project.edits?.insideFabric ?? {};
   const collar = project.edits?.collar;
   const show = piece ?? project.pieces[0];
@@ -109,12 +116,27 @@ function FacesSection() {
           <b>{inName}</b><small>{own ? fabricById(own.id).name : 'Same as outside'}</small>
         </button>
       </div>
-      <p className="faces-for">{piece ? <>For <b>{piece.name}</b></> : 'Select a piece on the pattern to change its inside. Showing the first piece.'}</p>
-      {piece && <FabricPick id="inside-fab" sameLabel="Same as outside" value={own} host={piece.fabric} onChange={(f) => setInsideFabric(piece.id, f ?? null)} />}
-      <div className="faces-all">
-        <SubLabel>Whole garment default</SubLabel>
-        <FabricPick id="inside-all" sameLabel="Same as outside" host={project.pieces[0].fabric} value={all ? first : undefined} onChange={(f) => setInsideAll(f ?? null)} />
-      </div>
+      <p className="faces-for">
+        {piece ? <>Editing the <b>{viewFace === 'inside' ? inName.toLowerCase() : outName.toLowerCase()}</b> of <b>{piece.name}</b></> : `Select a piece on the pattern to change only that piece. Below changes the ${viewFace === 'inside' ? 'inside' : 'outside'} of the whole garment.`}
+      </p>
+      {/* the pickers follow the face chosen above: Outside edits the outside fabric, Inside edits the inside fabric */}
+      {viewFace === 'outside' ? (
+        <>
+          {piece && <FabricPick key={`out-${piece.id}`} id="outside-fab" canReset={false} value={piece.fabric} onChange={(f) => f && setOutside(piece.id, f)} />}
+          <div className="faces-all">
+            <SubLabel>Whole garment, outside</SubLabel>
+            <FabricPick key="out-all" id="outside-all" canReset={false} value={project.pieces[0].fabric} onChange={(f) => f && setOutside(null, f)} />
+          </div>
+        </>
+      ) : (
+        <>
+          {piece && <FabricPick key={`in-${piece.id}`} id="inside-fab" sameLabel="Same as outside" value={own} host={piece.fabric} onChange={(f) => setInsideFabric(piece.id, f ?? null)} />}
+          <div className="faces-all">
+            <SubLabel>Whole garment, inside</SubLabel>
+            <FabricPick key="in-all" id="inside-all" sameLabel="Same as outside" host={project.pieces[0].fabric} value={all ? first : undefined} onChange={(f) => setInsideAll(f ?? null)} />
+          </div>
+        </>
+      )}
     </section>
   );
 }
