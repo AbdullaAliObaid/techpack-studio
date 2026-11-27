@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import type { Piece } from '../data/presets';
 import { fabricById } from '../data/fabrics';
 import {
@@ -56,8 +56,7 @@ export default function PatternEditor() {
   const pointers = useRef(new Map<number, Pt>());
   const lastTap = useRef<{ t: number; key: string }>({ t: 0, key: '' });
 
-  const s = useStore();
-  const { project, tool, symmetry, showMeasure, showStitch, selPiece, selPoint, selInstance, units, fitToken, selAttachment, selPleat, hoverSeam, seamDraft, penDraft, penSnap, showBothSides, pieceFlow } = s;
+  const { project, tool, symmetry, showMeasure, showStitch, selPiece, selPoint, selInstance, units, fitToken, selAttachment, selPleat, hoverSeam, seamDraft, penDraft, penSnap, showBothSides, pieceFlow } = usePick('project', 'tool', 'symmetry', 'showMeasure', 'showStitch', 'selPiece', 'selPoint', 'selInstance', 'units', 'fitToken', 'selAttachment', 'selPleat', 'hoverSeam', 'seamDraft', 'penDraft', 'penSnap', 'showBothSides', 'pieceFlow');
   const pieces = project.pieces;
   const edits = project.edits;
   const [penHover, setPenHover] = useState<Pt | null>(null);
@@ -69,7 +68,7 @@ export default function PatternEditor() {
   useEffect(() => { if (!picking) setPickHover(null); }, [picking]);
 
   // ---- what is drawn: pieces cut twice show as a right and a left pattern ----
-  const chartFace = s.chartFace;
+  const chartFace = useStore((st) => st.chartFace);
   const entries = useMemo(() => { const e = layoutEntries(project.garment, pieces, showBothSides); return chartFace === 'inside' ? flipEntries(e) : e; }, [project.garment, pieces, showBothSides, chartFace]);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;

@@ -1,13 +1,13 @@
 // Body: measurement fields shared by the Body tab and the floating card on the 3D view.
 import { useState } from 'react';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import { BODY_FIELDS, SKIN_TONES, limbGirths } from '../three/body';
 import { fromUnit, toUnit } from '../lib/units';
 import Icon from './Icon';
 import { Row, Switch } from './controls';
 
 export function BodyFields({ advanced }: { advanced: boolean }) {
-  const { project, units, setBody } = useStore();
+  const { project, units, setBody } = usePick('project', 'units', 'setBody');
   const body = project.body;
   const est = limbGirths(body) as Record<string, number>;
   const step = units === 'cm' ? 0.5 : 0.25;
@@ -51,7 +51,7 @@ export function BodyFields({ advanced }: { advanced: boolean }) {
 }
 
 export function BodyType() {
-  const { project, skin, set, setLink, setBodyPreset } = useStore();
+  const { project, skin, set, setLink, setBodyPreset } = usePick('project', 'skin', 'set', 'setLink', 'setBodyPreset');
   const body = project.body;
   return (
     <>
@@ -75,7 +75,7 @@ export function BodyType() {
 
 /** Floating measurement card on the 3D view. Closed by default so it never covers the model. */
 export default function BodyCard() {
-  const { project, units, resetBody, set } = useStore();
+  const { project, units, resetBody, set } = usePick('project', 'units', 'resetBody', 'set');
   const [open, setOpen] = useState(false);
   const b = project.body;
   return (

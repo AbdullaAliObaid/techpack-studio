@@ -1,6 +1,6 @@
 // Construction tab: how the garment is put together. Seams (built in and joined by hand), pleats, and your own pieces.
 import { useMemo } from 'react';
-import { EMPTY_SEAM_DRAFT, useStore } from '../store';
+import { EMPTY_SEAM_DRAFT, useStore, usePick } from '../store';
 import { builtinSeams } from '../sim/seams';
 import { outlineLength } from '../lib/geometry';
 import { fmt } from '../lib/units';
@@ -28,7 +28,7 @@ const complete = (r: Partial<EdgeRef> | null): r is EdgeRef => !!(r && r.pieceId
 
 /** "Front, right leg" for a pick on a copy, the plain piece name otherwise. */
 function useRefName() {
-  const { project } = useStore();
+  const { project } = usePick('project');
   return (r?: Partial<EdgeRef> | null) => {
     const p = project.pieces.find((q) => q.id === r?.pieceId);
     if (!p) return 'Piece';
@@ -37,7 +37,7 @@ function useRefName() {
 }
 
 export default function ConstructionPanel() {
-  const { project, units, tool, set, hoverSeam, seamDraft, seamHint, setSeamAttached, addCustomSeam, removeCustomSeam } = useStore();
+  const { project, units, tool, set, hoverSeam, seamDraft, seamHint, setSeamAttached, addCustomSeam, removeCustomSeam } = usePick('project', 'units', 'tool', 'set', 'hoverSeam', 'seamDraft', 'seamHint', 'setSeamAttached', 'addCustomSeam', 'removeCustomSeam');
   const edits = project.edits;
   const pieces = project.pieces;
   const refName = useRefName();
@@ -176,7 +176,7 @@ const TYPE_NOTE: Record<PleatType, string> = {
 };
 
 function PleatSection() {
-  const { project, selPleat, tool, set, updatePleat, removePleat, units } = useStore();
+  const { project, selPleat, tool, set, updatePleat, removePleat, units } = usePick('project', 'selPleat', 'tool', 'set', 'updatePleat', 'removePleat', 'units');
   const pleats = project.edits?.pleats ?? [];
   const pl = pleats.find((p) => p.id === selPleat);
   const pname = (id: string, inst?: number) => {
@@ -219,7 +219,7 @@ function PleatSection() {
 }
 
 function PiecesSection() {
-  const { project, selPiece, set, removePiece, updatePiece } = useStore();
+  const { project, selPiece, set, removePiece, updatePiece } = usePick('project', 'selPiece', 'set', 'removePiece', 'updatePiece');
   const custom = project.pieces.filter((p) => p.role === 'custom');
   const sel = custom.find((p) => p.id === selPiece);
   const hosts = project.pieces.filter((q) => q.role !== 'custom');

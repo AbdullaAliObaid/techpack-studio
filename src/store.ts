@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import { makePreset, GARMENT_LABEL, type Piece, type PieceFabric } from './data/presets';
 import { migrateGarment, type StyleId } from './data/catalog';
 import { DEFAULT_BODY, type Body } from './three/body';
@@ -87,7 +88,7 @@ export function writeTheme(t: ThemePref) {
   try { localStorage.setItem(THEME_KEY, t); } catch { /* storage blocked */ }
 }
 
-interface State {
+export interface State {
   theme: ThemePref;
   inspectorTab: InspectorTab;
   project: Project;
@@ -622,3 +623,18 @@ export const useStore = create<State>((set, get) => {
     resetPose: () => set({ customPose: ZERO_POSE }),
   };
 });
+
+/**
+ * Subscribe to a few store fields. A component re-renders only when one of them changes (shallow compare), not on
+ * every store update (simulation status, drape peak, hover state and the like change many times a second).
+ */
+export function usePick<K extends keyof State>(...keys: K[]): Pick<State, K> {
+  return useStore(useShallow((s: State) => {
+    const o = {} as Pick<State, K>;
+    for (const k of keys) o[k] = s[k];
+    return o;
+  }));
+}
+
+// profiling hook: ?perf exposes the store to the performance harness (no effect otherwise)
+if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('perf')) (window as unknown as { __store: typeof useStore }).__store = useStore;

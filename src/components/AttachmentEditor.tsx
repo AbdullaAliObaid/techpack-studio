@@ -1,6 +1,6 @@
 // Editor for the selected design: face, placement, size, material and sheen, trim and tag options, artwork layers.
 import { useState } from 'react';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import type { Attachment, Hardware, LabelType } from '../data/edits';
 import { shapePolygon } from '../lib/shapes';
 import { ArtworkGroup, outlineD } from './Artwork';
@@ -16,7 +16,7 @@ import EmblemEditor from './EmblemEditor';
 import Icon from './Icon';
 
 export default function AttachmentEditor({ att }: { att: Attachment }) {
-  const { updateAttachment, removeAttachment, duplicateAttachment, project, units, set, openDesign } = useStore();
+  const { updateAttachment, removeAttachment, duplicateAttachment, project, units, set, openDesign } = usePick('updateAttachment', 'removeAttachment', 'duplicateAttachment', 'project', 'units', 'set', 'openDesign');
   const [drawing, setDrawing] = useState<'trim' | 'puller' | null>(null);
   const atts = project.edits?.attachments ?? [];
   const parent = atts.find((q) => q.id === att.pieceId);

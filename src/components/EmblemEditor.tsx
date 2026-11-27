@@ -1,6 +1,6 @@
 // Artwork layers: a layer stack plus a live preview where layers are dragged, scaled and rotated with the pointer.
 import { useEffect, useRef, useState } from 'react';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import { SHAPES, SHAPE_IDS } from '../lib/shapes';
 import type { Attachment, ShapeId, ShapeLayer } from '../data/edits';
 import { LayerShape, outlineD } from './Artwork';
@@ -24,7 +24,7 @@ export default function EmblemEditor({ att: attIn, layers: layersProp, onLayers,
 }) {
   const layers = layersProp ?? attIn.layers;
   const att = layersProp ? { ...attIn, layers } : attIn;
-  const { updateAttachment, selLayer, set, project, units } = useStore();
+  const { updateAttachment, selLayer, set, project, units } = usePick('updateAttachment', 'selLayer', 'set', 'project', 'units');
   const [picking, setPicking] = useState(false);
   const [lock, setLock] = useState(true);
   const sel = layers.find((l) => l.id === selLayer) ?? null;

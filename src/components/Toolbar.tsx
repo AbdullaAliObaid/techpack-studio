@@ -1,5 +1,5 @@
 // Tool rail of the Pattern workspace: labelled tools in four groups.
-import { EMPTY_SEAM_DRAFT, useStore, type Tool } from '../store';
+import { EMPTY_SEAM_DRAFT, useStore, type Tool, usePick } from '../store';
 import Icon from './Icon';
 
 function Btn(props: { on?: boolean; label: string; tip: string; icon: string; aria?: string; onClick: () => void }) {
@@ -21,7 +21,7 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 }
 
 export default function Toolbar() {
-  const { tool, symmetry, totalSymmetry, setTotalSymmetry, showMeasure, showStitch, set } = useStore();
+  const { tool, symmetry, totalSymmetry, setTotalSymmetry, showMeasure, showStitch, set } = usePick('tool', 'symmetry', 'totalSymmetry', 'setTotalSymmetry', 'showMeasure', 'showStitch', 'set');
   const t = (v: Tool) => () => set({ tool: v });
   // build tools open their controls in the Construction tab and drop any half finished action
   const build = (v: Tool) => () => set({

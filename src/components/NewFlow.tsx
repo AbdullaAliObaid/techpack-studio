@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import { FITS, type Fit } from '../data/draft';
 import { fabricById } from '../data/fabrics';
 import { styleById, type StyleId } from '../data/catalog';
@@ -14,7 +14,7 @@ import { flushSave, pickGroups, type PickGroup } from './nav';
 const FIT_NOTE: Record<Fit, string> = { slim: 'Close to the body', regular: 'Everyday room', relaxed: 'Loose and easy' };
 
 export default function NewFlow() {
-  const { screen, newFlow, project, setScreen } = useStore();
+  const { screen, newFlow, project, setScreen } = usePick('screen', 'newFlow', 'project', 'setScreen');
   const active = screen === 'new';
   const change = newFlow.mode === 'change';
   const groups = useMemo(pickGroups, []);

@@ -1,10 +1,11 @@
 import { Canvas } from '@react-three/fiber';
 import { ContactShadows, OrbitControls } from '@react-three/drei';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import { SKIN_TONES } from '../three/body';
 import { MODES } from '../sim/pose';
 import { fabricById } from '../data/fabrics';
 import ClothView from '../three/ClothView';
+import { VIEW_DPR, SHADOW_MAP, captureOnDemand } from '../three/viewQuality';
 import StudioLight from '../three/StudioLight';
 import BodyCard from './BodyPanel';
 import MeasureOverlay from '../three/MeasureOverlay';
@@ -21,7 +22,7 @@ const Tgl = ({ on, icon, label, onChange }: { on: boolean; icon: string; label: 
 );
 
 export default function Viewport3D() {
-  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode } = useStore();
+  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode } = usePick('project', 'view3d', 'showBody', 'skin', 'showJoints', 'showGarment', 'showTape', 'units', 'set', 'draping', 'drapePeak', 'redrapeToken', 'simStatus', 'mode');
   const { body, pieces, garment } = project;
   const tv = useCssVars(['--viewport', '--floor', '--hemi-ground', '--shadow-opacity'] as const);
   const stretch = view3d === 'stretch';
@@ -43,11 +44,11 @@ export default function Viewport3D() {
       onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }}
       onDrop={(e) => { const f = imageFileOf(e.dataTransfer.files); if (f) { e.preventDefault(); openPhoto(f); } }}
     >
-      <Canvas shadows dpr={[1, 2]} gl={{ preserveDrawingBuffer: true }} camera={{ position: [-H * 0.18, H * 0.6, H * 2.3], fov: 32, near: 1, far: 5000 }}>
+      <Canvas shadows frameloop="demand" dpr={VIEW_DPR} gl={{ preserveDrawingBuffer: false, powerPreference: 'high-performance' }} onCreated={captureOnDemand} camera={{ position: [-H * 0.18, H * 0.6, H * 2.3], fov: 32, near: 1, far: 5000 }}>
         <color attach="background" args={[tv['--viewport'] || '#f2f2f7']} />
         <StudioLight />
         <hemisphereLight intensity={0.45} groundColor={tv['--hemi-ground'] || '#c9ccd3'} />
-        <directionalLight position={[120, 260, 180]} intensity={1.9} castShadow shadow-mapSize={[2048, 2048]} shadow-bias={-0.0004}
+        <directionalLight position={[120, 260, 180]} intensity={1.9} castShadow shadow-mapSize={[SHADOW_MAP, SHADOW_MAP]} shadow-bias={-0.0004}
           shadow-camera-left={-120} shadow-camera-right={120} shadow-camera-top={220} shadow-camera-bottom={-20} shadow-camera-far={800} />
         <directionalLight position={[-160, 140, -120]} intensity={0.55} />
         <directionalLight position={[0, 80, 260]} intensity={0.25} />

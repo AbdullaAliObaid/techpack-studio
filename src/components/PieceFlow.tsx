@@ -1,6 +1,6 @@
 // New piece: a step by step sheet. 1 Shape (template or pen), 2 Details (name, fabric, cut), 3 Attach (stitch on top, or sew into an edge).
 import { useEffect, useRef } from 'react';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import { FABRICS, fabricById } from '../data/fabrics';
 import { bbox, bezAt, outlineLength, pathD, toBeziers } from '../lib/geometry';
 import { fmt } from '../lib/units';
@@ -46,7 +46,7 @@ function ShapePreview({ shape, edge, onEdge }: { shape: { x: number; y: number; 
 }
 
 function Sheet() {
-  const { pieceFlow: f, setFlow, project, units } = useStore();
+  const { pieceFlow: f, setFlow, project, units } = usePick('pieceFlow', 'setFlow', 'project', 'units');
   const nameRef = useRef<HTMLInputElement>(null);
   const hosts = project.pieces.filter((p) => p.role !== 'custom');
   const sewing = !!f && f.step === 3 && f.attach === 'sewn';

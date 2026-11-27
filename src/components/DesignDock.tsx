@@ -1,7 +1,7 @@
 // The Design panel, docked to the pattern: left of the chart on wide screens, a bottom sheet under it on iPad.
 // It holds the design library (Add) and the editor for the selected design (Edit). Collapsible and resizable.
 import { useRef } from 'react';
-import { useStore, writeDesignSize } from '../store';
+import { useStore, writeDesignSize, usePick } from '../store';
 import { Seg } from './controls';
 import DesignLibrary from './DesignPanel';
 import AttachmentEditor from './AttachmentEditor';
@@ -11,7 +11,7 @@ const MIN = { side: 250, bottom: 200 };
 const MAX = { side: 480, bottom: 0.62 };
 
 export default function DesignDock({ mode }: { mode: 'side' | 'bottom' }) {
-  const { designOpen, designCollapsed, designTab, designSize, selAttachment, project, set } = useStore();
+  const { designOpen, designCollapsed, designTab, designSize, selAttachment, project, set } = usePick('designOpen', 'designCollapsed', 'designTab', 'designSize', 'selAttachment', 'project', 'set');
   const start = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   if (!designOpen) return null;
   const att = (project.edits?.attachments ?? []).find((a) => a.id === selAttachment);

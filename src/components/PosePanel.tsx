@@ -1,6 +1,6 @@
 // Pose: pick a movement or pose the joints by hand. Angles are stored in radians, shown in degrees.
 import { useMemo } from 'react';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import { MODES } from '../sim/pose';
 import type { SideAngles } from '../data/edits';
 import { JOINT_LABEL, poseLimits } from './editHelpers';
@@ -19,7 +19,7 @@ const GROUPS: { title: string; icon: string; side: 0 | 1; keys: (keyof SideAngle
 ];
 
 export default function PosePanel() {
-  const { mode, set, customPose, setPoseAngle, resetPose, symmetricPose } = useStore();
+  const { mode, set, customPose, setPoseAngle, resetPose, symmetricPose } = usePick('mode', 'set', 'customPose', 'setPoseAngle', 'resetPose', 'symmetricPose');
   const limits = useMemo(poseLimits, []);
   const posing = mode === 'custom';
 

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { subscribeArt } from './detailsArt';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { GarmentType, Piece } from '../data/presets';
 import { bodyFrame, type Body } from './body';
@@ -48,7 +49,7 @@ function setBone(bone: THREE.Bone, M: Float64Array, b: number) {
   bone.matrix.set(M[o], M[o + 1], M[o + 2], M[o + 3], M[o + 4], M[o + 5], M[o + 6], M[o + 7], M[o + 8], M[o + 9], M[o + 10], M[o + 11], 0, 0, 0, 1);
 }
 
-export default function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, mode, showJoints }: { type: GarmentType; pieces: Piece[]; body: Body; stretch: boolean; showBody: boolean; showGarment: boolean; skin: string; mode: Mode; showJoints: boolean }) {
+function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, mode, showJoints }: { type: GarmentType; pieces: Piece[]; body: Body; stretch: boolean; showBody: boolean; showGarment: boolean; skin: string; mode: Mode; showJoints: boolean }) {
   const [bodyGeo, setBodyGeo] = useState<THREE.BufferGeometry | null>(null);
   const pose = useRef<{ mode: Mode; t: number; custom?: CustomPose }>({ mode: 'stand', t: 0 });
   const customPose = useStore((s) => s.customPose);
@@ -83,12 +84,22 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
   const f = useMemo(() => bodyFrame(body), [body]);
   const fRef = useRef(f);
   fRef.current = f;
+  // the canvas renders on demand: a new cloth frame, a store change (prints, materials, toggles) or the camera
+  const invalidate = useThree((s) => s.invalidate);
+  useEffect(() => useStore.subscribe(() => invalidate()), [invalidate]);
+  // pictures and pattern tiles decode asynchronously; redraw once their textures have been repainted
+  useEffect(() => subscribeArt(() => { requestAnimationFrame(() => invalidate()); setTimeout(() => invalidate(), 120); }), [invalidate]);
+  /** set store fields only when they change, so subscribers are not woken by every simulation frame */
+  const setIf = (patch: Partial<ReturnType<typeof useStore.getState>>) => {
+    const cur = useStore.getState() as unknown as Record<string, unknown>;
+    if (Object.entries(patch).some(([k, v]) => cur[k] !== v)) set(patch);
+  };
 
   useEffect(() => {
     worker.onmessage = (e) => {
       const m = e.data;
       if (m.type === 'status') {
-        set({ draping: true, simStatus: m.text });
+        setIf({ draping: true, simStatus: m.text });
       } else if (m.type === 'body') {
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.BufferAttribute(m.positions, 3));
@@ -117,7 +128,7 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
           old?.geo.dispose();
           return { geo, fabrics: m.fabrics, pat: vertexPattern(m, piecesRef.current) };
         });
-        set({ draping: true, simStatus: 'Simulating fabric…' });
+        setIf({ draping: true, simStatus: 'Simulating fabric…' });
       } else if (m.type === 'details') {
         setDetails(m);
       } else if (m.type === 'hardware') {
@@ -126,15 +137,21 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
         setAttachDetails({ ...m, type: 'details' });
       } else if (m.type === 'frame') {
         pending.current.pos = m.pos;
+        invalidate();
         pose.current = { mode: m.mode, t: m.t, custom: m.pose };
         if (m.strain) pending.current.strain = m.strain;
         if (m.peak) {
           const fr = fRef.current;
           const marks: [string, number][] = [['shoulders', fr.shoulderH], ['chest', fr.chestH], ['waist', fr.waistH], ['hips', fr.hipH], ['seat', fr.crotchH + 4], ['thigh', (fr.crotchH + fr.kneeH) / 2], ['knee', fr.kneeH], ['calf', fr.kneeH / 2]];
           const where = marks.reduce((b, k) => (Math.abs(k[1] - m.peak.y) < Math.abs(b[1] - m.peak.y) ? k : b))[0];
-          set({ drapePeak: { ratio: m.peak.ratio, strain: m.peak.strain, where, over: m.peak.over } });
+          // the readout shows a percent with one decimal: skip updates it would not show
+          const q = (v: number | undefined) => (v === undefined ? -1 : Math.round(v * 1000));
+          const old = useStore.getState().drapePeak;
+          if (old.where !== where || q(old.ratio) !== q(m.peak.ratio) || q(old.strain) !== q(m.peak.strain) || q(old.over) !== q(m.peak.over)) {
+            set({ drapePeak: { ratio: m.peak.ratio, strain: m.peak.strain, where, over: m.peak.over } });
+          }
         }
-        if (m.sleeping) set({ draping: false });
+        if (m.sleeping) setIf({ draping: false });
       }
     };
     return () => worker.terminate();
@@ -162,10 +179,12 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
   }, [type, pieces, body, redrape, worker, simEdits]);
 
   // stitching around pockets, patches and straps follows the attachments (debounced while dragging)
+  // prints and embroidery are painted here on the main thread (Prints.tsx), so moving one does not rebuild them
+  const detailKey = JSON.stringify((attachments ?? []).filter((a) => a.kind !== 'print' && a.kind !== 'embroidery'));
   useEffect(() => {
-    const t = setTimeout(() => worker.postMessage({ type: 'attachments', attachments: attachments ?? [] }), 120);
+    const t = setTimeout(() => worker.postMessage({ type: 'attachments', attachments: JSON.parse(detailKey) }), 120);
     return () => clearTimeout(t);
-  }, [attachments, worker]);
+  }, [detailKey, worker]);
 
   useEffect(() => {
     worker.postMessage({ type: 'mode', mode });
@@ -242,3 +261,6 @@ export default function ClothView({ type, pieces, body, stretch, showBody, showG
     </group>
   );
 }
+
+// re-render only when its own props change, not whenever the 3D view's toolbar state does
+export default memo(ClothView);

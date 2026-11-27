@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useStore, type Project, type ThemePref } from '../store';
+import { useStore, type Project, type ThemePref, usePick } from '../store';
 import { CATALOG, migrateGarment } from '../data/catalog';
 import { samplePoly } from '../lib/geometry';
 import { listProjects } from '../lib/projects';
@@ -54,7 +54,7 @@ function NewArt() {
 type MenuState = { id: string; x: number; y: number; opener: HTMLElement | null } | null;
 
 export default function Home() {
-  const { screen, project, theme, set } = useStore();
+  const { screen, project, theme, set } = usePick('screen', 'project', 'theme', 'set');
   const [list, setList] = useState<Project[]>([]);
   const [menu, setMenu] = useState<MenuState>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
