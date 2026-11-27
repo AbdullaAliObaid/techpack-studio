@@ -14,6 +14,8 @@ import { meshField, GridCollider, PosedCollider } from '../src/three/mesher';
 import { hatPose } from './hatLib';
 import { styleEdits } from '../src/data/construction';
 import { fabricThickness } from '../src/data/fabrics';
+import { HAT_DESIGNS } from '../src/data/designsHats';
+import { designProject } from '../src/store';
 
 const DEFAULT_BODY = process.env.BODY === 'female' ? FEMALE_BODY : MALE;
 const FF = calibratedField(DEFAULT_BODY);
@@ -470,6 +472,16 @@ if (!only || only === 'hats') {
     const axisMax = g === 'five-panel' ? 2.5 : 2;
     const ok = b.axis < axisMax && Math.abs(b.y - a.y) < 1 && b.lr < 1 && b.fb < 4 && b.y > f.headBandH;
     verdict(ok, `${g.padEnd(11)} after 20 s: crown centre ${b.axis.toFixed(2)} cm off the head axis, moved ${(b.y - a.y).toFixed(2)} cm, brim tilt left/right ${b.lr.toFixed(2)} cm, front/back ${b.fb.toFixed(2)} cm`);
+  }
+}
+
+// ---- headwear example designs (src/data/designsHats.ts) drape on the head with their fabric, measurements and edits ----
+if (!only || only === 'hat-designs') {
+  console.log('\n== hat designs ==');
+  for (const d of HAT_DESIGNS) {
+    const p = designProject(d, DEFAULT_BODY);
+    if (!p) { fails++; console.log(`FAIL ${d.id} does not load`); continue; }
+    drape(d.style, p.pieces, p.edits, d.id.slice(0, 14));
   }
 }
 

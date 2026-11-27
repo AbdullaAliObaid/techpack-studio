@@ -143,7 +143,7 @@ const GARMENT: Record<string, Comp[]> = {
   'Body length': [{ role: 'crown', label: 'Body length' }],
   'Cuff height': [{ role: 'cuff', label: 'Cuff height' }],
   'Band height': [{ role: 'headband', label: 'Band height' }],
-  'Crown depth': [{ role: 'crown', edge: ['crown.0', 'crown.3'] }],
+  'Crown depth': [{ role: 'crown', edge: ['crown.0', 'crown.3'] }, { role: 'crownFront', edge: ['crownFront.0', 'crownFront.3'] }],
   'Visor depth': [{ role: 'brim', label: 'Visor depth' }],
   'Brim width': [{ role: 'brim', label: 'Brim width' }],
 };

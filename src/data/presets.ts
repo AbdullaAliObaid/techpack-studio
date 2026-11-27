@@ -164,7 +164,7 @@ function metaFor(style: StyleId): Meta[] {
       ];
     case 'visor':
       return [
-        { role: 'headband', name: 'Front band', cut: 2, specs: [{ label: 'Band length', kind: 'mirror', tag: 'bandEnd', off: 2.5 }, { label: 'Band height', kind: 'vdist', tags: ['bandTop', 'bandCF'] }] },
+        { role: 'headband', name: 'Front band', cut: 2, specs: [{ label: 'Band length', kind: 'mirror', tag: 'bandEnd', off: 2.5 }, { label: 'Band height', kind: 'vdist', tags: ['bandCF', 'bandTop'] }] },
         { role: 'strap', name: 'Elastic back strap', cut: 1, specs: [{ label: 'Strap length', kind: 'mirror', tag: 'strapEnd', off: 2 }] },
         { role: 'brim', name: 'Visor', cut: 2, specs: VISOR },
       ];
