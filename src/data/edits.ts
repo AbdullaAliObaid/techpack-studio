@@ -32,6 +32,10 @@ export interface ShapeLayer {
   path?: string;
   /** relief in mm: positive = raised (puff print, padded applique, stacked felt), negative = pressed in (deboss) */
   relief?: number;
+  /** text layers: font style (Design workspace) */
+  font?: string;
+  /** embroidery stitch style */
+  stitch?: 'satin' | 'fill' | 'open';
 }
 
 /**
