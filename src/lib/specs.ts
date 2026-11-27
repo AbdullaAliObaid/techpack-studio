@@ -1,6 +1,6 @@
 import type { Piece, SpecDef, GarmentType } from '../data/presets';
 import { bbox, bezAt, bezTangent, dist, offsetInward, outlineLength, samplePoly, signedArea, sliceSpan, toBeziers, type Pt } from './geometry';
-import type { Attachment, Edits, Face, Hardware, Pleat } from '../data/edits';
+import type { Attachment, Edits, Face, Hardware, Pleat, WashSequence } from '../data/edits';
 import { attachmentPolygons, outlinePolygon, SHAPES } from './shapes';
 import { builtinSeams, faceLabel, faceOf, instanceLabel } from '../sim/seams';
 import { labelMaterial, labelSewing, labelSize } from '../data/labels';
@@ -1169,6 +1169,7 @@ export function constructionReport(type: GarmentType, pieces: Piece[], edits?: E
     const inner = edits?.insideFabric?.[p.id];
     if (inner && fabricKey(inner) !== fabricKey(p.fabric)) finishing.push(`${faceLabel(type, p, 'inside')} (${p.name}): ${fabricText(inner)}; outside is ${fabricText(p.fabric)}`);
   }
+  for (const c of productionChecks(pieces, edits)) finishing.push(c.resolved ? `Wash sequence: ${c.answer}` : `TO CONFIRM: ${c.text}`);
   const collar = pieces.some((p) => p.role === 'collar') ? (edits?.collar === 'up' ? 'Collar shown popped up (under collar visible)' : 'Collar shown folded down') : undefined;
   const pleats = pleatReport(pieces, edits, type);
   const custom = (edits?.customSeams ?? []).flatMap((cs) => {
@@ -1178,6 +1179,43 @@ export function constructionReport(type: GarmentType, pieces: Piece[], edits?: E
   const byId = new Map(builtinSeams(type, pieces, { collar: edits?.collar ?? 'down' }).map((s) => [s.id, s.label]));
   const detached = (edits?.detachedSeams ?? []).map((id) => byId.get(id) ?? id);
   return { seams, finishing, collar, pleats, custom, detached, topstitch: top, hem: d.hem ? `${d.hem.needles} needle, ${round1(d.hem.depth)} cm` : undefined };
+}
+
+/* ---------- production checks ---------- */
+
+/** genuine leathers: they cannot go through standard industrial denim or garment washes */
+const GENUINE_LEATHER = new Set(['leather', 'suede']);
+/** cotton and denim cloths that are normally washed (rinse, enzyme, stone, garment dye) */
+const WASHED_COTTON = new Set(['denim', 'stretch-denim', 'selvedge-denim', 'raw-denim', 'white-denim', 'black-denim', 'canvas', 'duck', 'poplin', 'oxford', 'chambray', 'shirting-twill', 'flannel', 'seersucker', 'voile', 'jersey', 'rib', 'slub-jersey', 'pique', 'interlock', 'french-terry', 'fleece', 'waffle', 'corduroy', 'moleskin', 'waxed-cotton']);
+
+export const WASH_SEQUENCE_TEXT: Record<WashSequence, string> = {
+  prewash: 'Fabric panels are washed before the leather is sewn on. No wash after the leather is attached.',
+  garment: 'Garment is washed with the leather attached. Leather must be certified wash resistant for the named wash.',
+  none: 'No wash: fabric is used as delivered (raw), so nothing to wash around the leather.',
+};
+
+export interface ProductionCheck { id: string; title: string; text: string; resolved: boolean; answer?: string }
+
+/** Things the factory must be told that the pattern alone cannot say. */
+export function productionChecks(pieces: Piece[], edits?: Edits): ProductionCheck[] {
+  const ids: string[] = [];
+  for (const p of pieces) { ids.push(p.fabric.id); const inner = edits?.insideFabric?.[p.id]; if (inner) ids.push(inner.id); }
+  for (const a of edits?.attachments ?? []) { if (a.fabric?.id) ids.push(a.fabric.id); if (a.lining?.id) ids.push(a.lining.id); }
+  const leather = [...new Set(ids.filter((id) => GENUINE_LEATHER.has(id)))];
+  const cotton = [...new Set(ids.filter((id) => WASHED_COTTON.has(id)))];
+  const out: ProductionCheck[] = [];
+  if (leather.length && cotton.length) {
+    const denim = cotton.some((id) => id.includes('denim'));
+    const ws = edits?.washSequence;
+    out.push({
+      id: 'leather-wash',
+      title: `${denim ? 'Denim' : 'Cotton'} with genuine leather: wash sequence`,
+      text: `This garment mixes ${denim ? 'denim or cotton' : 'cotton'} with genuine leather. Say whether the fabric panels are pre-washed before the leather is sewn on, as leather cannot go through standard industrial denim washes.`,
+      resolved: !!ws,
+      ...(ws ? { answer: WASH_SEQUENCE_TEXT[ws] } : {}),
+    });
+  }
+  return out;
 }
 
 export interface NoteRow { no: number; text: string; piece: string }

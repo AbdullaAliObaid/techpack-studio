@@ -1777,3 +1777,6 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .vp-mode button.on { background: var(--accent-soft); color: var(--accent-text); }
 @media (prefers-reduced-transparency: reduce) { .vp-mode { background: var(--bg-elevated); -webkit-backdrop-filter: none; backdrop-filter: none; } }
 @container (max-width: 560px) { .vp-mode button span { display: none; } }
+.prod-check { display: grid; gap: 8px; padding: 12px; border-radius: 12px; background: color-mix(in oklch, var(--orange, oklch(0.75 0.16 60)) 12%, transparent); border: 0.5px solid color-mix(in oklch, var(--orange, oklch(0.75 0.16 60)) 35%, transparent); }
+.prod-check.done { background: var(--fill-3, var(--fill-2)); border-color: var(--separator); }
+.prod-check .group-note { margin: 0; }

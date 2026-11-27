@@ -9,7 +9,7 @@ const mem = new Map<string, string>();
 import { freshProject, type Note, type Outfit } from '../src/store';
 import { exportShareFile, importShareFile, readShareFile, ShareError } from '../src/lib/share';
 import { BUILTIN_BODIES, deleteBodyPreset, listBodyPresets, listImported, listProjects, renameBodyPreset, saveBodyPreset } from '../src/lib/projects';
-import { constructionReport, fabricBom, noteRows, trimDetails, trimsReport } from '../src/lib/specs';
+import { productionChecks, constructionReport, fabricBom, noteRows, trimDetails, trimsReport } from '../src/lib/specs';
 import { buildTechPack } from '../src/lib/exportPdf';
 import type { Attachment } from '../src/data/edits';
 
@@ -114,6 +114,18 @@ async function main() {
   ok('pdf builds when the 3D view is missing', none.getNumberOfPages() === doc.getNumberOfPages());
 
   if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }
+  {
+    // denim with genuine leather must state the wash sequence
+    const j = freshProject('jeans', 'Leather patch jeans');
+    const pieces = j.pieces.map((pc) => (pc.role === 'back-pocket' || pc.role === 'pocket' ? { ...pc, fabric: { ...pc.fabric, id: 'leather' } } : pc));
+    const leathered = pieces.some((pc) => pc.fabric.id === 'leather') ? pieces : pieces.map((pc, i) => (i === pieces.length - 1 ? { ...pc, fabric: { ...pc.fabric, id: 'leather' } } : pc));
+    const c0 = productionChecks(leathered, j.edits);
+    ok('leather + denim: wash sequence asked', c0.length === 1 && !c0[0].resolved);
+    ok('leather + denim: tech pack says to confirm', constructionReport('jeans', leathered, j.edits).finishing.some((f) => f.startsWith('TO CONFIRM')));
+    const c1 = productionChecks(leathered, { ...j.edits!, washSequence: 'prewash' });
+    ok('leather + denim: answer printed', c1[0]?.resolved === true && constructionReport('jeans', leathered, { ...j.edits!, washSequence: 'prewash' }).finishing.some((f) => f.includes('washed before the leather')));
+    ok('plain denim: no wash question', productionChecks(j.pieces, j.edits).length === 0);
+  }
   console.log('\nall share and tech pack checks passed');
 }
 if (process.argv[1]?.endsWith("share.ts")) main();

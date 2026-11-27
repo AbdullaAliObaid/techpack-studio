@@ -1,6 +1,8 @@
 // The right panel. Each workspace shows only its own job here; the chart and the 3D view stay where they are.
 import { useEffect } from 'react';
 import { useStore, usePick } from '../store';
+import { productionChecks } from '../lib/specs';
+import type { WashSequence } from '../data/edits';
 import { CATALOG, migrateGarment } from '../data/catalog';
 import { fabricById } from '../data/fabrics';
 import { WORKSPACES } from './designDoc';
@@ -119,6 +121,29 @@ function OutfitPanel() {
   );
 }
 
+/** Questions the factory needs answered, eg the wash sequence when cotton or denim meets genuine leather. */
+function ProductionChecks() {
+  const { project, setWashSequence } = usePick('project', 'setWashSequence');
+  const checks = productionChecks(project.pieces, project.edits);
+  if (!checks.length) return null;
+  const open = checks.filter((c) => !c.resolved).length;
+  return (
+    <Disclosure id="review-checks" title="Production checks" icon="info" count={open || undefined} openFirst>
+      {checks.map((c) => (
+        <div key={c.id} className={`prod-check ${c.resolved ? 'done' : ''}`}>
+          <b>{c.title}</b>
+          <p className="group-note">{c.text}</p>
+          {c.id === 'leather-wash' && (
+            <Seg label="Wash sequence" value={project.edits?.washSequence ?? ''} onChange={(v) => setWashSequence(v as WashSequence)}
+              options={[{ id: 'prewash', label: 'Panels washed first' }, { id: 'garment', label: 'Washed with leather' }, { id: 'none', label: 'No wash' }]} />
+          )}
+          {c.answer && <p className="group-note">{c.answer} This prints in the tech pack.</p>}
+        </div>
+      ))}
+    </Disclosure>
+  );
+}
+
 function NotesList() {
   const { project, selNote, tool, set, removeNote } = usePick('project', 'selNote', 'tool', 'set', 'removeNote');
   const notes = project.notes ?? [];
@@ -153,7 +178,7 @@ function Body({ ws }: { ws: string }) {
     case 'fit': return <FitPanel />;
     case 'outfit': return <OutfitPanel />;
     case 'finish': return <FinishCard />;
-    case 'review': return <><NotesList /><ReviewSections /></>;
+    case 'review': return <><ProductionChecks /><NotesList /><ReviewSections /></>;
     default: return null;
   }
 }

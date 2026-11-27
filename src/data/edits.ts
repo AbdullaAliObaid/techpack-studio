@@ -230,6 +230,8 @@ export interface CustomPose { s: [SideAngles, SideAngles]; spineBend: number; sp
 export const ZERO_SIDE: SideAngles = { shFlex: 0, shAbd: 0, shHoriz: 0, elbow: 0, hipFlex: 0, hipAbd: 0, knee: 0 };
 export const ZERO_POSE: CustomPose = { s: [{ ...ZERO_SIDE }, { ...ZERO_SIDE }], spineBend: 0, spineTwist: 0, headTurn: 0 };
 
+export type WashSequence = 'prewash' | 'garment' | 'none';
+
 export interface Edits {
   attachments: Attachment[];
   customSeams: CustomSeam[];
@@ -238,6 +240,8 @@ export interface Edits {
   pleats: Pleat[];
   /** collar worn folded down (default) or popped up */
   collar?: 'down' | 'up';
+  /** when cotton or denim is mixed with genuine leather: are the fabric panels washed before the leather goes on */
+  washSequence?: WashSequence;
   /** fabric on the inside face of a piece (under collar, placket facing, lining look); key = piece id */
   bands?: Band[];
   insideFabric?: Record<string, { id: string; color: number; hex?: string; pattern?: import('./fabrics').FabricPattern }>;

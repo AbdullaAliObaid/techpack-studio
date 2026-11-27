@@ -323,6 +323,7 @@ export interface State {
   addAttachment: (a: Omit<Attachment, 'id'>) => string;
   duplicateAttachment: (id: string) => string | null;
   setCollar: (c: 'down' | 'up') => void;
+  setWashSequence: (w: import('./data/edits').WashSequence) => void;
   /** a front that buttons: worn buttoned or open */
   setClosure: (c: 'buttoned' | 'open') => void;
   /** fabric on the inside face of a piece; null = same as the outside */
@@ -966,6 +967,7 @@ export const useStore = create<State>((set, get) => {
       return nid;
     },
     setCollar: (c) => { get().commit(); setEdits((e) => ({ ...e, collar: c })); },
+    setWashSequence: (w) => { get().commit(); setEdits((e) => ({ ...e, washSequence: w })); },
     setClosure: (c) => { get().commit(); setEdits((e) => ({ ...e, closure: c })); },
     setInsideFabric: (pieceId, fabric) => {
       get().commit();
