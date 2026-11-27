@@ -89,7 +89,7 @@ const colourAt = (shapes: Shape[], x: number, y: number) => {
 const differ = (a: number[], b: number[]) => a.some((v, i) => Math.abs(v - b[i]) > 6);
 
 {
-  pass(PATTERN_IDS.length === 25 && PATTERN_IDS.every((id) => PATTERNS[id].defaults.id === id && PATTERNS[id].defaults.colors.length === PATTERNS[id].colorsCount), `${PATTERN_IDS.length} patterns, defaults match their colour counts`);
+  pass(PATTERN_IDS.length === 26 && PATTERN_IDS.every((id) => PATTERNS[id].defaults.id === id && PATTERNS[id].defaults.colors.length === PATTERNS[id].colorsCount), `${PATTERN_IDS.length} patterns, defaults match their colour counts`);
   const SVG_RE = /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="[\d.]+" height="[\d.]+" viewBox="0 0 [\d.]+ [\d.]+">(<(rect|circle|ellipse|path) [^<>]*\/>)+<\/svg>$/;
   for (const id of PATTERN_IDS.filter((x) => x !== 'custom')) { // custom motifs are tested with the motif repeat code
     for (const variant of ['default', 'big custom'] as const) {
@@ -115,6 +115,22 @@ const differ = (a: number[], b: number[]) => a.some((v, i) => Math.abs(v - b[i])
   const a = patternTile({ ...PATTERNS.floral.defaults, scale: 5 }), b = patternTile({ ...PATTERNS.floral.defaults, scale: 20 });
   pass(a.size[0] === 5 && b.size[0] === 20 && (a.svg.match(/</g) ?? []).length === (b.svg.match(/</g) ?? []).length, 'same layout at every scale, sized in cm');
   pass(!patternTile({ ...PATTERNS.polka.defaults, colors: ['"/><script>', '#fff'] }).svg.includes('script'), 'colours are sanitised before they reach the SVG');
+  {
+    // star stitch: two staggered five point stars per repeat, stars about 8% of the cloth (star area 1.23 R^2, twice)
+    const st = patternTile(PATTERNS.star.defaults), [W, H] = st.size, sh = parseSvg(st.svg);
+    const stars = (st.svg.match(/<path d="M[^"]*"/g) ?? []).filter((d) => (d.match(/L/g) ?? []).length === 9).length;
+    let on = 0; const N = 80, ink = colourAt(sh, 0.25 * W, 0.25 * H).map(Math.round).join();
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) if (colourAt(sh, ((i + 0.5) / N) * W, ((j + 0.5) / N) * H).map(Math.round).join() === ink) on++;
+    const share = on / (N * N);
+    pass(stars === 2 && share > 0.06 && share < 0.14 && ink !== colourAt(sh, 0.5 * W, 0.25 * H).map(Math.round).join(), `star stitch: ${stars} stars per ${W} cm repeat, stars cover ${(share * 100).toFixed(1)}%`);
+    // on a whole piece, a rib band and a knit collar: the tech pack names it on each
+    const pc = makePreset('polo');
+    const starred = pc.map((q) => (['front', 'collar', 'placket'].includes(q.role) ? { ...q, fabric: { ...q.fabric, pattern: { ...PATTERNS.star.defaults } } } : q));
+    const named = starred.filter((q) => q.fabric.pattern).every((q) => /Star stitch, 2\.4 cm repeat/.test(fabricInfo(q.fabric).pattern ?? ''));
+    const tee = makePreset('basic-tee').map((q) => (q.role === 'neckband' ? { ...q, fabric: { ...q.fabric, pattern: { ...PATTERNS.star.defaults } } } : q));
+    const nb = tee.find((q) => q.role === 'neckband')!;
+    pass(named && /Star stitch/.test(fabricInfo(nb.fabric).pattern ?? '') && cutList(tee).some((r) => r.name === nb.name && /Star stitch/.test(r.detail ?? '')), 'star stitch on a front, knit collar, placket and rib neckband: named in the tech pack fabric');
+  }
 }
 
 // ---------------------------------------------------------------- trace

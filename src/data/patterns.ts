@@ -49,6 +49,7 @@ export const PATTERNS: Record<PatternId, PatternDef> = {
   'tie-dye': def('tie-dye', 'Tie dye', 'Wobbly concentric rings, hand dyed look.', ['#f2efe8', '#5b6fb5', '#c86aa5'], 30, 'printed'),
   heather: def('heather', 'Heather', 'Fine flecks of mixed yarn colours, marl knit look.', ['#a3a5a8', '#7f8185', '#d0d2d4'], 2, 'woven'),
   custom: def('custom', 'Your motif', 'Your own drawing or picture, repeated across the fabric.', ['#f4f2ee'], 6, 'printed'),
+  star: def('star', 'Star stitch', 'Small stars knitted in all over, staggered row to row. Works on whole pieces, rib bands and collars.', ['#1f2742', '#f2efe6'], 2.4, 'woven'),
   jacquard: def('jacquard', 'Jacquard', 'Tone on tone woven medallion and small diamonds.', ['#2b3651', '#3a4766', '#56648a'], 4, 'woven'),
 };
 
@@ -103,6 +104,16 @@ export function patternLabel(p: FabricPattern): string {
 }
 
 // ---------------------------------------------------------------- drawing kit
+
+/** Five point star centred on (cx, cy), point up: outer radius R, inner radius r (absolute M L Z path). */
+export function starPath(cx: number, cy: number, R: number, r: number): string {
+  let d = '';
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + (i * Math.PI) / 5, q = i % 2 ? r : R;
+    d += `${i ? 'L' : 'M'}${f(cx + q * Math.cos(a))} ${f(cy + q * Math.sin(a))}`;
+  }
+  return d + 'Z';
+}
 
 const f = (v: number) => (Math.round(v * 1000) / 1000).toString();
 
@@ -280,6 +291,14 @@ export function patternTile(pIn: FabricPattern): { size: [number, number]; svg: 
       const dia = (cx: number, cy: number, r: number, fill: string) =>
         t.wrap(cx - r, cy - r, cx + r, cy + r, (ox, oy) => t.path(`M${f(cx + ox)} ${f(cy - r + oy)}L${f(cx + r + ox)} ${f(cy + oy)}L${f(cx + ox)} ${f(cy + r + oy)}L${f(cx - r + ox)} ${f(cy + oy)}Z`, fill));
       for (const [x, y] of [[0.5, 0.5], [0, 0]] as Pt[]) { dia(x * S, y * S, 0.3 * S, c[1]); dia(x * S, y * S, 0.13 * S, c[2]); }
+      break;
+    }
+    case 'star': {
+      // two staggered stars per repeat (half drop), each a five point star 36% of the repeat across
+      const R = 0.18 * S, r = R * 0.42;
+      const star = (cx: number, cy: number) => t.wrap(cx - R, cy - R, cx + R, cy + R, (ox, oy) => t.path(starPath(cx + ox, cy + oy, R, r), c[1]));
+      star(0.25 * S, 0.25 * S);
+      star(0.75 * S, 0.75 * S);
       break;
     }
     case 'jacquard': {

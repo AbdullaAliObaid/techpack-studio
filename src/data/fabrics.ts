@@ -25,6 +25,8 @@ export type PatternId =
   | 'solid' | 'stripe' | 'pinstripe' | 'breton' | 'awning' | 'gingham' | 'check' | 'plaid' | 'tartan' | 'windowpane'
   | 'houndstooth' | 'herringbone' | 'chevron' | 'polka' | 'pindot' | 'grid' | 'camo' | 'floral' | 'paisley'
   | 'animal' | 'geo' | 'tie-dye' | 'heather' | 'jacquard'
+  /** star stitch: small five point stars repeated all over (knitted in as a jacquard, or embroidered) */
+  | 'star'
   /** the user's own motif repeated by FabricPattern.motif / layout (e.g. a fleur de lis they drew or uploaded) */
   | 'custom';
 
