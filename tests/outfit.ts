@@ -106,8 +106,8 @@ const cases: { label: string; items: OutfitInput[]; check?: (O: Outfit3D) => voi
       verdict(out > 0.99, `  untucked hem hangs over the jeans: ${(100 * out).toFixed(1)}% of ${d.length} hem points near the jeans are outside`);
     },
   },
-  // three layers: about 1 to 1.5% of a garment's points show inside the one under it (cuffs, armholes, where three
-  // layers press together); allowed up to 2% until the layering gets a tighter binding (open issue)
+  // three layers: under 1% shown inside in practice (0.2 to 0.9%); a little headroom for where three layers press
+  // together (cuffs, armholes)
   { label: 'jacket over button-up over tee', items: [item('basic-tee', 0), item('button-up', 1), item('jacket', 2)], maxShare: 0.02 },
   { label: 'tee, jeans and a bucket hat', items: [item('basic-tee', 1, 'out'), item('jeans', 0), item('bucket-hat', 3)] },
 ];

@@ -198,12 +198,12 @@ export function assembleOutfit(items: OutfitInput[], body: Body, collider?: Clot
     style: built[0].G.style, edits: built[0].G.edits, buttoned: built.flatMap(({ G }) => G.buttoned ?? []),
     foldLayers: nAttachLayers, ...(layerNear.length ? { layerNear } : {}), garments, pairs, rebind: () => {}, release: () => {},
   };
-  const binder = contactBinder(O, bodyFrame(body));
+  const held = new Map<number, Float32Array>();
+  const binder = contactBinder(O, bodyFrame(body), (k) => !held.has(k));
   O.rebind = binder;
   // dressing in order: a garment is held in its start shape until the ones under it are sewn, then it is sewn over
   // them (all of it in the gravity free sewing phase, which is that much longer)
   const per = sim.sewFrames, maxRank = Math.max(...rank);
-  const held = new Map<number, Float32Array>();
   if (maxRank > 0 && !(globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.NOSTAGE) {
     garments.forEach((g, k) => {
       if (!rank[k]) return;
@@ -214,7 +214,9 @@ export function assembleOutfit(items: OutfitInput[], body: Body, collider?: Clot
   }
   const stage = () => {
     if (!held.size) return;
-    for (const [k, m] of held) if (sim.frames >= rank[k] * per) { sim.invMass.set(m, garments[k].start); held.delete(k); }
+    let let_go = false;
+    for (const [k, m] of held) if (sim.frames >= rank[k] * per) { sim.invMass.set(m, garments[k].start); held.delete(k); let_go = true; }
+    if (let_go) binder();
   };
   O.release = () => { sim.frames = Math.max(sim.frames, maxRank * per); stage(); };
   // rebound every other frame: in between, the barycentric binding slides along with the cloth
@@ -253,7 +255,9 @@ function surfaces(O: Outfit3D): Surface[] {
  * tube). Between two tops that rule is left out: a torso point lying beside an outer sleeve is outside that sleeve,
  * and binding it inside made the layering worse.
  */
-function contactBinder(O: Outfit3D, f: ReturnType<typeof bodyFrame>) {
+/** active(k): garment k takes part (a garment still held in its start shape, waiting to be dressed, does not: held
+ *  rigid, it would push the garment under it into the body) */
+function contactBinder(O: Outfit3D, f: ReturnType<typeof bodyFrame>, active: (k: number) => boolean = () => true) {
   const S = surfaces(O), sim = O.sim, pos = sim.pos;
   const neckCz = f.neckRing(f.neckH + 1).cz ?? 0;
   const C = 2.5, T = 1 << 14;
@@ -347,6 +351,9 @@ function contactBinder(O: Outfit3D, f: ReturnType<typeof bodyFrame>) {
     const within = (b: number[], k: number) => pos[k * 3] > b[0] - REACH && pos[k * 3] < b[3] + REACH && pos[k * 3 + 1] > b[1] - REACH && pos[k * 3 + 1] < b[4] + REACH && pos[k * 3 + 2] > b[2] - REACH && pos[k * 3 + 2] < b[5] + REACH;
     for (const [i, j] of O.pairs) {
       const gi = O.garments[i], gj = O.garments[j];
+      // a held top over a top would crush the one under it down its body; held bottoms over a tucked top only hold
+      // the hem in at the hips, which is what tucking wants
+      if ((!active(i) || !active(j)) && !(gi.category === 'tops' && gj.category === 'bottoms')) continue;
       // the outer garment stays outside every part of the inner one
       // (bound to the nearest triangle of each part: under the arm a point lies over the torso and the sleeve at once)
       const twoParts = gi.category === 'tops';
