@@ -21,6 +21,7 @@ import { FabricDefs, InsideDecor, InsideLegend } from './ChartInside';
 import { canHostDesigns, fabricHex, imageFileOf, linkedPoints, openPhoto, pleatMarks, rootPiece, runD, runIndices, runMid, scaleAttachment, scaleLimits } from './editHelpers';
 import { pickSeamPoint } from './ConstructionPanel';
 import { ATTACHMENT_MIME, isAttachment } from './designLibrary';
+import { MeasureLayer, MeasureTray, ChartRulers, type MeasureHandle } from './MeasureTools';
 import { attWorld, flipEntries, frameOn, instanceFor, layoutEntries, onCopy, toSource, toWorldPt, worldToAtt, type Entry } from './sides';
 import { openPieceFlow } from './flow';
 import { attsOnEntry, computeGeo, layoutChart, type Geo } from './chartLayout';
@@ -71,10 +72,11 @@ export default function PatternEditor() {
   const viewRef = useRef(view);
   viewRef.current = view;
   const drag = useRef<Drag | null>(null);
+  const measureRef = useRef<MeasureHandle | null>(null);
   const pointers = useRef(new Map<number, Pt>());
   const lastTap = useRef<{ t: number; key: string }>({ t: 0, key: '' });
 
-  const { project, tool, symmetry, showMeasure, showStitch, selPiece, selPoint, selInstance, units, fitToken, selAttachment, selPleat, hoverSeam, seamDraft, penDraft, penSnap, showBothSides, pieceFlow, blockDraft } = usePick('project', 'tool', 'symmetry', 'showMeasure', 'showStitch', 'selPiece', 'selPoint', 'selInstance', 'units', 'fitToken', 'selAttachment', 'selPleat', 'hoverSeam', 'seamDraft', 'penDraft', 'penSnap', 'showBothSides', 'pieceFlow', 'blockDraft');
+  const { project, tool, symmetry, showMeasure, showStitch, selPiece, selPoint, selInstance, units, fitToken, selAttachment, selPleat, hoverSeam, seamDraft, penDraft, penSnap, showBothSides, pieceFlow, blockDraft, measureTool } = usePick('project', 'tool', 'symmetry', 'showMeasure', 'showStitch', 'selPiece', 'selPoint', 'selInstance', 'units', 'fitToken', 'selAttachment', 'selPleat', 'hoverSeam', 'seamDraft', 'penDraft', 'penSnap', 'showBothSides', 'pieceFlow', 'blockDraft', 'measureTool');
   const pieces = project.pieces;
   const edits = project.edits;
   const [penHover, setPenHover] = useState<Pt | null>(null);
@@ -393,6 +395,7 @@ export default function PatternEditor() {
     if (pointers.current.size === 2) { noteTool.cancel(); return startPinch(); }
     if (pointers.current.size > 2) return;
 
+    if (e.button !== 1 && !spaceDown.current && !e.altKey && measureRef.current?.down(e)) return;
     if (useStore.getState().tool === 'note' && e.button !== 1 && !spaceDown.current) { noteTool.down(e); return; }
     const st = useStore.getState();
     const w = toWorld(e.clientX, e.clientY);
@@ -637,6 +640,7 @@ export default function PatternEditor() {
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
+    if (!drag.current && !spaceDown.current && measureRef.current?.move(e)) return;
     const stNow = useStore.getState();
     if (stNow.tool === 'note' && pointers.current.has(e.pointerId) && !drag.current) { pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); noteTool.move(e); return; }
     if (!drag.current && !pointers.current.size && (stNow.tool === 'select' || stNow.tool === 'add') && !stNow.pieceFlow?.picking && e.pointerType !== 'touch') {
@@ -805,6 +809,7 @@ export default function PatternEditor() {
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
+    if (!drag.current && measureRef.current?.active() && pointers.current.size <= 1) { if (e.type === 'pointerup') measureRef.current.up(e); pointers.current.delete(e.pointerId); return; }
     if (useStore.getState().tool === 'note' && !drag.current) { if (e.type === 'pointerup') noteTool.up(); else noteTool.cancel(); pointers.current.delete(e.pointerId); return; }
     const pc = pending.current;
     pending.current = null;
@@ -917,7 +922,7 @@ export default function PatternEditor() {
       <div className={`editor-canvas ${dropKey ? 'dropping' : ''} ${picking ? 'picking' : ''}`} onDragOver={onDragOver} onDragLeave={() => setDropKey(null)} onDrop={onDrop}>
         <svg
           ref={svgRef}
-          className={`editor-svg tool-${tool}`}
+          className={`editor-svg tool-${tool}${showMeasure && measureTool ? ' measuring' : ''}`}
           aria-label="Pattern chart"
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -969,6 +974,7 @@ export default function PatternEditor() {
             <NotesLayer k={k} entries={entries} tool={{ ...noteTool, active: notesOn }} />
             <ProbeMarker k={k} entries={entries} />
             <GuideLayer k={k} />
+            <MeasureLayer k={k} entries={entries} units={units} toWorld={toWorld} handle={measureRef} notify={(m) => { setNote(m); setTimeout(() => setNote(null), 2500); }} />
             <MarqueeLayer k={k} />
             {hover && tool !== 'pen' && <HoverOverlay hover={hover} entries={entries} geos={geos} k={k} />}
             {tool === 'block' && blockDraft && <BlockPreview draft={blockDraft} hover={penHover} k={k} />}
@@ -976,7 +982,9 @@ export default function PatternEditor() {
           </g>
         </svg>
         {chartFace === 'inside' && <InsideLegend />}
+        <ChartRulers view={view} size={size} units={units} />
         <NotesBar />
+        <MeasureTray />
       </div>
       <footer className="pane-foot" role="status">
         <span className="foot-zoom">

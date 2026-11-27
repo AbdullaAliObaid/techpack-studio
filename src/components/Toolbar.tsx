@@ -37,13 +37,14 @@ export default function Toolbar() {
   const { workspace, tool, showMeasure, viewFace, paintTab, set } = usePick('workspace', 'tool', 'showMeasure', 'viewFace', 'paintTab', 'set');
   const narrow = () => (window.innerWidth <= 960 ? { drawer: true } : {});
   const pick = (v: Tool) => () => {
+    set({ measureTool: null });
     if (v === 'pen' || v === 'seams' || v === 'pleat' || v === 'block') set({ tool: v, seamDraft: EMPTY_SEAM_DRAFT, penDraft: [], penSheet: null, pieceFlow: null, blockDraft: null, ...(v === 'block' ? { paintTab: 'edge' as const } : {}), ...narrow() });
     else if (v === 'note') set({ tool: 'note', showNotes: true });
     else set({ tool: v });
   };
   const inside = viewFace === 'inside';
   const render = (it: Item) => {
-    if (it === 'measure') return <Btn key={it} on={showMeasure} label="Measure" tip="Show measurements on the chart (M)" icon="measure" onClick={() => set({ showMeasure: !showMeasure })} />;
+    if (it === 'measure') return <Btn key={it} on={showMeasure} label="Measure" tip="Measure: labels, rulers and measuring tools (M)" icon="measure" onClick={() => set({ showMeasure: !showMeasure, ...(!showMeasure ? { measureTool: 'ruler' as const } : {}) })} />;
     if (it === 'bands') return <Btn key={it} on={paintTab === 'bands'} label="Bands" tip="Bands: stripes across the whole garment" icon="stripes" onClick={() => set({ tool: 'select', paintTab: 'bands', blockDraft: null })} />;
     if (it === 'flip') return <Btn key={it} on={inside} label={inside ? 'Inside' : 'Outside'} tip={inside ? 'Turn the pattern back to the outside' : 'Turn the garment inside out'} aria="Turn the pattern over" icon="flip" onClick={() => set({ viewFace: inside ? 'outside' : 'inside', designFace: inside ? 'outside' : 'inside' })} />;
     const d = TOOL[it];

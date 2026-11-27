@@ -6,6 +6,8 @@ import { measureValue, setMeasurement, type MeasureTarget } from '../src/data/me
 import { seamReport } from '../src/lib/specs';
 import { presetBlocks, shapeBlocks } from '../src/data/colourBlock';
 import type { StyleId } from '../src/data/catalog';
+import { angleDeg, arcBetween, lengthOf, nearestOnArc, niceStep } from '../src/components/rulerMath';
+import { outlineLength } from '../src/lib/geometry';
 
 let fails = 0;
 const ok = (c: boolean, m: string) => { if (!c) { fails++; console.error('FAIL', m); } else console.log('ok  ', m); };
@@ -58,5 +60,33 @@ check('basic-tee', 'edge', (ps) => { const f = ps.find((p) => p.role === 'sleeve
   const tri = [{ x: 2, y: 2 }, { x: 8, y: 2 }, { x: 5, y: 9 }];
   const drawn = shapeBlocks(style, ps, sleeve.id, tri, false, look, { total: false, symmetry: true });
   ok(drawn.length >= 2 && drawn.some((a) => a.instance === 1 && a.layers[0].flipX), 'free shape on a sleeve: left and right blocks, the right one flipped');
+}
+
+// ---- chart measuring tools (src/components/rulerMath.ts): straight length, angle, curved length along an outline ----
+{
+  const near = (a: number, b: number, tol: number) => Math.abs(a - b) < tol;
+  ok(near(lengthOf({ x: 0, y: 0 }, { x: 3, y: 4 }), 5, 1e-12), 'ruler: 3-4-5 reads 5');
+  const V = { x: 1, y: 1 };
+  ok(near(angleDeg(V, { x: 5, y: 1 }, { x: 1, y: 7 }), 90, 1e-9), 'protractor: right angle reads 90');
+  ok(near(angleDeg(V, { x: 5, y: 1 }, { x: 5, y: 5 }), 45, 1e-9), 'protractor: 45 degrees');
+  ok(near(angleDeg(V, { x: 5, y: 1 }, { x: -3, y: 1 }), 180, 1e-9) && near(angleDeg(V, { x: 3, y: 1 }, { x: 9, y: 1 }), 0, 1e-9), 'protractor: straight 180 and zero 0');
+  ok(near(angleDeg(V, { x: 5, y: 1 }, { x: 1 + 4 * Math.cos(2.5), y: 1 + 4 * Math.sin(2.5) }), (2.5 * 180) / Math.PI, 1e-9) , 'protractor: arms either side agree');
+  for (const style of ['tee', 'jeans', 'jacket'] as StyleId[]) {
+    const ps = makePreset(style, DEFAULT_BODY);
+    const p = ps.find((q) => q.points.length > 3)!;
+    const a = p.points[0], b = p.points[Math.min(3, p.points.length - 1)];
+    const want = outlineLength(p.points, a.id, b.id);
+    const got = arcBetween(p.points, { seg: 0, t: 0 }, { seg: Math.min(3, p.points.length - 1), t: 0 }).len;
+    ok(near(got, want, want * 0.002 + 0.01), `${style} ${p.name}: tape along the outline ${got.toFixed(3)} matches outlineLength ${want.toFixed(3)}`);
+    // the two ways round add up to the whole outline, and the tape picks the shorter
+    const A = { seg: 0, t: 0.25 }, B = { seg: 2, t: 0.6 };
+    const n = p.points.length, r = arcBetween(p.points, A, B);
+    let total = 0; for (let i = 0; i < n; i++) total += outlineLength(p.points, p.points[i].id, p.points[(i + 1) % n].id);
+    ok(r.len <= total / 2 + 1e-6, `${style}: tape takes the shorter way round (${r.len.toFixed(2)} of ${total.toFixed(2)})`);
+    // snapping a point already on the outline finds itself
+    const on = r.path[Math.floor(r.path.length / 2)];
+    ok(nearestOnArc(p.points, on).d < 0.01, `${style}: nearest outline spot to a point on it is itself`);
+  }
+  ok(niceStep(10, 8) === 1 && niceStep(3, 8) === 5 && niceStep(100, 8) === 0.1, 'rulers pick nice steps');
 }
 if (fails) { console.error(fails + ' failed'); process.exit(1); }

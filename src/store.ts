@@ -19,6 +19,15 @@ import { regradeBuiltins, styleEdits, upgradeFront, withBuiltins } from './data/
 /** undo history entry: pattern pieces plus garment edits */
 export interface Snapshot { pieces: Piece[]; edits?: Edits; notes?: Note[] }
 
+/** Tools in the Measure tray, and what they leave on the chart. World units are cm. Not saved with the project, never exported. */
+export type MeasureToolId = 'ruler' | 'tape' | 'angle' | 'square';
+export type RMark =
+  | { id: string; kind: 'ruler'; a: Pt; b: Pt }
+  | { id: string; kind: 'tape'; path: Pt[]; len: number }
+  | { id: string; kind: 'angle'; v: Pt; a: Pt; b: Pt };
+
+export type RMarkInput = RMark extends infer T ? (T extends RMark ? Omit<T, 'id'> : never) : never;
+
 export interface Project {
   id: string;
   name: string;
@@ -170,6 +179,17 @@ export interface State {
   /** the tool rail is previewing which pieces Symmetry ('sym') or Total symmetry ('total') links (hover, focus, or just switched on) */
   symPreview: 'sym' | 'total' | null;
   showMeasure: boolean;
+  /** the tool picked in the Measure tray (null: just the labels) */
+  measureTool: MeasureToolId | null;
+  measureGrid: boolean;
+  measureRulers: boolean;
+  /** the set square overlay: its corner in chart cm and its turn in degrees */
+  measureSquare: { x: number; y: number; rot: number };
+  /** placed measurements, per project id */
+  measureMarks: Record<string, RMark[]>;
+  addMeasureMark: (m: RMarkInput) => void;
+  removeMeasureMark: (id: string) => void;
+  clearMeasureMarks: () => void;
   showStitch: boolean;
   /** notes layer: draw, arrow and text callouts on the chart */
   showNotes: boolean;
@@ -451,6 +471,14 @@ export const useStore = create<State>((set, get) => {
     linkedHot: [],
     symPreview: null,
     showMeasure: false,
+    measureTool: 'ruler',
+    measureGrid: false,
+    measureRulers: true,
+    measureSquare: { x: 20, y: 20, rot: 0 },
+    measureMarks: {},
+    addMeasureMark: (m) => set((s) => ({ measureMarks: { ...s.measureMarks, [s.project.id]: [...(s.measureMarks[s.project.id] ?? []), { ...m, id: uid() } as RMark] } })),
+    removeMeasureMark: (id) => set((s) => ({ measureMarks: { ...s.measureMarks, [s.project.id]: (s.measureMarks[s.project.id] ?? []).filter((q) => q.id !== id) } })),
+    clearMeasureMarks: () => set((s) => ({ measureMarks: { ...s.measureMarks, [s.project.id]: [] } })),
     showStitch: true,
     showNotes: true,
     selNote: null,

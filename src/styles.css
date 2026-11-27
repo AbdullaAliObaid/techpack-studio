@@ -1636,3 +1636,54 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 /* sideways rows being dragged with the mouse (src/components/dragScroll.ts) */
 .drag-scrolling { cursor: grabbing; user-select: none; scroll-behavior: auto !important; }
 .drag-scrolling * { cursor: grabbing; }
+
+/* ---------- measuring tools: tray, rulers, chips ---------- */
+:root { --spring: linear(0, 0.42 6%, 0.86 14%, 1.04 24%, 1.05 32%, 1.01 46%, 0.995 62%, 1); }
+.editor-svg.measuring { cursor: crosshair; }
+.dim-text, .mlayer text { font-variant-numeric: tabular-nums; }
+.mtray {
+  position: absolute; z-index: 6; left: 50%; bottom: 12px; width: min(760px, calc(100% - 24px)); margin-left: calc(min(760px, 100% - 24px) / -2);
+  padding: 8px; border-radius: 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 8px;
+  border-color: oklch(0 0 0 / 0.1);
+  transform: translateY(calc(100% + 24px)); clip-path: inset(100% -8px -8px -8px round 16px); opacity: 0;
+  transition: transform 380ms var(--spring), clip-path 300ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 160ms ease-out;
+}
+.mtray[data-open='true'] { transform: none; clip-path: inset(-8px round 16px); opacity: 1; }
+:root[data-theme='dark'] .mtray { border-color: oklch(1 0 0 / 0.12); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .mtray { border-color: oklch(1 0 0 / 0.12); } }
+.mtray-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mtray-row .mtray-close { margin-left: auto; }
+.mtray .seg { border-radius: 10px; padding: 2px; }
+.mtray .seg button { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; border-radius: 8px; font-size: 13px; }
+.mtray .seg button:focus-visible, .mchip button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mtray-low { flex-wrap: nowrap; }
+.mtray-hint { margin: 0; flex: 0 1 220px; font-size: 12px; line-height: 1.3; color: var(--text-2); }
+.mtray-list {
+  flex: 1; min-width: 0; display: flex; gap: 6px; align-items: center; overflow-x: auto; scrollbar-width: none; padding: 2px 12px;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent); mask-image: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+}
+.mtray-list::-webkit-scrollbar { display: none; }
+.mtray-empty { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.mchip { flex: none; display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0 2px 0 10px; border-radius: 8px; background: var(--fill-2); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; animation: pop var(--ease); }
+.mchip button { position: relative; width: 28px; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--text-2); display: grid; place-items: center; }
+.mchip button::after { content: ''; position: absolute; inset: -8px; }
+.mchip button:hover { background: var(--fill); color: var(--label); }
+.mtray-clear { flex: none; }
+.chart-rulers { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; animation: rulers-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes rulers-in { from { clip-path: inset(0 100% 100% 0); } to { clip-path: inset(0); } }
+.ruler-bg { fill: color-mix(in oklch, var(--bg-elevated) 88%, transparent); }
+.ruler-edge { stroke: var(--separator); stroke-width: 0.5; fill: none; }
+.ruler-tick { stroke: var(--text-2); stroke-width: 1; fill: none; }
+.ruler-num, .ruler-unit { fill: var(--text-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ruler-unit { font-weight: 600; fill: var(--measure); }
+@media (prefers-reduced-transparency: reduce) { .ruler-bg { fill: var(--bg-elevated); } }
+/* the tray lifts the editing modifiers out of its way, and squeezes to icons in a narrow pane */
+.chart-mods { transition: bottom 300ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.chart-wrap:has(.mtray[data-open='true']) .chart-mods { bottom: 172px; }
+.mtray { container-type: inline-size; }
+@container (max-width: 600px) {
+  .mtray .seg button span { display: none; }
+  .mtray .mtray-tools button.on span { display: inline; }
+  .mtray-hint { display: none; }
+  .mtray-row { flex-wrap: nowrap; }
+}
