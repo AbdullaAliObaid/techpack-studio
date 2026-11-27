@@ -24,7 +24,7 @@ const Tgl = ({ on, icon, label, onChange }: { on: boolean; icon: string; label: 
 );
 
 export default function Viewport3D() {
-  const { project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode, pullMode } = usePick('project', 'view3d', 'showBody', 'skin', 'showJoints', 'showGarment', 'showTape', 'units', 'set', 'draping', 'drapePeak', 'redrapeToken', 'simStatus', 'mode', 'pullMode');
+  const { setCollar, project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode, pullMode } = usePick('setCollar', 'project', 'view3d', 'showBody', 'skin', 'showJoints', 'showGarment', 'showTape', 'units', 'set', 'draping', 'drapePeak', 'redrapeToken', 'simStatus', 'mode', 'pullMode');
   const { body, pieces, garment } = project;
   const downAt = useRef<{ x: number; y: number; b: number } | null>(null);
   const tv = useCssVars(['--viewport', '--floor', '--hemi-ground', '--shadow-opacity'] as const);
@@ -124,6 +124,10 @@ export default function Viewport3D() {
           <div className="vp-bar-group status" role="status">
             <span className={`drape-dot ${draping ? 'on' : ''}`} aria-hidden="true" />
             <span className="drape-text">{draping ? simStatus || 'Simulating fabric…' : 'Draped'}</span>
+            {['polo', 'shirt', 'jacket'].includes(CATALOG.find((c) => c.id === project.garment)?.family ?? '') && (
+              <button className={`btn small ${project.edits?.collar === 'up' ? 'on' : ''}`} aria-pressed={project.edits?.collar === 'up'} title="Wear the collar popped up or folded down"
+                onClick={() => setCollar(project.edits?.collar === 'up' ? 'down' : 'up')}>{project.edits?.collar === 'up' ? 'Collar up' : 'Collar down'}</button>
+            )}
             <button className="btn small" onClick={() => set({ redrapeToken: redrapeToken + 1 })}><Icon name="refresh" size={14} /> Re-drape</button>
           </div>
         </div>
