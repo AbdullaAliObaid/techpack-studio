@@ -1771,7 +1771,7 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 @media (prefers-reduced-transparency: reduce) { .gl-card { background: var(--bg-elevated); -webkit-backdrop-filter: none; backdrop-filter: none; } .gl-wrap { background: var(--viewport); } }
 
 /* Camera | Edit switch, top centre of the 3D view */
-.vp-mode { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 2px; padding: 3px; border-radius: 13px; border: 0.5px solid var(--material-border); box-shadow: var(--shadow); }
+.vp-mode { position: absolute; top: 106px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 2px; padding: 3px; border-radius: 13px; border: 0.5px solid var(--material-border); box-shadow: var(--shadow); }
 .vp-mode button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--label-2); font-size: 12px; font-weight: 600; }
 .vp-mode button:hover { background: var(--fill-2); color: var(--label); }
 .vp-mode button.on { background: var(--accent-soft); color: var(--accent-text); }
