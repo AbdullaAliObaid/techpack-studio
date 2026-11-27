@@ -35,7 +35,7 @@ export interface ShapeLayer {
   /** text layers: font style (Design workspace) */
   font?: string;
   /** embroidery stitch style */
-  stitch?: 'satin' | 'fill' | 'open';
+  stitch?: string;
 }
 
 /**
