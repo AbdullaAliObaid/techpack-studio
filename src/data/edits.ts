@@ -266,6 +266,11 @@ export interface Band {
   /** pieces the band skips (e.g. sleeves); default: every piece it crosses */
   skip?: string[];
   sheen?: Sheen;
+  /**
+   * tilt in degrees (-60..60, default 0 = level). The band is a tilted plane through the garment, so its stripes stay
+   * continuous across the side seams: positive lowers the wearer's left side (see src/data/bandGeom.ts).
+   */
+  angle?: number;
 }
 
 export const EMPTY_EDITS: Edits = { attachments: [], customSeams: [], detachedSeams: [], pleats: [] };
