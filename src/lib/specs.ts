@@ -3,6 +3,7 @@ import { bbox, bezAt, bezTangent, dist, offsetInward, outlineLength, samplePoly,
 import type { Attachment, Edits, Face, Hardware, Pleat } from '../data/edits';
 import { attachmentPolygons, outlinePolygon, SHAPES } from './shapes';
 import { builtinSeams, faceLabel, faceOf, instanceLabel, crownCount } from '../sim/seams';
+import { buttonholeSlots } from '../data/construction';
 import { labelMaterial, labelSewing, labelSize } from '../data/labels';
 import { FABRIC_CATEGORIES, FABRICS, PATTERNS, colorName, compositionOf, fabricById, fabricHex, fabricThickness, patternLabel, withPatternDefaults, type FabricRef } from '../data/fabrics';
 import { attachmentStack, stackOf, stackText } from '../data/stack';
@@ -589,7 +590,7 @@ export function trimsReport(pieces: Piece[], edits?: Edits, style?: StyleId): Tr
         push({ kind: 'hardware', item: 'Zip', detail: hardwareDetail(h, a), placement: where, qty: copies });
       } else if (a.buttonhole) {
         // a buttonhole is a sewing operation, not a bought trim: as long as the button is wide, plus 3 mm
-        push({ kind: 'buttonhole', item: 'Buttonhole', detail: `${round1(h.size * 10 + 3)} mm, stitched${a.thread ? `, thread ${a.thread}` : ', thread matched'}`, placement: where, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
+        push({ kind: 'buttonhole', item: 'Buttonhole', detail: `${round1(h.size * 10 + 3)} mm, ${h.holeStyle === 'keyhole' ? 'keyhole' : 'straight'}, ${h.holeDir === 'along' ? 'along the row' : 'across the row'}, stitched${a.thread ? `, thread ${a.thread}` : ', thread matched'}`, placement: where, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
       } else {
         push({ kind: 'hardware', item: HW_NAME[h.type] ?? cap(h.type), detail: hardwareDetail(h, a), placement: where, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
       }
@@ -848,7 +849,8 @@ export function attachmentOutlines(a: Attachment): Pt[][] {
  * Hardware placement marks on a host piece (host local coords, cm): a point per trim (rivets, buttons ...)
  * and a line for a zip.
  */
-export function hardwareMarks(p: Piece, edits?: Edits): { name: string; /** hardware type, or 'buttonhole' */ type: string; points: { at: Pt; r: number }[]; line?: [Pt, Pt]; builtin?: boolean }[] {
+export function hardwareMarks(p: Piece, edits?: Edits): { name: string; /** hardware type, or 'buttonhole' */ type: string; points: { at: Pt; r: number }[]; line?: [Pt, Pt]; builtin?: boolean;
+  /** buttonholes: each hole's stitched outline (straight or keyhole), host coords */ slots?: Pt[][] }[] {
   const out: ReturnType<typeof hardwareMarks> = [];
   for (const a of edits?.attachments ?? []) {
     if (a.pieceId !== p.id || a.kind !== 'hardware' || !a.hardware) continue;
@@ -856,7 +858,7 @@ export function hardwareMarks(p: Piece, edits?: Edits): { name: string; /** hard
     const T = (q: Pt): Pt => ({ x: a.x + q.x * c - q.y * s, y: a.y + q.x * s + q.y * c });
     if (h.type === 'zipper') { out.push({ name: a.name, type: h.type, points: [], line: [T({ x: 0, y: -a.h / 2 }), T({ x: 0, y: a.h / 2 })] }); continue; }
     const n = Math.max(1, Math.round(h.count ?? 1)), sp = h.spacing ?? Math.max(1.5, h.size * 2);
-    out.push({ name: a.name, type: a.buttonhole ? 'buttonhole' : h.type, points: Array.from({ length: n }, (_, k) => ({ at: T({ x: (k - (n - 1) / 2) * sp, y: 0 }), r: Math.max(0.1, h.size / 2) })), ...(a.builtin ? { builtin: true } : {}) });
+    out.push({ name: a.name, type: a.buttonhole ? 'buttonhole' : h.type, points: Array.from({ length: n }, (_, k) => ({ at: T({ x: (k - (n - 1) / 2) * sp, y: 0 }), r: Math.max(0.1, h.size / 2) })), ...(a.builtin ? { builtin: true } : {}), ...(a.buttonhole ? { slots: buttonholeSlots(a, true) } : {}) });
   }
   return out;
 }

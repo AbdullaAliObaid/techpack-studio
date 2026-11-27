@@ -5,7 +5,7 @@ import { makePreset } from '../src/data/presets';
 import { draft, regradePoints, EASE, crownArc, derivedGirths, FITS, RIB, neckBase, isSplitFront } from '../src/data/draft';
 import { CATALOG, migrateGarment, styleById } from '../src/data/catalog';
 import { freshProject, migrateProject, useStore } from '../src/store';
-import { BUILTIN_VERSION, stitchLines } from '../src/data/construction';
+import { BUILTIN_VERSION, buttonholeLength, buttonholeOutline, buttonholeSet, buttonholeSlots, stitchLines } from '../src/data/construction';
 import { buildHardware } from '../src/sim/detailsHardware';
 import { buildDetails } from '../src/sim/details';
 import { INSIDE_ROLES } from '../src/data/presets';
@@ -24,7 +24,7 @@ import { labelSewing, labelSize } from '../src/data/labels';
 import { outwardSignsHosted } from '../src/sim/detailsAttach';
 import { piecesToDxf } from '../src/lib/exportDxf';
 import { shapePolygon, attachmentPolygons, SHAPE_IDS } from '../src/lib/shapes';
-import { attachmentReport, cutList, labelReport, pleatReport, trimsReport } from '../src/lib/specs';
+import { attachmentReport, cutList, hardwareMarks, labelReport, pleatReport, trimsReport } from '../src/lib/specs';
 import type { Attachment, Hardware, Label } from '../src/data/edits';
 import { assemble, trimWeight, ZIP_TEETH } from '../src/sim/setup';
 import { meshPanel, seamPath } from '../src/sim/panels';
@@ -704,6 +704,45 @@ console.log('\n== construction on the pattern ==');
 }
 
 // regrade keeps user edits
+// ---- buttonholes the user adds (Trims workspace): rows, matching buttons, symmetry, chart, 3D and tech pack ----
+console.log('\n== user buttonholes ==');
+{
+  const pieces = makePreset('jacket', DEFAULT_BODY);
+  const fr = pieces.find((q) => q.role === 'front')!;
+  // a row of three keyhole holes on the right front (copy 1), matching buttons on the left front (copy 0)
+  const set = buttonholeSet('jacket', pieces, { pieceId: fr.id, x: 1, y: 30, rotation: 90, size: 1.8, count: 3, spacing: 7, style: 'keyhole', instance: 1, button: true });
+  const holes = set.filter((a) => a.buttonhole), buttons = set.filter((a) => !a.buttonhole);
+  pass(holes.length === 1 && buttons.length === 1 && holes[0].kind === 'hardware' && holes[0].hardware?.type === 'button' && holes[0].instance === 1 && buttons[0].instance === 0
+    && buttons[0].x === -holes[0].x && buttons[0].y === holes[0].y && holes[0].hardware?.count === 3 && buttons[0].hardware?.count === 3,
+    'buttonholes: a row of 3 on one front, matching buttons where it laps over the other front (mirrored pattern place)');
+  // the slots: keyhole and straight, as long as the button plus 3 mm, spaced along the row
+  const slots = buttonholeSlots({ ...holes[0], x: 0, y: 0, rotation: 0 } as Attachment);
+  const span = (sl: { x: number; y: number }[], k: 'x' | 'y') => Math.max(...sl.map((q) => q[k])) - Math.min(...sl.map((q) => q[k]));
+  const straight = buttonholeOutline(1.8, 'straight');
+  pass(slots.length === 3 && Math.abs(span(slots[0], 'y') - buttonholeLength(1.8)) < 1e-6 && Math.abs(span(straight, 'x') - 2.1) < 1e-6
+    && slots[0].length > straight.length && Math.abs(slots[1].reduce((m, q) => m + q.x, 0) / slots[1].length) < 0.3,
+    `buttonhole slots: ${slots.length} keyhole slots ${buttonholeLength(1.8).toFixed(1)} cm long across the row, straight slot 2.1 cm`);
+  // on the garment: stitched on the chart / 3D (stitch lines), marked in the tech pack, listed as a sewing operation
+  const edits: Edits = { ...EMPTY_EDITS, attachments: set.map((a, i) => ({ ...a, id: `u${i}` })) };
+  const lines = stitchLines('jacket', pieces, edits).filter((L) => L.kind === 'buttonhole' && L.instance === 1);
+  const marks = hardwareMarks(fr, edits).filter((m) => m.type === 'buttonhole');
+  const tr = trimsReport(pieces, edits, 'jacket');
+  pass(lines.length === 3 && lines.every((L) => L.points.length > 4 && L.points[0].x === L.points[L.points.length - 1].x) && marks[0]?.slots?.length === 3
+    && tr.some((t) => t.kind === 'buttonhole' && /keyhole/.test(t.detail) && t.qty === 3) && tr.some((t) => t.kind === 'hardware' && t.qty === 3),
+    'buttonholes: 3 stitched outlines on the chart and in 3D, 3 slots in the tech pack marks, trims list 3 keyhole holes and 3 buttons');
+  // the simulation buttons each new hole to its button
+  const G = assemble('jacket', pieces, DEFAULT_BODY, 2.2, NO_COLLIDER, edits)!;
+  const own = G.buttoned.filter((b) => b.hole === 'u0' && b.button === 'u1');
+  pass(own.length === 3, `buttonholes: ${own.length} of 3 buttoned to their buttons in the simulation`);
+  // symmetry: a row off the centre line of a symmetric piece cut once is mirrored across it
+  const tee = makePreset('basic-tee', DEFAULT_BODY), bk = tee.find((q) => q.role === 'back')!;
+  const sym = buttonholeSet('basic-tee', tee, { pieceId: bk.id, x: 8, y: 20, rotation: 30, size: 1.2, count: 2, spacing: 3, symmetric: true });
+  const off = buttonholeSet('basic-tee', tee, { pieceId: bk.id, x: 8, y: 20, rotation: 30, size: 1.2, count: 2, spacing: 3 });
+  const S2 = sym.map((a) => buttonholeSlots(a, true));
+  const mirrored = S2.length === 2 && S2[0].every((sl, k) => sl.every((q) => S2[1].some((r) => r.some((m) => Math.hypot(m.x + q.x, m.y - q.y) < 1e-6)) || k < 0));
+  pass(off.length === 1 && sym.length === 2 && sym[1].x === -8 && mirrored, 'buttonholes: with symmetry on, a row off the centre line is mirrored across it (slot for slot)');
+}
+
 console.log('\n== regrade ==');
 const A = DEFAULT_BODY, B = bodies.big;
 const pieces = makePreset('jacket', A);

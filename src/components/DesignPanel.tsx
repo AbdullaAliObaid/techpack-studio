@@ -45,7 +45,7 @@ const TRIM_KINDS = ['pocket', 'patch', 'strap', 'hardware', 'label'];
 /** Trims workspace: hardware, tags, pockets, patches and straps. Design workspace (insert): prints, embroidery, appliques and photos. */
 export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | 'trims' }) {
   const trims = mode === 'trims';
-  const { project, selPiece, selInstance, selAttachment, showBothSides, addAttachment, set, units, designFace, openDesign } = usePick('project', 'selPiece', 'selInstance', 'selAttachment', 'showBothSides', 'addAttachment', 'set', 'units', 'designFace', 'openDesign');
+  const { project, selPiece, selInstance, selAttachment, showBothSides, addAttachment, addButtonholes, set, units, designFace, openDesign } = usePick('project', 'selPiece', 'selInstance', 'selAttachment', 'showBothSides', 'addAttachment', 'addButtonholes', 'set', 'units', 'designFace', 'openDesign');
   const [opts, setOpts] = useState<DesignOpts>({ ...DEFAULT_OPTS, fabric: { id: 'canvas', color: 2 } });
   const [cutKind, setCutKind] = useState<Kind4>('pocket');
   const [hwType, setHwType] = useState<HardwareType>('rivet');
@@ -56,6 +56,7 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
   const [notice, setNotice] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<DrawDraft | null>(null);
   const [pullerSheet, setPullerSheet] = useState(false);
+  const [bh, setBh] = useState({ style: 'straight' as 'straight' | 'keyhole', dir: 'across' as 'across' | 'along', size: 1.5, count: 1, spacing: 6, button: true });
   const reg = useRef(new Map<string, Armed>());
   reg.current = new Map();
 
@@ -296,6 +297,23 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
           </>
         )}
         <button className="btn wide" disabled={!host} onClick={() => addTo(hardwareAttachment(hwType, hwo))}><Icon name="plus" size={16} /> Add {hwDef.label.toLowerCase()}{host ? ` to ${targetLabel}` : ''}</button>
+      </Disclosure>}
+
+      {trims && <Disclosure id="design-buttonholes" title="Buttonholes" icon="hardware">
+        <p className="group-note">Cut and stitched into the piece, sized to the button they take. On a piece cut twice the matching buttons go on the other side, where it laps over.</p>
+        <Seg label="Buttonhole shape" value={bh.style} options={[{ id: 'straight', label: 'Straight' }, { id: 'keyhole', label: 'Keyhole' }]} onChange={(style) => setBh({ ...bh, style })} />
+        <Seg label="Buttonhole direction" value={bh.dir} options={[{ id: 'across', label: 'Across the row' }, { id: 'along', label: 'Along the row' }]} onChange={(dir) => setBh({ ...bh, dir })} />
+        <Row label="Button size"><LenInput units={units} label="Button size the hole takes" value={bh.size} min={0.8} max={4} onChange={(size) => setBh({ ...bh, size })} /></Row>
+        <Row label="How many"><NumInput label="Buttonhole count" value={bh.count} min={1} max={12} step={1} digits={0} onChange={(count) => setBh({ ...bh, count: Math.round(count) })} /></Row>
+        <Row label="Spacing"><LenInput units={units} label="Buttonhole spacing, centre to centre" value={bh.spacing} min={1} max={20} onChange={(spacing) => setBh({ ...bh, spacing })} /></Row>
+        {copies === 2 && !host?.attachment && <label className="frow"><input type="checkbox" checked={bh.button} onChange={(e) => setBh({ ...bh, button: e.target.checked })} /> <span>Matching buttons on the other side</span></label>}
+        <button className="btn wide" disabled={!piece || !!host?.attachment} onClick={() => {
+          if (!piece) return;
+          const c = centroid(samplePoly(piece.points));
+          // a piece cut twice: on its centre line (the centre front of a front), so the button meets it on the other side
+          addButtonholes({ pieceId: piece.id, x: copies === 2 ? 0 : c.x, y: c.y, rotation: 90, size: bh.size, count: bh.count, spacing: bh.spacing, style: bh.style, dir: bh.dir,
+            ...(copies === 2 ? { instance: inst ?? 0, button: bh.button } : {}) });
+        }}><Icon name="plus" size={16} /> Add {bh.count > 1 ? 'buttonholes' : 'a buttonhole'}{piece && !host?.attachment ? ` to ${targetLabel}` : ''}</button>
       </Disclosure>}
 
       </InsertSection>
