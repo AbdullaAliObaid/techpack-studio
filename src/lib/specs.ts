@@ -2,14 +2,15 @@ import type { Piece, SpecDef, GarmentType } from '../data/presets';
 import { bbox, bezAt, bezTangent, dist, offsetInward, outlineLength, samplePoly, signedArea, sliceSpan, toBeziers, type Pt } from './geometry';
 import type { Attachment, Edits, Face, Hardware, Pleat, WashSequence } from '../data/edits';
 import { attachmentPolygons, outlinePolygon, SHAPES } from './shapes';
-import { builtinSeams, faceLabel, faceOf, instanceLabel } from '../sim/seams';
+import { builtinSeams, faceLabel, faceOf, instanceLabel, crownCount } from '../sim/seams';
+import { buttonholeSlots } from '../data/construction';
 import { labelMaterial, labelSewing, labelSize } from '../data/labels';
 import { FABRIC_CATEGORIES, FABRICS, PATTERNS, colorName, compositionOf, fabricById, fabricHex, fabricThickness, patternLabel, withPatternDefaults, type FabricRef } from '../data/fabrics';
 import { attachmentStack, stackOf, stackText } from '../data/stack';
 import type { Note, Outfit, Project } from '../store';
 import type { StyleId } from '../data/catalog';
 import { derivedGirths, EASE, RIB, frontOffset, isSplitFront, neckBase, POCKET } from '../data/draft';
-import { migrateGarment, styleById } from '../data/catalog';
+import { isHatFamily, migrateGarment, styleById } from '../data/catalog';
 import { bodyFrame, type Body } from '../three/body';
 
 export interface SpecValue {
@@ -108,7 +109,7 @@ export function pleatMarks(p: Piece, pl: Pleat) {
 }
 
 const famOf = (type: GarmentType) => styleById(migrateGarment(type)).family;
-const isHat = (type: GarmentType) => ['bucket', 'cap'].includes(famOf(type));
+const isHat = (type: GarmentType) => isHatFamily(famOf(type));
 
 /** Outline segments (index of their start point) between two points, the shorter way round, as outlineLength takes them. */
 function edgeSegments(p: Piece, fromId: string, toId: string): number[] {
@@ -160,8 +161,10 @@ function necklineLen(type: GarmentType, pieces: Piece[]) {
   return 2 * (edgeLen(f, `front.${fo}`, `front.${fo + 2}`) + edgeLen(bk, 'back.0', 'back.2')) + plTop;
 }
 
-/** Hat band = the six crown panel bases. */
-const hatBand = (pieces: Piece[]) => 6 * specOf(pieces, 'crown', 'Panel base');
+/** Hat band = the crown panel bases: six panels, or a five panel's front panel and four crown panels. */
+const hatBand = (pieces: Piece[]) => pieces.some((p) => p.role === 'crownFront')
+  ? 4 * specOf(pieces, 'crown', 'Panel base') + specOf(pieces, 'crownFront', 'Panel base')
+  : 6 * specOf(pieces, 'crown', 'Panel base');
 const crownDepth = (pieces: Piece[]) => edgeLen(pieces.find((p) => p.role === 'crown'), 'crown.0', 'crown.3');
 
 /** Finished garment measurements, i.e. what a factory spec sheet lists. */
@@ -183,6 +186,21 @@ export function garmentSpecs(type: GarmentType, pieces: Piece[]): { label: strin
     if (wb?.elastic) rows.push({ label: 'Waist elastic (relaxed)', value: wb.elastic });
     if (pieces.some((p) => p.role === 'cuff')) rows.push({ label: 'Ankle cuff', value: get('cuff', 'Cuff length') });
     return rows;
+  }
+  if (fam === 'beanie') {
+    const rows = [
+      { label: 'Head band circumference', value: get('crown', 'Band width') },
+      { label: 'Body length', value: get('crown', 'Body length') },
+    ];
+    if (pieces.some((p) => p.role === 'cuff')) rows.push({ label: 'Cuff height', value: get('cuff', 'Cuff height') });
+    return rows;
+  }
+  if (fam === 'visor') {
+    return [
+      { label: 'Head band circumference', value: get('headband', 'Band length') + get('strap', 'Strap length') },
+      { label: 'Band height', value: get('headband', 'Band height') },
+      { label: 'Visor depth', value: get('brim', 'Visor depth') },
+    ];
   }
   if (isHat(type)) {
     return [
@@ -247,6 +265,15 @@ export function fitTable(type: GarmentType, pieces: Piece[], b: Body): FitRow[] 
       { length: true, label: 'Outseam', body: f.waistH, garment: gs['Outseam'] + bandH(pieces), estimated: true },
     ];
     return rows;
+  }
+  if (fam === 'beanie' || fam === 'visor') {
+    // knit and elastic: cut smaller than the head (negative ease) and stretched on
+    return [
+      { label: 'Head', body: d.head, garment: gs['Head band circumference'], estimated: b.head === undefined },
+      fam === 'beanie'
+        ? { length: true, label: 'Body length', body: null, garment: gs['Body length'] }
+        : { length: true, label: 'Band height', body: null, garment: gs['Band height'] },
+    ];
   }
   if (isHat(type)) {
     return [
@@ -397,7 +424,7 @@ const perimeter = (pts: Pt[]) => pts.reduce((s, q, i) => s + dist(q, pts[(i + 1)
 /** copies of a host piece on the body (pieces cut twice are a pair; a crown has 6); without a style, from the cut count */
 function hostCopies(style: StyleId | undefined, host: Piece | undefined) {
   if (!host) return 1;
-  if (style) return instanceLabel(style, host) === host.name ? 1 : host.role === 'crown' ? 6 : 2;
+  if (style) return instanceLabel(style, host) === host.name ? 1 : host.role === 'crown' ? crownCount(style) : 2;
   return host.cut;
 }
 function sideLabel(style: StyleId | undefined, host: Piece | undefined, instance: number | undefined) {
@@ -563,7 +590,7 @@ export function trimsReport(pieces: Piece[], edits?: Edits, style?: StyleId): Tr
         push({ kind: 'hardware', item: 'Zip', detail: hardwareDetail(h, a), placement: where, qty: copies });
       } else if (a.buttonhole) {
         // a buttonhole is a sewing operation, not a bought trim: as long as the button is wide, plus 3 mm
-        push({ kind: 'buttonhole', item: 'Buttonhole', detail: `${round1(h.size * 10 + 3)} mm, stitched${a.thread ? `, thread ${a.thread}` : ', thread matched'}`, placement: where, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
+        push({ kind: 'buttonhole', item: 'Buttonhole', detail: `${round1(h.size * 10 + 3)} mm, ${h.holeStyle === 'keyhole' ? 'keyhole' : 'straight'}, ${h.holeDir === 'along' ? 'along the row' : 'across the row'}, stitched${a.thread ? `, thread ${a.thread}` : ', thread matched'}`, placement: where, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
       } else {
         push({ kind: 'hardware', item: HW_NAME[h.type] ?? cap(h.type), detail: hardwareDetail(h, a), placement: where, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
       }
@@ -715,6 +742,41 @@ function baseSeamRows(type: GarmentType, pieces: Piece[]): SeamRow[] {
     }
     return rows;
   }
+  if (fam === 'beanie') {
+    const cr = P('crown'), cu = P('cuff');
+    const K = (i: number, m = '') => `crown.${i}${m}`;
+    const rows: SeamRow[] = [
+      { label: 'Front crown dart (side / side)', a: L(cr, K(0), K(3)), b: L(cr, K(0), K(3, 'm')), seams: ['dart-front'] },
+      { label: 'Crown darts 1 (side / side)', a: L(cr, K(6), K(3)), b: L(cr, K(6), K(9)), seams: ['dart-r1', 'dart-l1'] },
+      { label: 'Crown darts 2 (side / side)', a: L(cr, K(12), K(9)), b: L(cr, K(12), K(15)), seams: ['dart-r2', 'dart-l2'] },
+      { label: 'Back seam (left / right)', a: L(cr, K(19), K(18)) + L(cr, K(18), K(15)), b: L(cr, K(19, 'm'), K(18, 'm')) + L(cr, K(18, 'm'), K(15, 'm')), seams: ['back'] },
+    ];
+    if (cu) {
+      rows.push({ label: 'Cuff / body edge', a: L(cu, 'cuff.1m', 'cuff.1'), b: L(cr, K(19, 'm'), K(19)), seams: ['cuff'] });
+      rows.push({ label: 'Cuff back seam', a: L(cu, 'cuff.1', 'cuff.2'), b: L(cu, 'cuff.1m', 'cuff.2m'), seams: ['cuff-join'] });
+    }
+    return rows;
+  }
+  if (fam === 'visor') {
+    const hb = P('headband'), st = P('strap'), br = P('brim');
+    const rows: SeamRow[] = [];
+    if (st) {
+      rows.push({ label: 'Band end / strap end, left', a: L(hb, 'headband.2', 'headband.3'), b: L(st, 'strap.1', 'strap.2'), seams: ['strap-r'] });
+      rows.push({ label: 'Band end / strap end, right', a: L(hb, 'headband.2m', 'headband.3m'), b: L(st, 'strap.1m', 'strap.2m'), seams: ['strap-l'] });
+    }
+    if (br) rows.push({ label: 'Front of band / visor', a: L(hb, 'headband.4m', 'headband.4'), b: L(br, 'brim.0', 'brim.3') + L(br, 'brim.0', 'brim.3m'), seams: ['visor'] });
+    return rows;
+  }
+  if (isHat(type) && P('crownFront')) {
+    const cr = P('crown'), br = P('brim'), fp = P('crownFront');
+    const rows: SeamRow[] = [
+      { label: 'Front panel side / crown panel', a: L(fp, 'crownFront.0', 'crownFront.3'), b: L(cr, 'crown.0', 'crown.3m'), seams: ['crown-1', 'crown-5'] },
+      { label: 'Crown panel seams (panel / next panel)', a: L(cr, 'crown.0', 'crown.3'), b: L(cr, 'crown.0', 'crown.3m'), seams: ['crown-2', 'crown-3', 'crown-4'] },
+    ];
+    const half = L(fp, 'crownFront.3m', 'crownFront.3') + L(cr, 'crown.4', 'crown.3') + L(cr, 'crown.3m', 'crown.4');
+    rows.push({ label: 'Front half of band / visor', a: half, b: L(br, 'brim.0', 'brim.3') + L(br, 'brim.0', 'brim.3m'), seams: ['visor'] });
+    return rows;
+  }
   if (isHat(type)) {
     const cr = P('crown'), br = P('brim');
     const band = 6 * L(cr, 'crown.3m', 'crown.3');
@@ -787,7 +849,8 @@ export function attachmentOutlines(a: Attachment): Pt[][] {
  * Hardware placement marks on a host piece (host local coords, cm): a point per trim (rivets, buttons ...)
  * and a line for a zip.
  */
-export function hardwareMarks(p: Piece, edits?: Edits): { name: string; /** hardware type, or 'buttonhole' */ type: string; points: { at: Pt; r: number }[]; line?: [Pt, Pt]; builtin?: boolean }[] {
+export function hardwareMarks(p: Piece, edits?: Edits): { name: string; /** hardware type, or 'buttonhole' */ type: string; points: { at: Pt; r: number }[]; line?: [Pt, Pt]; builtin?: boolean;
+  /** buttonholes: each hole's stitched outline (straight or keyhole), host coords */ slots?: Pt[][] }[] {
   const out: ReturnType<typeof hardwareMarks> = [];
   for (const a of edits?.attachments ?? []) {
     if (a.pieceId !== p.id || a.kind !== 'hardware' || !a.hardware) continue;
@@ -795,7 +858,7 @@ export function hardwareMarks(p: Piece, edits?: Edits): { name: string; /** hard
     const T = (q: Pt): Pt => ({ x: a.x + q.x * c - q.y * s, y: a.y + q.x * s + q.y * c });
     if (h.type === 'zipper') { out.push({ name: a.name, type: h.type, points: [], line: [T({ x: 0, y: -a.h / 2 }), T({ x: 0, y: a.h / 2 })] }); continue; }
     const n = Math.max(1, Math.round(h.count ?? 1)), sp = h.spacing ?? Math.max(1.5, h.size * 2);
-    out.push({ name: a.name, type: a.buttonhole ? 'buttonhole' : h.type, points: Array.from({ length: n }, (_, k) => ({ at: T({ x: (k - (n - 1) / 2) * sp, y: 0 }), r: Math.max(0.1, h.size / 2) })), ...(a.builtin ? { builtin: true } : {}) });
+    out.push({ name: a.name, type: a.buttonhole ? 'buttonhole' : h.type, points: Array.from({ length: n }, (_, k) => ({ at: T({ x: (k - (n - 1) / 2) * sp, y: 0 }), r: Math.max(0.1, h.size / 2) })), ...(a.builtin ? { builtin: true } : {}), ...(a.buttonhole ? { slots: buttonholeSlots(a, true) } : {}) });
   }
   return out;
 }
@@ -982,7 +1045,7 @@ export function placementRefs(style: StyleId | undefined, host: Piece | undefine
     if (ws) horiz('From outseam at waist', ws.x);
     vert('Down from waist edge', wc.y);
     if (hem.length) vert('Up from hem', Math.max(...hem.map((q) => q.y)));
-  } else if (host.role === 'crown' || host.role === 'brim') {
+  } else if (host.role === 'crown' || host.role === 'brim' || host.role === 'crownFront') {
     horiz('From panel centre line', 0);
     vert('From top edge', bb.minY);
     vert('From bottom edge', bb.maxY);

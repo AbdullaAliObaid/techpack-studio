@@ -113,7 +113,9 @@ function wrongSide(G: Garment3D, B: PosedBody, id: string) {
 // ---------------------------------------------------------------------------------------------
 const D = Math.PI / 180;
 const ARMS_UP: CustomPose = { ...ZERO_POSE, s: [{ ...ZERO_SIDE, shAbd: 160 * D, elbow: 10 * D }, { ...ZERO_SIDE, shAbd: 160 * D, elbow: 10 * D }] };
-const STYLES: StyleId[] = ['basic-tee', 'button-up', 'jacket', 'jeans', 'sweatpants', 'polo'];
+const STYLES: StyleId[] = ['basic-tee', 'button-up', 'jacket', 'jeans', 'sweatpants', 'polo', 'five-panel', 'beanie', 'visor'];
+/** headwear is checked standing only here (it rides with the head: tests/motion.ts checks it through every movement) */
+const STAND_ONLY = new Set<StyleId>(['five-panel', 'beanie', 'visor']);
 const BODIES: [string, Body][] = [['male', DEFAULT_BODY], ['female', FEMALE_BODY]];
 /** motion runs: frames to run and the frames at which the display is measured */
 const MOTIONS: { mode: Mode; frames: number; at: number[]; custom?: CustomPose }[] = [
@@ -183,7 +185,7 @@ for (const [bname, body] of process.env.ONLY === 'attach' ? [] : BODIES) {
     const ok = r.inside / r.samples < STAND_MAX / 100 && r.maxDepth <= STAND_DEPTH;
     if (!ok) fails++;
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${bname.padEnd(6)} ${style.padEnd(11)} stand        inside ${pct(r.inside, r.samples).padStart(6)} of ${r.samples} samples, max depth ${(r.maxDepth * 10).toFixed(1)} mm${r.inside && (process.env.V || !ok) ? `  (${r.worst})` : ''}`);
-    if (process.env.QUICK) continue;
+    if (process.env.QUICK || STAND_ONLY.has(style)) continue;
     const st = save(G);
     for (const m of MOTIONS) {
       restore(G, st);

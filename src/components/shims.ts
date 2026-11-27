@@ -11,6 +11,7 @@ import type { PieceFabric } from '../data/presets';
 import type { CSSProperties } from 'react';
 import { uid } from '../lib/units';
 import { linkedMoves } from '../data/symmetry';
+import { starPath } from '../data/patterns';
 
 /* ------------------------------------------------------------------ fabrics */
 
@@ -66,6 +67,7 @@ export interface PatternInfo { id: PatternId; name: string; colors: string[]; sc
 const PATTERN_DEFAULTS: Record<PatternId, { name: string; colors: string[]; scale: number }> = {
   solid: { name: 'Solid', colors: ['#ffffff'], scale: 4 },
   custom: { name: 'Your motif', colors: ['#f4f2ee'], scale: 6 },
+  star: { name: 'Star stitch', colors: ['#1f2742', '#f2efe6'], scale: 2.4 },
   stripe: { name: 'Stripe', colors: ['#f4f4f1', '#2a3550'], scale: 2 },
   pinstripe: { name: 'Pinstripe', colors: ['#2a3550', '#d9d9de'], scale: 1 },
   breton: { name: 'Breton', colors: ['#f4f4f1', '#2a3550'], scale: 2 },
@@ -191,6 +193,7 @@ function fallbackTile(p: FabricPattern): PatternTile {
       return tile(body);
     }
     case 'jacquard': return tile(`<path d="M${s / 2} 0L${s} ${s / 2}L${s / 2} ${s}L0 ${s / 2}z" fill="${a}" opacity=".6"/><path d="M${s / 2} ${s * 0.3}L${s * 0.7} ${s / 2}L${s / 2} ${s * 0.7}L${s * 0.3} ${s / 2}z" fill="${g}"/>`);
+    case 'star': return tile(`<path d="${starPath(s * 0.25, s * 0.25, s * 0.18, s * 0.076)}${starPath(s * 0.75, s * 0.75, s * 0.18, s * 0.076)}" fill="${a}"/>`);
     default: return tile('');
   }
 }

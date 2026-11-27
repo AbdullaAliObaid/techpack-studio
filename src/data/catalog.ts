@@ -5,12 +5,16 @@
 export type Category = 'tops' | 'bottoms' | 'headwear';
 
 /** Drafting family: which block the style is drafted from. */
-export type Family = 'tee' | 'polo' | 'shirt' | 'jacket' | 'pants' | 'bucket' | 'cap';
+export type Family = 'tee' | 'polo' | 'shirt' | 'jacket' | 'pants' | 'bucket' | 'cap' | 'beanie' | 'visor';
+
+/** Headwear blocks: drafted from the head circumference and worn on the head. */
+export const HAT_FAMILIES: ReadonlySet<Family> = new Set<Family>(['bucket', 'cap', 'beanie', 'visor']);
+export const isHatFamily = (f: Family) => HAT_FAMILIES.has(f);
 
 export type StyleId =
   | 'basic-tee' | 'boxy-tee' | 'polo' | 'collared-tee' | 'button-up' | 'jacket'
   | 'sweatpants' | 'jeans' | 'straight-jeans' | 'bootcut-jeans' | 'flared-jeans' | 'baggy-jeans' | 'shorts'
-  | 'bucket-hat' | 'cap';
+  | 'bucket-hat' | 'cap' | 'five-panel' | 'beanie' | 'visor';
 
 /** Construction details the 3D view draws on top of the cloth. */
 export interface Details {
@@ -63,6 +67,9 @@ export const CATALOG: Style[] = [
   // headwear
   { id: 'bucket-hat', name: 'Bucket hat', category: 'headwear', family: 'bucket', defaultFabric: 'canvas', blurb: 'Six-piece crown with a stitched, sloped brim.', details: { topstitch: { needles: 1, color: 'match', offset: 0.5 } } },
   { id: 'cap', name: 'Baseball cap', category: 'headwear', family: 'cap', defaultFabric: 'canvas', blurb: 'Six-panel cap with a curved brim and a top button.', details: { topstitch: { needles: 2, color: 'match', offset: 0.4 }, buttons: 1 } },
+  { id: 'five-panel', name: 'Five panel cap', category: 'headwear', family: 'cap', defaultFabric: 'poly', blurb: 'Soft, unstructured sport cap: one wide front panel with no centre seam, four side and back panels and a soft curved peak.', details: { topstitch: { needles: 1, color: 'match', offset: 0.3 } } },
+  { id: 'beanie', name: 'Beanie', category: 'headwear', family: 'beanie', defaultFabric: 'rib', blurb: 'Rib knit beanie cut smaller than the head so it hugs it, six crown darts and a turned-back cuff.', details: { rib: true, hem: { needles: 1, depth: 1 } } },
+  { id: 'visor', name: 'Visor', category: 'headwear', family: 'visor', defaultFabric: 'poly', blurb: 'Open crown tennis visor: a curved peak on a front band, closed at the back with an elastic strap.', details: { topstitch: { needles: 1, color: 'match', offset: 0.4 } } },
 ];
 
 export const styleById = (id: string): Style => CATALOG.find((s) => s.id === id) ?? CATALOG.find((s) => s.id === 'jeans')!;

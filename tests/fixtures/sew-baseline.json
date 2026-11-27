@@ -103,5 +103,26 @@
   "pos": 301753517,
   "particles": 282,
   "constraints": 1526
+ },
+ "five-panel": {
+  "n": 75,
+  "sew": 1701450167,
+  "pos": 1802432530,
+  "particles": 246,
+  "constraints": 1318
+ },
+ "beanie": {
+  "n": 72,
+  "sew": 301270881,
+  "pos": 1711687121,
+  "particles": 373,
+  "constraints": 1818
+ },
+ "visor": {
+  "n": 25,
+  "sew": 2005230305,
+  "pos": 2153862869,
+  "particles": 134,
+  "constraints": 852
  }
 }

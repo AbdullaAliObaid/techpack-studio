@@ -2,14 +2,16 @@
 // every key point is body measurement + ease, so the 2D numbers always trace back to the body.
 // All values in cm. Tops are drawn as full front / full back pieces (centre line at x = 0).
 // Pants are drawn as single leg pieces with the grainline (crease) at x = 0.
-// Hats are drawn as one crown panel (cut 6) and a brim, sized from the head circumference.
+// Hats are drawn as one crown panel (cut 6) and a brim, sized from the head circumference. A five panel cap has one
+// wide front panel (two panel widths, no centre seam) and four crown panels; a beanie is one rib knit piece with six
+// crown darts and a turned-back cuff; a visor is a peak on a front band closed by a back strap.
 //
 // Every style in src/data/catalog.ts is drafted from one of the family blocks below. Points carry
 // stable keys (`role.index`) so a regrade (new body or new fit) keeps the user's edits as offsets.
 
 import { bezAt, outlineLength, toBeziers, type PPoint } from '../lib/geometry';
 import { bodyFrame, limbGirths, type Body, type BodyFrame } from '../three/body';
-import { migrateGarment, styleById, type Family, type StyleId } from './catalog';
+import { isHatFamily, migrateGarment, styleById, type Family, type StyleId } from './catalog';
 
 const TAU = Math.PI * 2;
 
@@ -53,6 +55,14 @@ export const EASE: Record<StyleId, Ease> = {
   shorts: { waist: 2, hip: 8, thigh: 0, legOpening: 0, waistband: 4, inseamLen: 18 },
   'bucket-hat': { head: 1.5, depth: 1, brim: 6.5, slope: 32 },
   cap: { head: 1, depth: 2, brim: 7 },
+  // soft five panel: the wide front panel has no centre seam; a slightly shorter, softer peak
+  'five-panel': { head: 1, depth: 1.5, brim: 6.5 },
+  // rib knit: negative ease, the knit is stretched round the head (about 15%) and holds itself on. darts: share of the
+  // crown depth taken up by the six crown darts; cuff: turned-back cuff height (finished, single layer); depth: how far
+  // the body runs on below the band line, over the tops of the ears, where the head narrows again and holds it on
+  beanie: { head: -9, depth: 7, darts: 0.36, cuff: 7 },
+  // tennis visor: woven front band (head + ease over its share), elastic back strap cut short and stretched on
+  visor: { head: 1, brim: 7, band: 4.5, bandEnd: 2.5, front: 0.66, strap: -3 },
 };
 
 export type Fit = 'slim' | 'regular' | 'relaxed';
@@ -68,6 +78,8 @@ const FIT_ADJ: Record<Family, Record<string, [number, number]>> = {
   pants: { hip: [-2, 4], knee: [-5, 6], legOpening: [-5, 6] },
   bucket: { head: [-0.5, 1] },
   cap: { head: [-0.5, 1] },
+  beanie: { head: [-2, 3] },
+  visor: { head: [-0.5, 1], strap: [-1, 1] },
 };
 
 /** Ease for a style in a given fit. Regular is the base table; slim and relaxed take room out or add it. */
@@ -442,18 +454,44 @@ function pants(style: StyleId, b: Body, f: BodyFrame, fit: Fit): DraftPiece[] {
 /** Crown depth from the hat band over the top of the head, along the surface (cm). */
 export const crownArc = (head: number) => 0.26 * head;
 
+/** Panel side profile from the top (s = 0) to the band (s = 1): half width as a share of half the panel base. */
+const goreProfile = (p: number) => (s: number) => Math.sin((Math.PI / 2) * s) ** p;
+
+/** Cap visor: the inner edge follows the front half of the head (an ellipse as deep as the head), walked to `inner`. */
+function visorPiece(inner: number, k: number, D: number): PPoint[] {
+  const s30 = 0.5, c30 = Math.sqrt(3) / 2;
+  const visor = (A: number) => {
+    const B = A * k;
+    return half('brim', [
+      [0, B, true, 'visorIn'], [A * s30, B * c30, true], [A * c30, B * s30, true], [A, 0, false, 'visorEnd'],
+      [A + 1, -0.2], [(A + 1) * c30, (B + D) * s30, true], [(A + 1) * s30, (B + D) * c30, true], [0, B + D, true, 'visorOut'],
+    ]);
+  };
+  const A = solve((a) => 2 * edge(visor(a), 'brim.0', 'brim.3'), inner, 2, inner / 2);
+  return visor(A);
+}
+
 function hat(style: StyleId, b: Body, f: BodyFrame, fit: Fit): DraftPiece[] {
   const E = easeFor(style, fit);
   const head = derivedGirths(b).head;
   const band = head + E.head; // the band is the head circumference plus ease
-  const w = band / 6; // six crown panels
-  const cap = style === 'cap';
-  const p = cap ? 0.8 : 0.65; // panel side profile: a cap crown is rounder, a bucket crown has steeper sides
-  const prof = (s: number) => (w / 2) * Math.sin((Math.PI / 2) * s) ** p;
-  const gore = (H: number) => half('crown', [[0, 0], [prof(0.3), 0.3 * H, true], [prof(0.65), 0.65 * H, true], [w / 2, H, false, 'band'], [0, H]]);
+  const fam = styleById(style).family;
+  if (fam === 'beanie') return beanie(E, head, band);
+  if (fam === 'visor') return visorHat(E, band, f);
+  const w = band / 6; // six crown panel widths (a five panel front is two of them)
+  const cap = fam === 'cap';
+  const prof = goreProfile(cap ? 0.8 : 0.65); // a cap crown is rounder, a bucket crown has steeper sides
+  const gore = (role: string, base: number, pr = prof) => (H: number) =>
+    half(role, [[0, 0], [(base / 2) * pr(0.3), 0.3 * H, true], [(base / 2) * pr(0.65), 0.65 * H, true], [base / 2, H, false, 'band'], [0, H]]);
   const arc = crownArc(head) + E.depth;
-  const H = solve((h) => edge(gore(h), 'crown.0', 'crown.3'), arc, arc * 0.6, arc);
-  const out: DraftPiece[] = [{ role: 'crown', points: gore(H) }];
+  // every panel's side seam is walked to the crown depth, so a wide front panel meets the panels beside it exactly
+  const height = (g: (H: number) => PPoint[], role: string) => solve((h) => edge(g(h), `${role}.0`, `${role}.3`), arc, arc * 0.6, arc);
+  const crown = gore('crown', w);
+  const out: DraftPiece[] = [{ role: 'crown', points: crown(height(crown, 'crown')) }];
+  if (style === 'five-panel') {
+    const front = gore('crownFront', 2 * w);
+    out.unshift({ role: 'crownFront', points: front(height(front, 'crownFront')) });
+  }
 
   if (!cap) {
     // bucket brim: a flat cone development. The sector angle sets the slope, the inner edge is walked to the band.
@@ -470,21 +508,65 @@ function hat(style: StyleId, b: Body, f: BodyFrame, fit: Fit): DraftPiece[] {
     const r1 = solve((r) => 2 * edge(brim(r), 'brim.0', `brim.${N}`), band, band / TAU, band / 2);
     out.push({ role: 'brim', points: brim(r1) });
   } else {
-    // cap visor: the inner edge follows the front half of the head (an ellipse as deep as the head), walked to half the band
-    const k = f.headK;
-    const D = E.brim;
-    const s30 = 0.5, c30 = Math.sqrt(3) / 2;
-    const visor = (A: number) => {
-      const B = A * k;
-      return half('brim', [
-        [0, B, true, 'visorIn'], [A * s30, B * c30, true], [A * c30, B * s30, true], [A, 0, false, 'visorEnd'],
-        [A + 1, -0.2], [(A + 1) * c30, (B + D) * s30, true], [(A + 1) * s30, (B + D) * c30, true], [0, B + D, true, 'visorOut'],
-      ]);
-    };
-    const A = solve((a) => 2 * edge(visor(a), 'brim.0', 'brim.3'), band / 2, 2, band / 4);
-    out.push({ role: 'brim', points: visor(A) });
+    // cap visor: the inner edge follows the front half of the head, walked to half the band
+    out.push({ role: 'brim', points: visorPiece(band / 2, f.headK, E.brim) });
   }
   return out;
+}
+
+/** Number of crown darts on a beanie. */
+export const BEANIE_DARTS = 6;
+
+/**
+ * Beanie: one rib knit piece, as wide as the band (head + negative ease) and as long as the crown depth, with the top
+ * cut into six points. Sewing each point's sides to its neighbours (five darts and the back seam) closes the crown.
+ * Right half from centre front: dart point at CF (crown.0), then per point: two curve points up its left side, the
+ * tip (crown.3, .9, .15), two down its right side and the next dart point (crown.6, .12; crown.18 is the back seam
+ * corner); crown.19 the back seam at the band, crown.20 centre front at the band. The turned-back cuff is a separate
+ * rib band as wide as the body edge, sewn to it and folded up over it.
+ */
+function beanie(E: Ease, head: number, band: number): DraftPiece[] {
+  const W = band, w = W / BEANIE_DARTS;
+  const H = crownArc(head) + E.depth;
+  const Hd = E.darts * H;
+  const prof = goreProfile(0.7);
+  const pts: P[] = [[0, Hd]];
+  for (let t = 0; t < BEANIE_DARTS / 2; t++) {
+    const c = (t + 0.5) * w;
+    pts.push(
+      [c - (w / 2) * prof(0.65), 0.65 * Hd, true], [c - (w / 2) * prof(0.3), 0.3 * Hd, true], [c, 0, false, t === 0 ? 'apex' : undefined],
+      [c + (w / 2) * prof(0.3), 0.3 * Hd, true], [c + (w / 2) * prof(0.65), 0.65 * Hd, true], [(t + 1) * w, Hd],
+    );
+  }
+  pts.push([W / 2, H, false, 'band'], [0, H, false, 'bandCF']);
+  const out: DraftPiece[] = [{ role: 'crown', points: half('crown', pts) }];
+  if (E.cuff > 0) {
+    // cuff: cuff.0 / cuff.1 the sewn edge (joined to the body edge), cuff.2 / cuff.3 the folded top edge when turned back
+    out.push({ role: 'cuff', points: half('cuff', [[0, 0, false, 'cuffSeam'], [W / 2, 0, false, 'cuffEnd'], [W / 2, E.cuff], [0, E.cuff, false, 'cuffTop']]) });
+  }
+  return out;
+}
+
+/**
+ * Tennis visor: a peak sewn to the bottom edge of a front band, the band closed at the back by an elastic strap.
+ * Band (headband): headband.0 top centre front, .1 where the top starts to drop, .2 / .3 top and bottom of the end
+ * (as tall as the strap), .4 the end of the peak, .5 bottom centre front. Strap: strap.1 / strap.2 its end, sewn to
+ * the band end. The strap is cut short (negative ease) and stretched on, so it holds the visor on the head.
+ */
+function visorHat(E: Ease, band: number, f: BodyFrame): DraftPiece[] {
+  const Lb = E.front * band; // front band length (bottom edge)
+  const Ls = (1 - E.front) * band + E.strap; // strap, relaxed
+  const inner = band / 2; // the peak covers the front half of the head
+  const h = E.band, he = E.bandEnd;
+  const headband = half('headband', [
+    [0, 0, false, 'bandTop'], [inner / 2 - 1, 0, true], [Lb / 2, h - he, false], [Lb / 2, h, false, 'bandEnd'], [inner / 2, h, false, 'peakEnd'], [0, h, false, 'bandCF'],
+  ]);
+  const strap = half('strap', [[0, 0, false, 'strapTop'], [Ls / 2, 0], [Ls / 2, he, false, 'strapEnd'], [0, he]]);
+  return [
+    { role: 'headband', points: headband },
+    { role: 'strap', points: strap },
+    { role: 'brim', points: visorPiece(inner, f.headK, E.brim) },
+  ];
 }
 
 export function draft(style: StyleId, b: Body, fit: Fit = 'regular'): DraftPiece[] {
@@ -492,7 +574,7 @@ export function draft(style: StyleId, b: Body, fit: Fit = 'regular'): DraftPiece
   const f = bodyFrame(b);
   const fam = styleById(id).family;
   if (fam === 'pants') return pants(id, b, f, fit);
-  if (fam === 'bucket' || fam === 'cap') return hat(id, b, f, fit);
+  if (isHatFamily(fam)) return hat(id, b, f, fit);
   return tops(id, b, f, fit);
 }
 

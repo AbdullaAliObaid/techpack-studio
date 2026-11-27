@@ -123,6 +123,29 @@ const SKETCH: Record<StyleId, ReactNode> = {
       <circle cx="26" cy="43" r="1.2" fill="currentColor" stroke="none" />
     </>
   ),
+  'five-panel': (
+    <>
+      <path d="M10 64C10 36 24 26 42 26C60 26 70 40 70 64Z" />
+      <path d="M70 60C82 60 90 64 90 68C82 71 75 70 70 67" />
+      <path d="M28 30C25 42 24 54 25 64M56 30C59 42 60 54 59 64" />
+      <path d="M10 64H70" />
+    </>
+  ),
+  beanie: (
+    <>
+      <path d="M20 62C20 34 32 18 48 18C64 18 76 34 76 62Z" />
+      <path d="M18 62H78V82H18Z" />
+      <path d="M48 18V40M36 22L40 42M60 22L56 42" />
+      <path d="M26 64V80M34 64V80M42 64V80M50 64V80M58 64V80M66 64V80" />
+    </>
+  ),
+  visor: (
+    <>
+      <path d="M14 50Q48 40 82 50V60Q48 50 14 60Z" />
+      <path d="M22 58Q48 52 74 58Q80 74 48 80Q16 74 22 58Z" />
+      <path d="M14 54Q48 45 82 54" />
+    </>
+  ),
 };
 
 export function Sketch({ id, decorative = false }: { id: StyleId; decorative?: boolean }) {

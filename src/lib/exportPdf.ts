@@ -279,7 +279,12 @@ function styleTrims(id: StyleId): string[][] {
     else out.push(['Shank button', '17 mm', '1'], ['Zip', 'Metal, 15 cm fly', '1']);
     if (s.details.rivets) out.push(['Rivets', 'Copper, 9 mm', '6']);
   } else if (s.family === 'cap') {
-    out.push(['Top button', 'Fabric covered, 18 mm', '1'], ['Visor insert', 'Plastic, pre-curved', '1'], ['Sweatband', 'Cotton tape, 3 cm', '1']);
+    if (s.details.buttons) out.push(['Top button', 'Fabric covered, 18 mm', '1']);
+    out.push(['Visor insert', s.id === 'five-panel' ? 'Soft plastic, lightly curved' : 'Plastic, pre-curved', '1'], ['Sweatband', 'Cotton tape, 3 cm', '1']);
+  } else if (s.family === 'visor') {
+    out.push(['Visor insert', 'Plastic, pre-curved', '1'], ['Sweatband', 'Terry tape, 3 cm', '1'], ['Elastic', '2.5 cm wide, knitted', '1']);
+  } else if (s.family === 'beanie') {
+    out.push(['Thread', 'Stretch overlock, matching', '1']);
   } else if (s.family === 'bucket') {
     out.push(['Sweatband', 'Cotton tape, 3 cm', '1']);
   } else if (s.family === 'jacket') {
@@ -588,6 +593,7 @@ export async function buildTechPack(p: Project, units: Units, snapshot: string |
     doc.setLineDashPattern([], 0);
     for (const h of hardwareMarks(pc, edits)) {
       if (h.line) { const A = P(h.line[0]), B = P(h.line[1]); doc.setLineWidth(0.4).line(A.x, A.y, B.x, B.y).setLineWidth(0.2); continue; }
+      if (h.slots) { for (const sl of h.slots) poly(doc, sl.map(P), 'S'); continue; } // buttonholes: the stitched slot
       for (const { at, r } of h.points) { const cc = P(at); doc.circle(cc.x, cc.y, Math.max(0.4, r * s), 'S'); }
     }
     for (const m of marks.outlines) {

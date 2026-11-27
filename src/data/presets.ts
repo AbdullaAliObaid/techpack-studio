@@ -3,12 +3,14 @@ import type { Placement } from './edits';
 import { bbox, type PPoint, type Pt } from '../lib/geometry';
 import { uid } from '../lib/units';
 import { draft, flyStyle, frontPocketStyle, type Fit } from './draft';
-import { CATALOG, migrateGarment, styleById, type StyleId } from './catalog';
+import { CATALOG, isHatFamily, migrateGarment, styleById, type StyleId } from './catalog';
 import { DEFAULT_BODY, type Body } from '../three/body';
 
 /** Kept for older imports: a garment is now any catalog style. */
 export type GarmentType = StyleId;
 export type Role = 'front' | 'back' | 'sleeve' | 'collar' | 'cuff' | 'waistband' | 'neckband' | 'placket' | 'crown' | 'brim' | 'custom'
+  /** headwear: five panel front panel, visor front band and back strap */
+  | 'crownFront' | 'headband' | 'strap'
   /** inside pieces: on the pattern and in the cut list, sewn inside the garment, not simulated (they do not show) */
   | 'facing' | 'pocketFacing' | 'pocketBag' | 'flyFacing' | 'flyShield';
 
@@ -97,6 +99,7 @@ const NECKBAND: SpecDef[] = [{ label: 'Neckband length', kind: 'mirror', tag: 'n
 const PLACKET: SpecDef[] = [{ label: 'Placket width', kind: 'mirror', tag: 'pl', off: -2 }, { label: 'Length', kind: 'length' }];
 const CUFF: SpecDef[] = [{ label: 'Cuff length', kind: 'mirror', tag: 'c', off: -3 }];
 const WAISTBAND: SpecDef[] = [{ label: 'Waistband', kind: 'mirror', tag: 'wb', off: -3 }];
+const VISOR: SpecDef[] = [{ label: 'Visor depth', kind: 'dist', tags: ['visorIn', 'visorOut'] }, { label: 'Visor width', kind: 'mirror', tag: 'visorEnd', off: -2 }];
 const CROWN: SpecDef[] = [{ label: 'Panel base', kind: 'mirror', tag: 'band', off: 2.5 }, { label: 'Panel height', kind: 'length' }];
 
 interface Meta { role: Role; name: string; cut: number; specs: SpecDef[] }
@@ -150,8 +153,20 @@ function metaFor(style: StyleId): Meta[] {
       ];
     case 'cap':
       return [
-        { role: 'crown', name: 'Crown panel', cut: 6, specs: CROWN },
-        { role: 'brim', name: 'Visor', cut: 2, specs: [{ label: 'Visor depth', kind: 'dist', tags: ['visorIn', 'visorOut'] }, { label: 'Visor width', kind: 'mirror', tag: 'visorEnd', off: -2 }] },
+        ...(style === 'five-panel' ? [{ role: 'crownFront' as Role, name: 'Front panel', cut: 1, specs: CROWN }] : []),
+        { role: 'crown', name: style === 'five-panel' ? 'Side and back panel' : 'Crown panel', cut: style === 'five-panel' ? 4 : 6, specs: CROWN },
+        { role: 'brim', name: 'Visor', cut: 2, specs: VISOR },
+      ];
+    case 'beanie':
+      return [
+        { role: 'crown', name: 'Beanie body', cut: 1, specs: [{ label: 'Band width', kind: 'mirror', tag: 'band', off: 2.5 }, { label: 'Body length', kind: 'vdist', tags: ['apex', 'bandCF'] }] },
+        { role: 'cuff', name: 'Turned-back cuff', cut: 1, specs: [{ label: 'Cuff width', kind: 'mirror', tag: 'cuffEnd', off: -2.5 }, { label: 'Cuff height', kind: 'vdist', tags: ['cuffSeam', 'cuffTop'] }] },
+      ];
+    case 'visor':
+      return [
+        { role: 'headband', name: 'Front band', cut: 2, specs: [{ label: 'Band length', kind: 'mirror', tag: 'bandEnd', off: 2.5 }, { label: 'Band height', kind: 'vdist', tags: ['bandCF', 'bandTop'] }] },
+        { role: 'strap', name: 'Elastic back strap', cut: 1, specs: [{ label: 'Strap length', kind: 'mirror', tag: 'strapEnd', off: 2 }] },
+        { role: 'brim', name: 'Visor', cut: 2, specs: VISOR },
       ];
   }
 }
@@ -161,6 +176,7 @@ function fabricFor(style: StyleId, role: Role) {
   const s = styleById(style);
   const rib = s.details.rib && (role === 'neckband' || role === 'cuff' || (role === 'collar' && s.family === 'polo'));
   if (role === 'pocketBag') return 'poplin'; // cotton pocketing
+  if (role === 'strap') return 'rib'; // knitted elastic back strap
   return rib ? 'rib' : s.defaultFabric;
 }
 
@@ -189,7 +205,7 @@ export function makePreset(type: StyleId, body: Body = DEFAULT_BODY, fit: Fit = 
       ...(d.elastic !== undefined ? { elastic: d.elastic } : {}),
     };
   });
-  layout(pieces, fam === 'pants' ? 120 : fam === 'bucket' || fam === 'cap' ? 90 : 140);
+  layout(pieces, fam === 'pants' ? 120 : isHatFamily(fam) ? 90 : 140);
   return pieces;
 }
 

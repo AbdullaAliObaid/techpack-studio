@@ -1,6 +1,7 @@
 import { SHAPES, OUTLINES, outlinePolygon } from '../lib/shapes';
 import type { Attachment, Finish, Hardware, ShapeLayer, ZipperDesign } from '../data/edits';
 import { polyD } from '../lib/geometry';
+import { buttonholeSlots } from '../data/construction';
 
 type Art = Omit<Attachment, 'id' | 'pieceId' | 'x' | 'y'>;
 
@@ -135,9 +136,15 @@ export function HardwareMark({ hw, w, h }: { hw: Hardware; w: number; h: number 
 }
 
 /** All the trims of one hardware attachment: a row of `count`, `spacing` apart along its width. */
-export function HardwareRow({ a }: { a: Pick<Attachment, 'hardware' | 'w' | 'h'> }) {
+export function HardwareRow({ a }: { a: Pick<Attachment, 'hardware' | 'w' | 'h'> & Partial<Pick<Attachment, 'buttonhole' | 'thread'>> }) {
   const hw = a.hardware;
   if (!hw) return null;
+  if (a.buttonhole) {
+    // buttonholes: the stitched slot of each hole (straight or keyhole), cut line down the middle
+    const slots = buttonholeSlots({ hardware: hw, buttonhole: true, x: 0, y: 0, rotation: 0 });
+    const ink = a.thread ?? '#3a3a3f';
+    return <>{slots.map((sl, i) => <path key={i} d={polyD(sl)} fill="#ffffff" fillOpacity={0.35} stroke={ink} strokeWidth={0.06} strokeLinejoin="round" />)}</>;
+  }
   if (hw.type === 'zipper') return <><SheenDefs /><HardwareMark hw={hw} w={a.w} h={a.h} /></>;
   const n = Math.max(1, Math.round(hw.count ?? 1)), sp = hw.spacing ?? hw.size * 2;
   return (

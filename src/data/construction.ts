@@ -23,7 +23,7 @@ import { draft, isSplitFront, pocketOpening, regradePoints, splitFrontStyle, fly
 import { EMPTY_EDITS, type Attachment, type EdgeRef, type Edits, type Hardware } from './edits';
 import { fabricHex } from './fabrics';
 import { INSIDE_ROLES, makePreset, type Piece } from './presets';
-import { builtinSeams } from '../sim/seams';
+import { builtinSeams, instanceCount } from '../sim/seams';
 
 /** Version of the style details builtinDetails makes (Edits.builtin). */
 export const BUILTIN_VERSION = 1;
@@ -69,7 +69,8 @@ export function builtinDetails(style: StyleId, pieces: Piece[], body?: Pick<Body
         ? { type: 'button', finish: 'white', size: 1.1, holes: 4, color: '#eee9db' }
         : { type: 'button', finish: 'brass', size: 1.8, holes: 4 };
       out.push(buttonRow('Front buttons', fr.id, 0, first, last, n, hw, { instance: under }));
-      out.push(buttonRow('Front buttonholes', fr.id, 0, first, last, n, hw, { instance: over, buttonhole: true }));
+      // shirts: holes along the placket; jackets: keyhole buttonholes across the front
+      out.push(buttonRow('Front buttonholes', fr.id, 0, first, last, n, shirt ? { ...hw, holeDir: 'along' } : { ...hw, holeStyle: 'keyhole' }, { instance: over, buttonhole: true }));
     }
   }
   if (d.buttons && st.family === 'polo') {
@@ -80,7 +81,7 @@ export function builtinDetails(style: StyleId, pieces: Piece[], body?: Pick<Body
       const n = d.buttons, y0 = 2, y1 = n > 1 ? Math.min(y0 + 8 * (n - 1), h - 2) : y0;
       const hw: Hardware = { type: 'button', finish: 'white', size: 1.1, holes: 2, color: '#eee9db' };
       out.push(buttonRow('Placket buttons', pl.id, 0, y0, y1, n, hw, { instance: under }));
-      out.push(buttonRow('Placket buttonholes', pl.id, 0, y0, y1, n, hw, { instance: over, buttonhole: true }));
+      out.push(buttonRow('Placket buttonholes', pl.id, 0, y0, y1, n, { ...hw, holeDir: 'along' }, { instance: over, buttonhole: true }));
     }
   }
   if (d.buttons && st.family === 'cap') {
@@ -135,6 +136,105 @@ export function builtinDetails(style: StyleId, pieces: Piece[], body?: Pick<Body
   return out.map((a) => ({ ...a, id: uid() }));
 }
 
+/* ---------------------------------------------------------------------------------------------------------------- */
+/* buttonholes the user adds                                                                                          */
+
+/** Cut length of a buttonhole for a button of diameter `size` (cm): the button plus 3 mm (as the trims report says). */
+export const buttonholeLength = (size: number) => size + 0.3;
+
+/**
+ * Stitched outline of one buttonhole, centred on (0, 0) with the slot along +x (cm). Straight: a slot 4 mm wide with
+ * square bar tacks. Keyhole: the same slot with a round eye at the +x end (where the button shank sits) and a tapered
+ * bar tack at the other end.
+ */
+export function buttonholeOutline(size: number, style: 'straight' | 'keyhole' = 'straight'): Pt[] {
+  const L = buttonholeLength(size), w = 0.2;
+  if (style === 'straight') return [{ x: -L / 2, y: -w }, { x: L / 2, y: -w }, { x: L / 2, y: w }, { x: -L / 2, y: w }];
+  const R = Math.max(0.15, 0.12 * size + 0.05), cx = L / 2 - R, a0 = Math.asin(Math.min(0.95, w / R));
+  const eye: Pt[] = [];
+  for (let k = 0; k <= 16; k++) { const t = a0 + ((2 * Math.PI - 2 * a0) * k) / 16; eye.push({ x: cx - R * Math.cos(t), y: -R * Math.sin(t) }); }
+  return [{ x: -L / 2, y: 0 }, { x: -L / 2 + w, y: -w }, ...eye, { x: -L / 2 + w, y: w }];
+}
+
+/**
+ * Each buttonhole of a buttonhole attachment as its stitched outline in the attachment's own coords (cm, centred,
+ * before rotation; the row runs along local x), or in the host piece's coords with `onPiece`.
+ */
+export function buttonholeSlots(a: Pick<Attachment, 'hardware' | 'buttonhole' | 'x' | 'y' | 'rotation'>, onPiece = false): Pt[][] {
+  const h = a.hardware;
+  if (!a.buttonhole || !h) return [];
+  const n = Math.max(1, Math.round(h.count ?? 1)), sp = h.spacing ?? Math.max(1.5, h.size * 2);
+  const unit = buttonholeOutline(h.size, h.holeStyle ?? 'straight');
+  const along = h.holeDir === 'along';
+  const r = (a.rotation * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
+  return Array.from({ length: n }, (_, k) => unit.map((q) => {
+    const lx = (k - (n - 1) / 2) * sp + (along ? q.x : q.y), ly = along ? q.y : q.x;
+    return onPiece ? { x: a.x + lx * c - ly * s, y: a.y + lx * s + ly * c } : { x: lx, y: ly };
+  }));
+}
+
+export interface ButtonholeOpts {
+  /** host piece and centre of the row (piece pattern coords, cm), row direction in degrees (0 = across, 90 = down) */
+  pieceId: string;
+  x: number;
+  y: number;
+  rotation: number;
+  /** button diameter the holes take (cm) */
+  size: number;
+  count: number;
+  /** centre to centre (cm) */
+  spacing: number;
+  style?: 'straight' | 'keyhole';
+  dir?: 'across' | 'along';
+  /** copy of a piece cut twice that gets the holes (0 the wearer's left, 1 the right); omitted: every copy */
+  instance?: number;
+  /** add matching buttons: on the other copy of a piece cut twice (at the mirrored place, where it laps over), or on `buttonPieceId` at the same place */
+  button?: boolean;
+  buttonPieceId?: string;
+  finish?: Hardware['finish'];
+  /** stitching thread (CSS colour); omitted: matched to the cloth */
+  thread?: string;
+  /** symmetry on: a row off the centre line of a symmetric piece cut once is mirrored across it as well */
+  symmetric?: boolean;
+}
+
+/**
+ * A row of buttonholes (Attachment kind 'hardware', type 'button', buttonhole: true) and, if asked, the matching
+ * buttons, ready for the store. Copies of a piece cut twice are mirror images, so the button on the other copy goes at
+ * the mirrored pattern place (-x): it meets its hole where the two lap over (the style's own front buttons sit at x = 0).
+ */
+export function buttonholeSet(style: StyleId, pieces: Piece[], o: ButtonholeOpts): Omit<Attachment, 'id'>[] {
+  const host = pieces.find((p) => p.id === o.pieceId);
+  if (!host) return [];
+  const n = Math.max(1, Math.min(24, Math.round(o.count))), size = Math.max(0.6, o.size), spacing = n > 1 ? Math.max(buttonholeLength(size) + 0.3, o.spacing) : 0;
+  const twice = instanceCount(style, host) === 2;
+  const hole: Hardware = { type: 'button', finish: o.finish ?? 'white', size, count: n, spacing, holes: 4, holeStyle: o.style ?? 'straight', holeDir: o.dir ?? 'across' };
+  const w = (n - 1) * spacing + buttonholeLength(size);
+  const row = (x: number, rotation: number, name: string): Omit<Attachment, 'id'> => ({
+    kind: 'hardware', name, pieceId: host.id, x, y: o.y, rotation, w, h: size, outline: 'rect', layers: [], buttonhole: true,
+    hardware: { ...hole }, ...(o.thread ? { thread: o.thread } : {}), ...(twice && o.instance !== undefined ? { instance: o.instance } : {}),
+  });
+  const label = n > 1 ? `Buttonholes, ${n}` : 'Buttonhole';
+  const out: Omit<Attachment, 'id'>[] = [row(o.x, o.rotation, label)];
+  const mirrored = !!o.symmetric && !twice && host.symmetric && Math.abs(o.x) > 0.3;
+  if (mirrored) out.push(row(-o.x, (540 - o.rotation) % 360, `${label}, mirrored`));
+  if (o.button) {
+    const target = o.buttonPieceId ? pieces.find((p) => p.id === o.buttonPieceId) : twice && o.instance !== undefined ? host : undefined;
+    if (target) {
+      const other = target === host ? 1 - o.instance! : instanceCount(style, target) === 2 ? o.instance : undefined;
+      // the other copy of the same piece is its mirror image: the button meets the hole at the mirrored pattern place
+      const flip = target === host;
+      for (const h of [...out]) out.push({
+        ...h, name: n > 1 ? `Buttons, ${n}` : 'Button', pieceId: target.id, buttonhole: undefined, w: (n - 1) * spacing + size,
+        ...(flip ? { x: -h.x, rotation: (540 - h.rotation) % 360 } : {}),
+        hardware: { type: 'button', finish: hole.finish, size, count: n, spacing, holes: 4 },
+        ...(other !== undefined ? { instance: other } : { instance: undefined }),
+      });
+    }
+  }
+  return out.map((a) => Object.fromEntries(Object.entries(a).filter(([, v]) => v !== undefined)) as Omit<Attachment, 'id'>);
+}
+
 /** x of the side seam at height y, walking the outline forward from point index i0 */
 function sideX(points: PPoint[], i0: number, y: number) {
   const bz = toBeziers(points);
@@ -170,7 +270,7 @@ function flyZip(front: Piece) {
 /* stitching lines                                                                                                   */
 
 /** 'opening': a line the piece is cut along (the jeans pocket opening), drawn on the chart, not stitched */
-export type StitchKind = 'topstitch' | 'edge' | 'hem' | 'brim' | 'pocket' | 'fly' | 'opening';
+export type StitchKind = 'topstitch' | 'edge' | 'hem' | 'brim' | 'pocket' | 'fly' | 'opening' | 'buttonhole';
 export interface StitchLine {
   pieceId: string;
   /** placed copy of a piece cut more than once; omitted: every copy (the copies are mirror images) */
@@ -330,6 +430,14 @@ export function stitchLines(style: StyleId, pieces: Piece[], edits: Edits = EMPT
       const inst = edits.attachments.find((a) => a.builtin && a.hardware?.type === 'zipper' && a.pieceId === front.id)?.instance ?? 0;
       for (const o of t?.needles === 2 ? [0, 0.6] : [0]) out.push({ pieceId: front.id, instance: inst, kind: 'fly', points: o ? offsetLine(pts, o, -1) : pts, color, offset: inset + o, label: 'Fly J stitch' });
     }
+  }
+  // buttonholes (the style's and the user's): each stitched outline, closed, on the copy it is cut in
+  for (const a of edits.attachments) {
+    if (!a.buttonhole || a.kind !== 'hardware' || !pieces.some((p) => p.id === a.pieceId)) continue;
+    for (const slot of buttonholeSlots(a, true)) out.push({
+      pieceId: a.pieceId, ...(a.instance !== undefined ? { instance: a.instance } : {}), kind: 'buttonhole', points: [...slot, slot[0]],
+      color: a.thread ?? 'match', offset: 0, label: a.hardware?.holeStyle === 'keyhole' ? 'Keyhole buttonhole' : 'Buttonhole',
+    });
   }
   return out;
 }

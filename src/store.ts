@@ -16,7 +16,7 @@ import { fitTable, garmentSpecs, pieceSpecs } from './lib/specs';
 import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorkspaceMap, defaultBand } from './components/designDoc';
 import type { Band } from './data/edits';
 import { deleteOutfit as removeSavedOutfit, listOutfits, listProjects, saveOutfit, saveProject } from './lib/projects';
-import { regradeBuiltins, styleEdits, upgradeFront, withBuiltins } from './data/construction';
+import { buttonholeSet, regradeBuiltins, styleEdits, upgradeFront, withBuiltins, type ButtonholeOpts } from './data/construction';
 
 /** undo history entry: pattern pieces plus garment edits */
 export interface Snapshot { pieces: Piece[]; edits?: Edits; notes?: Note[] }
@@ -321,6 +321,8 @@ export interface State {
   // --- edits (attachments, seams, pleats, user pieces) ---
   selAttachment: string | null;
   addAttachment: (a: Omit<Attachment, 'id'>) => string;
+  /** a row of buttonholes on a piece (and matching buttons, mirrored rows with symmetry on), one undo step; returns the ids */
+  addButtonholes: (o: Omit<ButtonholeOpts, 'symmetric'>) => string[];
   duplicateAttachment: (id: string) => string | null;
   setCollar: (c: 'down' | 'up') => void;
   setWashSequence: (w: import('./data/edits').WashSequence) => void;
@@ -951,6 +953,15 @@ export const useStore = create<State>((set, get) => {
       setEdits((e) => ({ ...e, attachments: [...e.attachments, { ...a, ...inst, id }] }));
       set({ selAttachment: id });
       return id;
+    },
+    addButtonholes: (o) => {
+      const { project, symmetry } = get();
+      const made = buttonholeSet(project.garment, project.pieces, { ...o, symmetric: symmetry }).map((a) => ({ ...a, id: uid() }));
+      if (!made.length) return [];
+      get().commit();
+      setEdits((e) => ({ ...e, attachments: [...e.attachments, ...made] }));
+      set({ selAttachment: made[0].id });
+      return made.map((a) => a.id);
     },
     duplicateAttachment: (id) => {
       const a = get().project.edits?.attachments.find((q) => q.id === id);

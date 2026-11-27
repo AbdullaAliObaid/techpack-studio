@@ -5,8 +5,8 @@
 import type { GarmentType, Piece } from '../data/presets';
 import { fabricById, fabricThickness } from '../data/fabrics';
 import { attachmentStack, combine, plyOf, reliefOf, reliefPly, stackOf, COUPLING, STACK_CAPS, type Stack } from '../data/stack';
-import { migrateGarment, styleById, type Style, type StyleId } from '../data/catalog';
-import { COLLAR_TIP, frontOffset, isSplitFront, RIB } from '../data/draft';
+import { isHatFamily, migrateGarment, styleById, type Style, type StyleId } from '../data/catalog';
+import { COLLAR_TIP, crownArc, derivedGirths, frontOffset, isSplitFront, RIB } from '../data/draft';
 import { bezAt, bbox, outlineLength, pointInPoly, samplePoly, sliceSpan, toBeziers, type PPoint, type Pt } from '../lib/geometry';
 import { attachmentPolygons } from '../lib/shapes';
 import { EMPTY_EDITS, type EdgeRef, type Edits, type Face, type Hardware, type Pleat } from '../data/edits';
@@ -411,7 +411,7 @@ function mechanics(p: Piece, style: Style, opts: { collarUp?: boolean; legacyCol
     scK = 0.1; // elastic is much stronger than the fabric it gathers
   }
   if (p.role === 'brim') {
-    if (style.family === 'cap') {
+    if (style.family === 'cap' || style.family === 'visor') {
       // visor with a pre-curved plastic insert: holds its shape
       stretch = 0.01; scK = 0; bend = 50; shaped = true; plate = true;
     } else {
@@ -419,7 +419,10 @@ function mechanics(p: Piece, style: Style, opts: { collarUp?: boolean; legacyCol
       bend = Math.max(bend, 1) * 3; scK = 0.5;
     }
   }
-  if (p.role === 'crown' && style.family === 'cap') bend = Math.max(bend, 1) * 2; // structured crown (buckram front)
+  // structured crown (buckram front); a five panel is soft and unstructured
+  if ((p.role === 'crown' || p.role === 'crownFront') && style.family === 'cap' && style.id !== 'five-panel') bend = Math.max(bend, 1) * 2;
+  if (p.role === 'headband') bend = Math.max(bend, 0.5) * 2; // visor band: shell, interfacing and sweatband stitched together
+  if (p.role === 'strap') { stretch = Math.max(stretch, 0.5); scK = 0.5; } // knitted elastic, cut short and stretched on
   if (p.role === 'collar' && style.family === 'shirt') bend *= 2; // interfaced collar
   if (p.role === 'collar' && style.family === 'polo') { foldBend = true; bend = Math.max(bend, 0.4); } // knit collar with a pressed fold
   // a woven collar keeps the shape it is pressed into: folded over at the roll line when worn down
@@ -439,12 +442,13 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   const style = styleById(migrateGarment(type));
   const fam = style.family;
   const f = bodyFrame(body);
-  const hat = fam === 'bucket' || fam === 'cap';
+  const hat = isHatFamily(fam);
   const front = pieces.find((p) => p.role === 'front');
   const back = pieces.find((p) => p.role === 'back');
   const sleeve = pieces.find((p) => p.role === 'sleeve');
   const crown = pieces.find((p) => p.role === 'crown');
-  if (hat ? !crown : !front || !back) return null;
+  const headband = pieces.find((p) => p.role === 'headband');
+  if (hat ? !(fam === 'visor' ? headband : crown) : !front || !back) return null;
 
   const collarIs = collarState(edits);
   /** a front that buttons, worn open: nothing buttons, the fronts hang free */
@@ -470,6 +474,8 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   const freePanels = new Set<PanelInst>(); // pieces that do not collide with the body (a visor is held by its band)
 
   if (fam === 'pants') assemblePants();
+  else if (fam === 'beanie') assembleBeanie();
+  else if (fam === 'visor') assembleVisor();
   else if (hat) assembleHat();
   else assembleTop();
 
@@ -738,17 +744,23 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     const lift = Math.max(1, f.H + 1 - (yb + prof[0].y));
     const sx = (A + 0.6) / R0, sz = (B + 0.6) / R0;
     const gm = meshPanel(cr.points, spacing);
-    for (let k = 0; k < 6; k++) {
+    /** a panel centred at angle thk spanning +-halfA; a panel of another height (a five panel front) is scaled to the crown's */
+    const panel = (pp: Pt[], Hp: number, thk: number, halfA: number): Placer => (u, v) => {
+      const span = widthSpan(pp, v);
+      const hw = Math.max(0.3, (span.x2 - span.x1) / 2);
+      const th = thk - Math.max(-1, Math.min(1, u / hw)) * halfA;
+      const vv = Hp === Hg ? v : (v / Hp) * Hg;
+      const fi = Math.max(0, Math.min(N, (vv / Hg) * N)), i0 = Math.min(N - 1, Math.floor(fi)), t = fi - i0;
+      const r = prof[i0].r + (prof[i0 + 1].r - prof[i0].r) * t, y = prof[i0].y + (prof[i0 + 1].y - prof[i0].y) * t;
+      return [r * sx * Math.cos(th), yb + lift + y, cz + r * sz * Math.sin(th)];
+    };
+    const fp = pieces.find((p) => p.role === 'crownFront');
+    // five panel: the front panel takes the two front places (centred on centre front), the crown panels the other four
+    if (fp) add(fp, false, panel(samplePoly(fp.points), Math.max(...fp.points.map((p) => p.y)), Math.PI / 2, Math.PI / 3));
+    for (let k = fp ? 1 : 0; k < (fp ? 5 : 6); k++) {
       // panel centres every 60 degrees with a seam at centre front; pattern +x runs towards the wearer's left (+x)
       const thk = Math.PI / 2 - Math.PI / 6 - (k * Math.PI) / 3;
-      add(cr, false, (u, v) => {
-        const span = widthSpan(gp, v);
-        const hw = Math.max(0.3, (span.x2 - span.x1) / 2);
-        const th = thk - Math.max(-1, Math.min(1, u / hw)) * (Math.PI / 6);
-        const fi = Math.max(0, Math.min(N, (v / Hg) * N)), i0 = Math.min(N - 1, Math.floor(fi)), t = fi - i0;
-        const r = prof[i0].r + (prof[i0 + 1].r - prof[i0].r) * t, y = prof[i0].y + (prof[i0 + 1].y - prof[i0].y) * t;
-        return [r * sx * Math.cos(th), yb + lift + y, cz + r * sz * Math.sin(th)];
-      }, gm);
+      add(cr, false, panel(gp, Hg, thk, Math.PI / 6), gm);
     }
     if (!brim) return;
     if (fam === 'bucket') {
@@ -772,6 +784,115 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
       // rest shape on the exact band curve; it starts a little out and up, with the crown
       const BR = add(brim, false, visor(0.6, lift), undefined, visor(0, 0));
       freePanels.add(BR);
+    }
+  }
+
+  /** x intervals of a polygon on the line y = v, left to right (a beanie crown has one per point above its darts) */
+  function spans(poly: Pt[], v: number): [number, number][] {
+    const xs: number[] = [];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      if ((a.y - v) * (b.y - v) < 0 || (a.y === v && b.y !== v)) xs.push(a.x + ((v - a.y) / (b.y - a.y)) * (b.x - a.x));
+    }
+    xs.sort((p, q) => p - q);
+    const out: [number, number][] = [];
+    for (let i = 0; i + 1 < xs.length; i += 2) if (xs[i + 1] - xs[i] > 1e-6) out.push([xs[i], xs[i + 1]]);
+    return out.length ? out : [[-1, 1]];
+  }
+
+  function assembleBeanie() {
+    // one knit piece round the head: centre front at the front, the back seam at the back. Above the dart points each
+    // point of the crown takes an equal share of the way round, so the darts start closed and meet at the top.
+    const cr = crown!;
+    const gp = samplePoly(cr.points);
+    const Hg = Math.max(...cr.points.map((p) => p.y));
+    const head = derivedGirths(body).head;
+    const e = ellipseFromCirc(head, f.headK);
+    // the body runs on past the band line (its length over the crown depth), down over the tops of the ears
+    const A = e.a + 0.25, B = e.b + 0.25, yb = f.headBandH - Math.max(0, Hg - crownArc(head)), cz = f.headCz;
+    const N = 64;
+    const width = (v: number) => spans(gp, v).reduce((s, [a, b]) => s + b - a, 0);
+    const prof: { r: number; y: number }[] = [];
+    for (let i = 0; i <= N; i++) prof.push({ r: i === 0 ? 0 : width(Math.min((i / N) * Hg, Hg - 1e-3)) / TAU, y: 0 });
+    const R0 = prof[N].r;
+    for (let i = N - 1; i >= 0; i--) {
+      const dv = Hg / N, dr = prof[i].r - prof[i + 1].r;
+      prof[i].y = prof[i + 1].y + Math.sqrt(Math.max(0.05 * dv * dv, dv * dv - dr * dr));
+    }
+    // the knit is smaller than the head: it starts stretched round it, clear of it everywhere, and closes in on it
+    // and its crown starts seated on the top of the head (pulled down, the way it is put on): the dome is pressed down
+    // to the head's height, so the knit is slack up the head and tight round it; a tight tube held clear of the top
+    // would be squeezed up the head's taper and off
+    const sx = (A + 0.6) / R0, sz = (B + 0.6) / R0;
+    const kY = Math.min(1, (f.H + 0.8 - yb) / prof[0].y), lift = 0;
+    for (const q of prof) q.y *= kY;
+    const at = (s: number, r: number, y: number): V3 => {
+      const th = Math.PI / 2 - (s - 0.5) * TAU;
+      return [r * sx * Math.cos(th), y, cz + r * sz * Math.sin(th)];
+    };
+    add(cr, false, (u, v) => {
+      const I = spans(gp, v);
+      let j = I.findIndex(([a, b]) => u >= a - 1e-6 && u <= b + 1e-6);
+      if (j < 0) j = I.reduce((bj, [a, b], k) => (Math.min(Math.abs(u - a), Math.abs(u - b)) < Math.min(Math.abs(u - I[bj][0]), Math.abs(u - I[bj][1])) ? k : bj), 0);
+      const [a, b] = I[j];
+      const s = (j + Math.max(0, Math.min(1, (u - a) / Math.max(1e-6, b - a)))) / I.length;
+      const fi = Math.max(0, Math.min(N, (v / Hg) * N)), i0 = Math.min(N - 1, Math.floor(fi)), t = fi - i0;
+      const r = prof[i0].r + (prof[i0 + 1].r - prof[i0].r) * t, y = prof[i0].y + (prof[i0 + 1].y - prof[i0].y) * t;
+      return at(s, r, yb + lift + y);
+    });
+    const cuff = pieces.find((p) => p.role === 'cuff');
+    if (!cuff) return;
+    // turned back: sewn to the body's edge at the band, folded up over the outside of the body
+    const Wc = 2 * Math.max(...cuff.points.map((q) => q.x));
+    add(cuff, false, (u, v) => at(Math.max(0, Math.min(1, (u + Wc / 2) / Wc)), R0 + 0.9, yb + lift + v));
+  }
+
+  function assembleVisor() {
+    // the band follows the peak's inner curve round the front (the rigid peak and the band must agree) and the same
+    // ellipse round the back, where the elastic strap starts stretched to close it
+    const hb = headband!;
+    const strap = pieces.find((p) => p.role === 'strap'), brim = pieces.find((p) => p.role === 'brim');
+    const head = derivedGirths(body).head;
+    const e = ellipseFromCirc(head + 1, f.headK);
+    const A = brim ? Math.max(...brim.points.filter((q) => q.tag === 'visorEnd').map((q) => q.x)) : e.a;
+    const B = brim ? brim.points[0].y : e.b;
+    // worn a little lower than a cap band, across the widest part of the head: a tight band slides off a slope (a band
+    // wholly above the widest girth is squeezed up and off, wholly below it down over the face); across it friction holds
+    const yb = f.headBandH - 1, cz = f.headCz, g = 0.6, up = 0.8;
+    // arc length round the ellipse from centre front towards +x (the wearer's left), as a table of angles
+    const M = 720, arc: number[] = [0];
+    const pt = (th: number, grow: number): [number, number] => [(A + grow) * Math.cos(th), (B + grow) * Math.sin(th)];
+    for (let i = 1; i <= M; i++) {
+      const p0 = pt(Math.PI / 2 - ((i - 1) / M) * TAU, 0), p1 = pt(Math.PI / 2 - (i / M) * TAU, 0);
+      arc.push(arc[i - 1] + Math.hypot(p1[0] - p0[0], p1[1] - p0[1]));
+    }
+    const P = arc[M];
+    const thAt = (sig: number) => {
+      const s = ((sig % P) + P) % P;
+      let lo = 0, hi = M;
+      while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (arc[mid] <= s) lo = mid; else hi = mid; }
+      const t = (s - arc[lo]) / Math.max(1e-9, arc[hi] - arc[lo]);
+      return Math.PI / 2 - ((lo + t) / M) * TAU;
+    };
+    const ring = (sig: number, y: number): V3 => { const [x, z] = pt(thAt(sig), g); return [x, y, cz + z]; };
+    const peakEnd = hb.points.find((q) => q.key === 'headband.4');
+    const inner = peakEnd ? 2 * Math.abs(peakEnd.x) : 1;
+    const k = P / 2 / inner; // pattern cm of the band's bottom edge to cm round the ellipse
+    const hH = Math.max(...hb.points.map((q) => q.y));
+    add(hb, false, (u, v) => ring(u * k, yb + up + (hH - v)));
+    const end = hb.points.find((q) => q.key === 'headband.3');
+    if (strap && end) {
+      const Ls = 2 * Math.max(...strap.points.map((q) => q.x)), sH = Math.max(...strap.points.map((q) => q.y));
+      const sEnd = Math.abs(end.x) * k, ks = (P / 2 - sEnd) / (Ls / 2);
+      add(strap, false, (u, v) => ring(P / 2 - u * ks, yb + up + (sH - v)));
+    }
+    if (brim) {
+      const visor = (grow: number, lift: number): Placer => (u, v) => {
+        const xi = Math.max(-1, Math.min(1, u / A));
+        const d = Math.max(0, v - B * Math.sqrt(1 - xi * xi)); // distance out from the band
+        return [u * (A + grow) / A, yb + lift - d * (0.16 + 0.35 * xi * xi), cz + v * (B + grow) / B];
+      };
+      freePanels.add(add(brim, false, visor(g, up), undefined, visor(0, 0)));
     }
   }
 

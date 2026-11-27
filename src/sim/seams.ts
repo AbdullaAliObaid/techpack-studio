@@ -25,10 +25,17 @@ export interface BuiltinSeam {
   group?: string;
 }
 
+/** Crown panels cut from the crown piece: six, four beside a five panel front, one beanie body. */
+export function crownCount(style: StyleId): number {
+  const id = migrateGarment(style);
+  if (id === 'five-panel') return 4;
+  return styleById(id).family === 'beanie' ? 1 : 6;
+}
+
 /** How many times a piece is placed on the body (instances), by role and style family. */
 export function instanceCount(style: StyleId, p: Piece): number {
   const fam = styleById(migrateGarment(style)).family;
-  if (p.role === 'crown') return 6;
+  if (p.role === 'crown') return crownCount(style);
   if (p.role === 'sleeve') return 2;
   if (p.role === 'cuff') return fam === 'shirt' || fam === 'pants' ? 2 : 1;
   if (fam === 'pants' && (p.role === 'front' || p.role === 'back')) return 2;
@@ -86,12 +93,51 @@ export function builtinSeams(style: StyleId, pieces: Piece[], edits?: Pick<Edits
   const sideName = (i: number) => (i === 0 ? 'Left' : 'Right');
   const sfx = (i: number) => (i === 0 ? 'r' : 'l');
 
+  if (fam === 'beanie') {
+    // six crown darts: each point's sides sewn to the next point's (crown.0 / 6 / 12 / 18 the dart points, crown.3 /
+    // 9 / 15 the tips); the back seam runs from the band up the back edge and the last point's side
+    const cr = role('crown');
+    if (!cr) return [];
+    const K = (i: number, m = '') => `crown.${i}${m}`;
+    S('dart-front', 'Front crown dart', E(cr, K(0), K(3)), E(cr, K(0), K(3, 'm')));
+    for (const [i, side] of [[6, ''], [12, ''], [6, 'm'], [12, 'm']] as const) {
+      const n = i === 6 ? 1 : 2, l = side ? 'Right' : 'Left';
+      S(`dart-${side ? 'l' : 'r'}${n}`, `${l} crown dart ${n}`, E(cr, K(i, side), K(i - 3, side)), E(cr, K(i, side), K(i + 3, side)));
+    }
+    push(out, 'back', 'Back seam', [E(cr, K(19), K(18)), E(cr, K(18), K(15))], [E(cr, K(19, 'm'), K(18, 'm')), E(cr, K(18, 'm'), K(15, 'm'))]);
+    const cuff = role('cuff');
+    if (cuff) {
+      S('cuff-join', 'Cuff back seam', E(cuff, 'cuff.1', 'cuff.2'), E(cuff, 'cuff.1m', 'cuff.2m'));
+      M('cuff', 'Cuff to body', [E(cuff, 'cuff.1m', 'cuff.1')], [E(cr, K(19, 'm'), K(19))]);
+    }
+    return [...out, ...multi];
+  }
+  if (fam === 'visor') {
+    // front band ends to the elastic strap ends, the peak to the front of the band's bottom edge
+    const hb = role('headband'), strap = role('strap'), brim = role('brim');
+    if (!hb) return [];
+    if (strap) {
+      S('strap-r', 'Left strap end', E(hb, 'headband.2', 'headband.3'), E(strap, 'strap.1', 'strap.2'));
+      S('strap-l', 'Right strap end', E(hb, 'headband.2m', 'headband.3m'), E(strap, 'strap.1m', 'strap.2m'));
+    }
+    if (brim) M('visor', 'Visor to band', [E(brim, 'brim.3m', 'brim.0'), E(brim, 'brim.0', 'brim.3')], [E(hb, 'headband.4m', 'headband.5'), E(hb, 'headband.5', 'headband.4')]);
+    return [...out, ...multi];
+  }
   const hat = fam === 'bucket' || fam === 'cap';
   if (hat) {
-    const cr = role('crown'), brim = role('brim');
+    const cr = role('crown'), brim = role('brim'), fp = role('crownFront');
     if (!cr) return [];
-    for (let k = 0; k < 6; k++) S(`crown-${k + 1}`, `Crown seam ${k + 1}`, E(cr, 'crown.0', 'crown.3', k), E(cr, 'crown.0', 'crown.3m', (k + 1) % 6));
     const base = (k: number) => [E(cr, 'crown.3m', 'crown.4', k), E(cr, 'crown.4', 'crown.3', k)];
+    if (fp) {
+      // five panel: the wide front panel, then the four panels round to the back and forward again
+      S('crown-1', 'Front panel, left seam', E(fp, 'crownFront.0', 'crownFront.3'), E(cr, 'crown.0', 'crown.3m', 0));
+      for (let k = 0; k < 3; k++) S(`crown-${k + 2}`, `Crown seam ${k + 2}`, E(cr, 'crown.0', 'crown.3', k), E(cr, 'crown.0', 'crown.3m', k + 1));
+      S('crown-5', 'Front panel, right seam', E(cr, 'crown.0', 'crown.3', 3), E(fp, 'crownFront.0', 'crownFront.3m'));
+      if (brim) M('visor', 'Visor to crown', [E(brim, 'brim.3m', 'brim.0'), E(brim, 'brim.0', 'brim.3')],
+        [base(3)[1], E(fp, 'crownFront.3m', 'crownFront.4'), E(fp, 'crownFront.4', 'crownFront.3'), base(0)[0]]);
+      return [...out, ...multi];
+    }
+    for (let k = 0; k < 6; k++) S(`crown-${k + 1}`, `Crown seam ${k + 1}`, E(cr, 'crown.0', 'crown.3', k), E(cr, 'crown.0', 'crown.3m', (k + 1) % 6));
     if (brim && fam === 'bucket') {
       S('brim-join', 'Brim back seam', E(brim, 'brim.6', 'brim.7'), E(brim, 'brim.6m', 'brim.7m'));
       M('brim', 'Brim to crown', [E(brim, 'brim.0', 'brim.6'), E(brim, 'brim.6m', 'brim.0')], [0, 1, 2, 3, 4, 5].flatMap(base));
@@ -233,6 +279,7 @@ export function faceLabel(style: StyleId, piece: Pick<Piece, 'role'>, face: Face
   if (out) return piece.role === 'brim' ? 'Top of brim' : 'Outside';
   if (piece.role === 'placket') return 'Placket facing';
   if (piece.role === 'brim') return 'Under brim';
+  if (piece.role === 'headband') return 'Sweatband side';
   if (fam === 'jacket' || fam === 'cap' || fam === 'bucket') return 'Lining side';
   return 'Inside';
 }

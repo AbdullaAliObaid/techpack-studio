@@ -55,7 +55,7 @@ let fails = 0;
 const cases: [StyleId, Mode, (() => [Piece[], Edits])?][] = [
   ['jacket', 'jacks'], ['button-up', 'cross'], ['jeans', 'sit'], ['jeans', 'walk'], ['jacket', 'hug'],
   ['basic-tee', 'jacks'], ['polo', 'cross'], ['boxy-tee', 'hug'], ['sweatpants', 'walk'], ['baggy-jeans', 'sit'], ['shorts', 'walk'],
-  ['bucket-hat', 'jacks'], ['cap', 'walk'],
+  ['bucket-hat', 'jacks'], ['cap', 'walk'], ['five-panel', 'jacks'], ['beanie', 'jacks'], ['visor', 'walk'],
   ['jeans', 'walk', pleatedJeans],
   ['polo', 'jacks', poppedPolo], ['basic-tee', 'hug', taggedTee],
 ];
@@ -94,7 +94,7 @@ for (const [g, mode, make] of process.env.CUSTOM_ONLY ? ([] as typeof cases) : c
 }
 // ---- hats stay on through every movement: the crown centre and brim checked in the head's own frame ----
 console.log('\n== hats in motion ==');
-for (const g of process.env.CUSTOM_ONLY ? [] : (['bucket-hat', 'cap'] as StyleId[])) for (const mode of ['walk', 'sit', 'jacks', 'cross', 'hug'] as Mode[]) {
+for (const g of process.env.CUSTOM_ONLY ? [] : (['bucket-hat', 'cap', 'five-panel', 'beanie', 'visor'] as StyleId[])) for (const mode of ['walk', 'sit', 'jacks', 'cross', 'hug'] as Mode[]) {
   const col = new PosedCollider(mesh.grid, [f.ankleH + 6, f.crotchH + 1], f);
   const G = assemble(g, makePreset(g, DEFAULT_BODY), DEFAULT_BODY, 1.8, col)!;
   const sim = G.sim;
@@ -111,7 +111,8 @@ for (const g of process.env.CUSTOM_ONLY ? [] : (['bucket-hat', 'cap'] as StyleId
   }
   const end = hatPose(G, f, invert(M));
   let bad = 0; for (const v of sim.pos) if (!Number.isFinite(v)) bad++;
-  const ok = bad === 0 && worst < 2 && worstY < 1.5 && end.lr < 1;
+  // a five panel's flat, shorter front panel sits its crown a little further back (tests/drape.ts hats)
+  const ok = bad === 0 && worst < (g === 'five-panel' ? 2.5 : 2) && worstY < 1.5 && end.lr < 1;
   if (!ok) fails++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${g.padEnd(11)} ${mode.padEnd(6)} stays on the head: crown centre up to ${worst.toFixed(2)} cm off the axis, up to ${worstY.toFixed(2)} cm up or down, brim tilt ${end.lr.toFixed(2)} cm, NaN ${bad}`);
 }

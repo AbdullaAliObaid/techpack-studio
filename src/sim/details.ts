@@ -326,12 +326,12 @@ export function buildDetails(G: Garment3D, d: Details): DetailsMsg {
     }
   });
 
-  /* ---- stitching drawn on the pattern: pocket openings, fly J stitch (src/data/construction.ts) ---- */
+  /* ---- stitching drawn on the pattern: pocket openings, fly J stitch, buttonholes (src/data/construction.ts) ---- */
   if (G.style) {
     const pieces: Piece[] = [];
     for (const P of panels) if (!P.attach && !pieces.includes(P.piece)) pieces.push(P.piece);
     for (const L of stitchLines(G.style, pieces, G.edits)) {
-      if (L.kind !== 'pocket' && L.kind !== 'fly') continue;
+      if (L.kind !== 'pocket' && L.kind !== 'fly' && L.kind !== 'buttonhole') continue;
       panels.forEach((P, k) => {
         if (P.attach || P.piece.id !== L.pieceId || (L.instance !== undefined && P.instance !== L.instance)) return;
         stitchLine(k, L.points, threadColor(P, L.color));

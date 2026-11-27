@@ -13,7 +13,7 @@ let fails = 0;
 const ok = (c: boolean, m: string) => { if (!c) { fails++; console.error('FAIL', m); } else console.log('ok  ', m); };
 
 ok(new Set(DESIGNS.map((d) => d.id)).size === DESIGNS.length, 'design ids are unique');
-for (const s of CATALOG.filter((c) => c.category !== 'headwear')) ok(designsFor(s.id).length >= 3, `${s.id} has ${designsFor(s.id).length} designs (at least 3)`);
+for (const s of CATALOG) ok(designsFor(s.id).length >= 3, `${s.id} has ${designsFor(s.id).length} designs (at least 3)`);
 
 for (const d of DESIGNS) {
   if (!CATALOG.some((s) => s.id === d.style)) { console.log('skip', d.id, '(style not in catalog yet)'); continue; }

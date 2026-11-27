@@ -90,6 +90,13 @@ export interface Hardware {
   color?: string;
   /** zipper design */
   zipper?: ZipperDesign;
+  /**
+   * buttonholes (Attachment.buttonhole): straight (a bar tacked slot, shirts and knits) or keyhole (a round eye at the
+   * end the button shank sits in, jackets and coats). Default straight. `size` is the button the hole takes.
+   */
+  holeStyle?: 'straight' | 'keyhole';
+  /** buttonholes: each slot across the row (default, like a jacket front) or along it (like a shirt placket) */
+  holeDir?: 'across' | 'along';
 }
 
 export interface ZipperDesign {
