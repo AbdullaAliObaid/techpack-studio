@@ -9,6 +9,9 @@ import { fabricDataUrl } from '../lib/textures';
 import { categoryOf, colourName, fabricCategories, fabricHex, patternList, patternTile, svgUrl, swatchStyle, PALETTE } from './editHelpers';
 import { ColorField, Disclosure, Seg } from './controls';
 import Icon from './Icon';
+import MotifSheet from './MotifSheet';
+import { customPatternUrl, SHEEN_LABEL } from './editHelpers';
+import type { PieceFabric as PF } from '../data/presets';
 
 const HEX = /^#[0-9a-f]{6}$/i;
 
@@ -16,7 +19,9 @@ const HEX = /^#[0-9a-f]{6}$/i;
 export function FabricSwatch({ fabric, size = 44, label, round }: { fabric: PieceFabric; size?: number; label?: string; round?: boolean }) {
   const f = fabricById(fabric.id);
   const hex = fabricHex(fabric);
-  return <span className="fab-swatch" role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true} style={{ width: size, height: size, borderRadius: round ? '50%' : undefined, ...swatchStyle(fabricDataUrl(f, hex), fabric.pattern, size) }} />;
+  const custom = fabric.pattern?.id === 'custom' && fabric.pattern.motif;
+  const style = custom ? { backgroundImage: `url(${customPatternUrl(fabric.pattern!, fabric.id, fabric.pattern!.colors[0] ?? hex, size)})`, backgroundSize: 'cover' } : swatchStyle(fabricDataUrl(f, hex), fabric.pattern, size);
+  return <span className="fab-swatch" role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true} style={{ width: size, height: size, borderRadius: round ? '50%' : undefined, ...style }} />;
 }
 
 /** Name of a fabric choice, for captions. */
@@ -106,6 +111,7 @@ export default function FabricBrowser({ value, onChange, idKey }: { value: Piece
         )}
       </div>
 
+      <FinishRow value={value} onChange={onChange} />
       <PatternSection value={value} onChange={onChange} idKey={idKey} />
     </div>
   );
@@ -121,8 +127,10 @@ function PatternSection({ value, onChange, idKey }: { value: PieceFabric; onChan
     void _drop;
     onChange(p ? { ...rest, pattern: p } : rest);
   };
+  const [sheet, setSheet] = useState(false);
   const choose = (id: string) => {
     if (id === 'solid') return set(null);
+    if (id === 'custom') return setSheet(true);
     const info = pats.find((p) => p.id === id)!;
     // a new pattern starts on the cloth colour and keeps the size and turn already chosen
     set({ id: id as FabricPattern['id'], colors: [ground, ...info.colors.slice(1)], scale: cur?.scale ?? info.scale, rotation: cur?.rotation ?? 0, method: cur?.method ?? 'printed' });
@@ -133,9 +141,13 @@ function PatternSection({ value, onChange, idKey }: { value: PieceFabric; onChan
   };
   return (
     <Disclosure id={`fab-pattern-${idKey}`} title="Pattern" icon="stripes" count={cur ? 1 : undefined}>
-      <div className="pat-live" aria-label="Live preview of the fabric" role="img" style={swatchStyle(fabricDataUrl(f, ground), cur ?? undefined, 220)} />
+      <div className="pat-live" aria-label="Live preview of the fabric" role="img" style={cur?.id === 'custom' ? { backgroundImage: `url(${customPatternUrl(cur, value.id, ground, 220)})`, backgroundSize: 'cover' } : swatchStyle(fabricDataUrl(f, ground), cur ?? undefined, 220)} />
       <div className="pat-grid" role="list" aria-label="Patterns">
-        {pats.map((p) => {
+        <button role="listitem" className={`pat-tile motif-tile ${cur?.id === 'custom' ? 'on' : ''}`} aria-pressed={cur?.id === 'custom'} onClick={() => setSheet(true)}>
+          <span className="pat-prev" style={cur?.id === 'custom' ? { backgroundImage: `url(${customPatternUrl(cur, value.id, ground, 44)})`, backgroundSize: 'cover' } : undefined}>{cur?.id !== 'custom' && <Icon name="plus" size={20} />}</span>
+          <span className="fb-name">Your motif</span>
+        </button>
+        {pats.filter((p) => p.id !== 'custom').map((p) => {
           const on = (cur?.id ?? 'solid') === p.id;
           const t = p.id === 'solid' ? null : patternTile(tileOf(p.id));
           return (
@@ -146,7 +158,11 @@ function PatternSection({ value, onChange, idKey }: { value: PieceFabric; onChan
           );
         })}
       </div>
-      {cur && (
+      {sheet && <MotifSheet value={value} onClose={() => setSheet(false)} />}
+      {cur?.id === 'custom' && (
+        <button className="btn wide" onClick={() => setSheet(true)}><Icon name="draw" size={16} /> Edit your motif</button>
+      )}
+      {cur && cur.id !== 'custom' && (
         <>
           <div className="sublabel">Colours of this pattern</div>
           {cur.colors.map((c, i) => (
@@ -171,5 +187,32 @@ function PatternSection({ value, onChange, idKey }: { value: PieceFabric; onChan
         </>
       )}
     </Disclosure>
+  );
+}
+
+const FINISHES: { id: NonNullable<PF['sheen']>; note: string }[] = [
+  { id: 'matte', note: 'No shine. Cotton, wool, most knits.' },
+  { id: 'satin', note: 'Soft sheen that follows the folds.' },
+  { id: 'glossy', note: 'Sharp highlights. Patent, coated, wet look.' },
+  { id: 'metallic', note: 'Reflects like foil or lame.' },
+];
+
+/** Finish of the cloth: matte, satin, glossy or metallic, with a tiny sphere of each. */
+export function FinishRow({ value, onChange }: { value: PieceFabric; onChange: (f: PieceFabric) => void }) {
+  const cur = value.sheen ?? 'matte';
+  const hex = fabricHex(value);
+  return (
+    <div className="finish" role="group" aria-label="Finish">
+      <div className="sublabel">Finish</div>
+      <div className="finish-grid">
+        {FINISHES.map((f) => (
+          <button key={f.id} className={`finish-tile ${cur === f.id ? 'on' : ''}`} aria-pressed={cur === f.id} title={f.note} onClick={() => onChange({ ...value, sheen: f.id })}>
+            <span className={`ball ${f.id}`} style={{ ['--c' as string]: hex }} aria-hidden="true" />
+            <span className="fb-name">{SHEEN_LABEL[f.id]}</span>
+          </button>
+        ))}
+      </div>
+      <p className="group-note" style={{ padding: 0 }}>{FINISHES.find((f) => f.id === cur)?.note}</p>
+    </div>
   );
 }

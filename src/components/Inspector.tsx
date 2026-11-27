@@ -11,6 +11,7 @@ import { faceName, hasCollar } from './editHelpers';
 import ConstructionPanel from './ConstructionPanel';
 import PosePanel from './PosePanel';
 import { BodyFields, BodyType } from './BodyPanel';
+import { SavedBodies } from './BodyPresets';
 import { Disclosure, Seg, SubLabel, TabHeader } from './controls';
 import { copiesOf } from './sides';
 import Icon from './Icon';
@@ -169,6 +170,7 @@ function BodyTab() {
   return (
     <>
       <TabHeader icon="body" title="Body" subtitle={`${project.body.sex === 'female' ? 'Female' : 'Male'} body, measurements, pose and movement`} />
+      <SavedBodies />
       <Disclosure id="body-type" title="Body type" icon="body">
         <BodyType />
       </Disclosure>

@@ -5,6 +5,7 @@ import { BODY_FIELDS, SKIN_TONES, limbGirths } from '../three/body';
 import { fromUnit, toUnit } from '../lib/units';
 import Icon from './Icon';
 import { Row, Switch } from './controls';
+import { SavedBodies } from './BodyPresets';
 
 export function BodyFields({ advanced }: { advanced: boolean }) {
   const { project, units, setBody } = usePick('project', 'units', 'setBody');

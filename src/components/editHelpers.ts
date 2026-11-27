@@ -329,3 +329,4 @@ export function nudgePatch(atts: Attachment[], a: Attachment, dx: number, dy: nu
 
 /* fallbacks for the fabrics agent's exports (categories, patterns, pattern tiles) and picture tracing */
 export * from './shims';
+export * from './uiData';
