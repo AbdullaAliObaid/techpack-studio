@@ -92,7 +92,7 @@ export default function BodyCard() {
           <BodyFields advanced={false} />
           <div className="row wrap">
             <button className="btn small ghost" onClick={resetBody}>Reset</button>
-            <button className="btn small" onClick={() => set({ inspectorTab: 'body', drawer: true })}>More in Body tab</button>
+            <button className="btn small" onClick={() => { useStore.getState().setWorkspace('fit'); set({ drawer: true }); }}>More in Fit</button>
           </div>
         </div>
       )}

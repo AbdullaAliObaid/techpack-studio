@@ -8,7 +8,6 @@ import { uid } from '../lib/units';
 import { exportTechPack } from '../lib/exportPdf';
 import { piecesToDxf } from '../lib/exportDxf';
 import { flushSave, goHome, openNewFlow } from './nav';
-import { WorkspaceSwitch } from './Workspaces';
 import { exportProjectFile, shareProjects } from './uiData';
 
 export default function TopBar() {
@@ -142,10 +141,8 @@ export default function TopBar() {
       <span className="save-state" role="status">{saved ? 'Saved' : 'Saving…'}</span>
 
       <div className="spacer" />
-      <WorkspaceSwitch />
-      <div className="spacer" />
 
-      <button className="icon-btn drawer-toggle" title="Show or hide the inspector" aria-label="Show or hide the inspector" aria-pressed={drawer} onClick={() => set({ drawer: !drawer })}><Icon name="sidebar" /></button>
+      <button className="icon-btn drawer-toggle" title="Show or hide the panel" aria-label="Show or hide the panel" aria-pressed={drawer} onClick={() => set({ drawer: !drawer })}><Icon name="sidebar" /></button>
       <button className="icon-btn" disabled={!past.length} onClick={undo} title="Undo (Ctrl+Z)" aria-label="Undo"><Icon name="undo" /></button>
       <button className="icon-btn" disabled={!future.length} onClick={redo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><Icon name="redo" /></button>
       <div className="seg" role="group" aria-label="Units">

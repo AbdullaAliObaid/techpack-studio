@@ -5,13 +5,26 @@ import type { Attachment, Band, Outline, Sheen, ShapeLayer } from '../data/edits
 import type { Piece } from '../data/presets';
 import { uid } from '../lib/units';
 
-export type Workspace = 'construct' | 'design' | 'finish' | 'techpack';
-export const WORKSPACES: { id: Workspace; label: string; icon: string; key: string }[] = [
-  { id: 'construct', label: 'Construct', icon: 'pattern', key: '1' },
-  { id: 'design', label: 'Design', icon: 'design', key: '2' },
-  { id: 'finish', label: 'Finish', icon: 'sparkle', key: '3' },
-  { id: 'techpack', label: 'Tech pack', icon: 'specs', key: '4' },
+export type Workspace = 'shape' | 'seams' | 'fabric' | 'paint' | 'design' | 'trims' | 'fit' | 'outfit' | 'finish' | 'review' | 'techpack';
+/** In bar order. `key` is the Cmd or Ctrl number shortcut (the visible ones are numbered in order, see workspaceKey). */
+export const WORKSPACES: { id: Workspace; label: string; icon: string; blurb: string }[] = [
+  { id: 'shape', label: 'Shape', icon: 'pattern', blurb: 'Reshape pieces and type exact numbers' },
+  { id: 'seams', label: 'Seams', icon: 'seams', blurb: 'How the pieces are sewn together' },
+  { id: 'fabric', label: 'Fabric', icon: 'grid', blurb: 'Cloth, colour and pattern, outside and inside' },
+  { id: 'paint', label: 'Paint', icon: 'block', blurb: 'Edge paint and bands across the garment' },
+  { id: 'design', label: 'Design', icon: 'design', blurb: 'Patches, prints, embroidery and appliques' },
+  { id: 'trims', label: 'Trims', icon: 'hardware', blurb: 'Hardware, tags, pockets, patches and straps' },
+  { id: 'fit', label: 'Fit', icon: 'body', blurb: 'Body, pose, movement and stretch risk' },
+  { id: 'outfit', label: 'Outfit', icon: 'layers', blurb: 'Garments worn together' },
+  { id: 'finish', label: 'Finish', icon: 'sparkle', blurb: 'Wash and distressing' },
+  { id: 'review', label: 'Review', icon: 'specs', blurb: 'Specs, fit table, seam report and notes' },
+  { id: 'techpack', label: 'Tech pack', icon: 'share', blurb: 'Preview and export' },
 ];
+/** The tabs on show: Outfit only while an outfit is open. */
+export const visibleWorkspaces = (outfit: boolean) => WORKSPACES.filter((w) => w.id !== 'outfit' || outfit);
+export const isWorkspace = (v: unknown): v is Workspace => WORKSPACES.some((w) => w.id === v);
+/** Old saved ids: Construct became Shape. */
+export const normaliseWorkspace = (v: unknown): Workspace => (v === 'construct' ? 'shape' : isWorkspace(v) ? v : 'shape');
 
 const WS_KEY = 'tech-it-workspaces';
 export function readWorkspaceMap(): Record<string, Workspace> {

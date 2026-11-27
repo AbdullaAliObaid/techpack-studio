@@ -37,7 +37,11 @@ function Preview({ t, host }: { t: AttachTemplate; host: string }) {
   );
 }
 
-export default function DesignLibrary() {
+const TRIM_KINDS = ['pocket', 'patch', 'strap', 'hardware', 'label'];
+
+/** Trims workspace: hardware, tags, pockets, patches and straps. Design workspace (insert): prints, embroidery, appliques and photos. */
+export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | 'trims' }) {
+  const trims = mode === 'trims';
   const { project, selPiece, selInstance, selAttachment, showBothSides, addAttachment, set, units, designFace, openDesign } = usePick('project', 'selPiece', 'selInstance', 'selAttachment', 'showBothSides', 'addAttachment', 'set', 'units', 'designFace', 'openDesign');
   const [opts, setOpts] = useState<DesignOpts>({ ...DEFAULT_OPTS, fabric: { id: 'canvas', color: 2 } });
   const [cutKind, setCutKind] = useState<Kind4>('pocket');
@@ -51,6 +55,7 @@ export default function DesignLibrary() {
   reg.current = new Map();
 
   const atts = project.edits?.attachments ?? [];
+  const listed = atts.filter((a) => TRIM_KINDS.includes(a.kind) === trims);
   const collar = project.edits?.collar ?? 'down';
   const host = designHost(project.pieces, atts, selPiece, selAttachment);
   const piece = host?.piece;
@@ -174,23 +179,23 @@ export default function DesignLibrary() {
         )}
       </div>
 
-      <div className="photo-card">
+      {!trims && <div className="photo-card">
         <span className="att-ico"><Icon name="print" size={18} /></span>
         <div className="att-text"><span className="att-name">From a photo</span><small>Print it, stitch it or cut it from fabric. You can also drag a picture onto the chart or the 3D view, or paste one.</small></div>
         <label className="btn small photo-pick">
           Choose a photo
           <input type="file" accept="image/*" aria-label="Choose a photo to insert" onChange={(e) => { const f = imageFileOf(e.target.files); if (f) openPhoto(f); e.target.value = ''; }} />
         </label>
-      </div>
+      </div>}
 
-      <Disclosure id="design-cut" title="Cut and sew" icon="scissors">
-        <Seg label="Kind of cloth piece" value={cutKind} onChange={(k) => { setCutKind(k); setArmedKey(null); }}
-          options={[{ id: 'pocket', label: 'Pocket' }, { id: 'patch', label: 'Patch' }, { id: 'strap', label: 'Strap' }, { id: 'applique', label: 'Appliqué' }]} />
-        <p className="group-note">{KIND_BLURB[cutKind]}</p>
-        {cutKind === 'pocket' && tiles(POCKETS)}
-        {cutKind === 'patch' && tiles(PATCHES)}
-        {cutKind === 'strap' && tiles(STRAPS)}
-        {cutKind === 'applique' && (
+      <Disclosure id={trims ? 'trims-cut' : 'design-cut'} title={trims ? 'Pockets, patches and straps' : 'Appliqué, cut and sewn'} icon={trims ? 'pocket' : 'scissors'} openFirst>
+        {trims && <Seg label="Kind of cloth piece" value={cutKind === 'applique' ? 'pocket' : cutKind} onChange={(k) => { setCutKind(k); setArmedKey(null); }}
+          options={[{ id: 'pocket', label: 'Pocket' }, { id: 'patch', label: 'Patch' }, { id: 'strap', label: 'Strap' }]} />}
+        {trims && <p className="group-note">{KIND_BLURB[cutKind === 'applique' ? 'pocket' : cutKind]}</p>}
+        {trims && cutKind === 'pocket' && tiles(POCKETS)}
+        {trims && cutKind === 'patch' && tiles(PATCHES)}
+        {trims && cutKind === 'strap' && tiles(STRAPS)}
+        {!trims && (
           <>
             <SubLabel>Shapes</SubLabel>
             <div className="tile-grid">{SINGLE_SHAPES.map((s) => { const t = appliqueShape(s); return tile(t.key, t.label, () => t.make(opts)); })}</div>
@@ -204,7 +209,7 @@ export default function DesignLibrary() {
         <div className="frow stack"><span className="lbl">Stitch thread</span><ColorField label="Stitch thread" value={opts.thread} onChange={(c) => setOpts({ ...opts, thread: c })} /></div>
       </Disclosure>
 
-      <Disclosure id="design-embroidery" title="Embroidery" icon="embroidery">
+      {!trims && <Disclosure id="design-embroidery" title="Embroidery" icon="embroidery">
         <p className="group-note">Thread stitched into the piece. One shape or word at a time.</p>
         <SubLabel>Shapes</SubLabel>
         <div className="tile-grid">{THREAD_SHAPES.map((s) => { const t = embroideryShape(s); return tile(t.key, t.label, () => t.make(opts)); })}</div>
@@ -213,9 +218,9 @@ export default function DesignLibrary() {
         <div className="tile-grid">{(() => { const t = embroideryText(); return tile(t.key, `"${clean(opts.text)}"`, () => t.make(opts)); })()}</div>
         <SubLabel>Thread colour</SubLabel>
         <ColorField label="Thread colour" value={opts.thread} onChange={(c) => setOpts({ ...opts, thread: c })} />
-      </Disclosure>
+      </Disclosure>}
 
-      <Disclosure id="design-print" title="Print" icon="print">
+      {!trims && <Disclosure id="design-print" title="Print" icon="print">
         <p className="group-note">Ink printed onto the piece. Add a second stripe by adding it again.</p>
         <SubLabel>Shapes</SubLabel>
         <div className="tile-grid">{THREAD_SHAPES.map((s) => { const t = printShape(s); return tile(t.key, t.label, () => t.make(opts)); })}</div>
@@ -227,9 +232,9 @@ export default function DesignLibrary() {
         </div>
         <SubLabel>Ink colour</SubLabel>
         <ColorField label="Ink colour" value={opts.ink} onChange={(c) => setOpts({ ...opts, ink: c })} />
-      </Disclosure>
+      </Disclosure>}
 
-      <Disclosure id="design-tags" title="Tags" icon="tag">
+      {trims && <Disclosure id="design-tags" title="Tags" icon="tag">
         <p className="group-note">A clothing tag with your design. Goes on the inside by default.</p>
         <button className="btn primary wide" onClick={addNeckTag}><Icon name="tag" size={16} /> Neck tag, inside the back neck</button>
         <SubLabel>Type</SubLabel>
@@ -242,9 +247,9 @@ export default function DesignLibrary() {
         <Row label="Height"><LenInput units={units} label="Tag height" value={tag.h} min={1} max={10} onChange={(h) => setTag({ ...tag, h })} /></Row>
         <Row label="Tag text" htmlFor="tag-text-new"><input id="tag-text-new" className="txt" maxLength={24} value={tag.text} onChange={(e) => setTag({ ...tag, text: e.target.value })} /></Row>
         <button className="btn wide" disabled={!host} onClick={() => addTo(tagAttachment(tag))}><Icon name="plus" size={16} /> Add this tag{host ? ` to ${targetLabel}` : ''}</button>
-      </Disclosure>
+      </Disclosure>}
 
-      <Disclosure id="design-hardware" title="Hardware" icon="hardware">
+      {trims && <Disclosure id="design-hardware" title="Hardware" icon="hardware" openFirst>
         <p className="group-note">Metal or plastic trims fixed through the fabric. Each one you place is its own, so you can design every button differently.</p>
         <div className="tile-grid">
           {HARDWARE.map((d) => {
@@ -293,12 +298,12 @@ export default function DesignLibrary() {
           </>
         )}
         <button className="btn wide" disabled={!host} onClick={() => addTo(hardwareAttachment(hwType, hwo))}><Icon name="plus" size={16} /> Add {hwDef.label.toLowerCase()}{host ? ` to ${targetLabel}` : ''}</button>
-      </Disclosure>
+      </Disclosure>}
 
-      <Disclosure id="design-list" title="On this garment" icon="layers" count={atts.length}>
-        {atts.length === 0 && <div className="group-note">Nothing added yet. Drag a tile onto the garment, or pick a piece and double click a tile.</div>}
+      <Disclosure id={trims ? 'trims-list' : 'design-list'} title={trims ? 'Trims on this garment' : 'Designs on this garment'} icon="layers" count={listed.length}>
+        {listed.length === 0 && <div className="group-note">Nothing added yet. Drag a tile onto the garment, or pick a piece and double click a tile.</div>}
         <ul className="att-list">
-          {atts.map((a) => {
+          {listed.map((a) => {
             const parent = atts.find((q) => q.id === a.pieceId);
             const hostPiece = project.pieces.find((p) => p.id === rootPiece(atts, a));
             const c = hostPiece ? copiesOf(project.garment, hostPiece) : 1;

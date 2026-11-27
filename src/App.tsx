@@ -3,14 +3,15 @@ import { allPointsOf } from './components/multi';
 import { useEffect, useRef, useState } from 'react';
 import TopBar from './components/TopBar';
 import PatternPane from './components/PatternPane';
-import Inspector from './components/Inspector';
+import Inspector from './components/Panels';
 import Viewport3D from './components/Viewport3D';
 import PieceFlow from './components/PieceFlow';
 import PhotoSheet from './components/PhotoSheet';
+import { toolAllowed, WS_TOOLS } from './components/workspaceTools';
+import { useOutfit } from './components/uiData';
 import { openPieceFlow } from './components/flow';
 import { EMPTY_SEAM_DRAFT, useStore } from './store';
 import { useApplyTheme } from './components/theme';
-import { useDockMode } from './components/dock';
 import { copiesOf } from './components/sides';
 import Splash from './components/Splash';
 import Home from './components/Home';
@@ -21,8 +22,8 @@ import { installOutfitFallback } from './components/uiData';
 import DesignCanvas from './components/DesignCanvas';
 import DesignLibrary from './components/DesignLibrary';
 import DesignSide from './components/DesignSide';
-import { FinishPanel, TechPackPanel, useWorkspaceKeys } from './components/Workspaces';
-import { newDesign, readWorkspaceMap } from './components/designDoc';
+import { TechPackPanel, WorkspaceBar, useWorkspaceKeys } from './components/Workspaces';
+import { isWorkspace, newDesign, normaliseWorkspace, readWorkspaceMap } from './components/designDoc';
 
 installOutfitFallback();
 
@@ -37,25 +38,31 @@ export default function App() {
   const [stacked, setStacked] = useState(() => window.matchMedia(STACK).matches);
   const [split, setSplit] = useState(() => (window.matchMedia(STACK).matches ? 52 : window.innerWidth < 1300 ? 56 : 52));
   const dragging = useRef(false);
-  const dock = useDockMode();
-  const dockOpen = useStore((s) => s.designOpen);
-  const dockCollapsed = useStore((s) => s.designCollapsed);
-  const dockW = useStore((s) => s.designSize.w);
   const screen = useStore((s) => s.screen);
   const newFrom = useStore((s) => s.newFlow.from);
   const workspace = useStore((s) => s.workspace);
-  const dwTab = useStore((s) => s.dwTab);
+  const designMode = useStore((s) => s.designMode);
+  const inOutfit = !!useOutfit();
   const projectId = useStore((s) => s.project.id);
   useWorkspaceKeys();
   // each project remembers its own workspace; a new project starts a fresh design
   useEffect(() => {
-    useStore.setState({ workspace: readWorkspaceMap()[projectId] ?? 'construct', design: newDesign(), designSel: [], selBand: null });
+    // ?ws=fabric opens that workspace (tests and deep links); otherwise the project's own last one
+    const link = new URLSearchParams(window.location.search).get('ws');
+    useStore.setState({ workspace: isWorkspace(link) ? link : normaliseWorkspace(readWorkspaceMap()[projectId]), design: newDesign(), designSel: [], selBand: null });
     requestAnimationFrame(() => window.dispatchEvent(new Event('tps-fit')));
   }, [projectId]);
-  useEffect(() => { const t = setTimeout(() => window.dispatchEvent(new Event('tps-fit')), 60); return () => clearTimeout(t); }, [workspace, dwTab]);
+  useEffect(() => { const t = setTimeout(() => window.dispatchEvent(new Event('tps-fit')), 60); return () => clearTimeout(t); }, [workspace, designMode]);
+  // each workspace offers its own tools: drop a tool (and half finished drafts) that does not belong, start on the workspace's own
+  useEffect(() => {
+    const st = useStore.getState();
+    if (!toolAllowed(workspace, st.tool)) { st.cancelTools(); st.set({ tool: WS_TOOLS[workspace][0] }); }
+    else if (workspace === 'paint' && st.tool === 'select' && st.paintTab === 'edge') st.set({ tool: 'block' });
+  }, [workspace]);
+  // the Outfit tab only exists while an outfit is open
+  useEffect(() => { if (!inOutfit && workspace === 'outfit') useStore.getState().setWorkspace('shape'); }, [inOutfit, workspace]);
   const prevScreen = useRef(screen);
   useEffect(() => { prevScreen.current = screen; }, [screen]);
-  const extra = !stacked && dock === 'side' && dockOpen ? (dockCollapsed ? 44 : dockW) : 0;
   // portrait iPad: Pattern on top, 3D view below, so both get the full width
   useEffect(() => {
     const m = window.matchMedia(STACK);
@@ -71,7 +78,9 @@ export default function App() {
       const st = useStore.getState();
       if (st.screen !== 'editor') return; // Home and the New flow own the keyboard
       const mod = e.metaKey || e.ctrlKey;
-      if (st.workspace !== 'construct' && !(mod && ['z', 'y'].includes(e.key.toLowerCase()))) return; // other workspaces handle their own keys
+      const chartOn = st.workspace !== 'techpack' && !(st.workspace === 'design' && st.designMode === 'patch');
+      if (!chartOn && !(mod && ['z', 'y'].includes(e.key.toLowerCase()))) return; // the patch designer and the tech pack handle their own keys
+      const ok = (t: Parameters<typeof toolAllowed>[1]) => toolAllowed(st.workspace, t);
       if (st.pieceFlow && e.key.toLowerCase() !== 'escape') return; // the New piece sheet owns the keyboard
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -86,16 +95,16 @@ export default function App() {
       } else if (!mod) {
         const k = e.key.toLowerCase();
         if (k === 'v') st.set({ tool: 'select' });
-        else if (k === 'p') st.set({ tool: 'add' });
+        else if (k === 'p' && ok('add')) st.set({ tool: 'add' });
         else if (k === 'h') st.set({ tool: 'pan' });
         else if (k === 's') st.set({ symmetry: !st.symmetry });
         else if (k === 't') { st.setTotalSymmetry(!st.totalSymmetry); if (!st.totalSymmetry) st.set({ symmetry: true }); }
         else if (k === 'm') st.set({ showMeasure: !st.showMeasure });
-        else if (k === 'j') st.set({ tool: 'seams', inspectorTab: 'construction', seamDraft: EMPTY_SEAM_DRAFT });
-        else if (k === 'l') st.set({ tool: 'pleat', inspectorTab: 'construction' });
-        else if (k === 'n') st.set({ tool: 'note', showNotes: true });
-        else if (k === 'd') st.set({ tool: 'pen', inspectorTab: 'construction', penDraft: [] });
-        else if (k === 'b') st.set({ tool: 'block', inspectorTab: 'construction', blockDraft: null });
+        else if (k === 'j' && ok('seams')) st.set({ tool: 'seams', seamDraft: EMPTY_SEAM_DRAFT });
+        else if (k === 'l' && ok('pleat')) st.set({ tool: 'pleat' });
+        else if (k === 'n' && ok('note')) st.set({ tool: 'note', showNotes: true });
+        else if (k === 'd' && ok('pen')) st.set({ tool: 'pen', penDraft: [] });
+        else if (k === 'b' && ok('block')) st.set({ tool: 'block', paintTab: 'edge', blockDraft: null });
         else if (k === 'f') window.dispatchEvent(new Event('tps-fit'));
         else if (k === 'enter' && st.tool === 'block' && st.blockDraft && !st.blockDraft.rect && st.blockDraft.pts.length >= 3) commitBlockDraft();
         else if (k === 'backspace' && st.tool === 'block' && st.blockDraft && !st.blockDraft.rect) st.set({ blockDraft: st.blockDraft.pts.length > 1 ? { ...st.blockDraft, pts: st.blockDraft.pts.slice(0, -1) } : null });
@@ -141,8 +150,9 @@ export default function App() {
       <Splash />
       <div className="editor-shell" {...inertIf(screen !== 'editor')} data-state={screen === 'editor' ? 'active' : 'hidden'}>
       <TopBar />
-      <OutfitBar />
-      <main className="workspace" data-ws={workspace} data-dw={dwTab}>
+      <WorkspaceBar />
+      {workspace === 'outfit' && <OutfitBar />}
+      <main className="workspace" data-ws={workspace} data-dm={designMode}>
         <div
           className="canvases"
           onPointerMove={(e) => {
@@ -152,7 +162,7 @@ export default function App() {
           }}
           onPointerUp={() => (dragging.current = false)}
         >
-          <div className="pane-slot pattern-slot" style={stacked ? { height: `${split}%` } : { width: `min(calc(${split}% + ${extra}px), calc(100% - 340px))` }}>
+          <div className="pane-slot pattern-slot" style={stacked ? { height: `${split}%` } : { width: `min(${split}%, calc(100% - 340px))` }}>
             <PatternPane />
           </div>
           <div className="dz-slot">
@@ -171,7 +181,6 @@ export default function App() {
           />
           <Viewport3D />
           <DesignSide />
-          <FinishPanel />
           <TechPackPanel />
         </div>
         <Inspector />

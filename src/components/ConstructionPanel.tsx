@@ -5,11 +5,12 @@ import { builtinSeams } from '../sim/seams';
 import { outlineLength } from '../lib/geometry';
 import { fmt } from '../lib/units';
 import type { EdgeRef, PleatType } from '../data/edits';
-import { Disclosure, LenInput, Row, Seg, Switch, TabHeader } from './controls';
+import { Disclosure, LenInput, Row, Seg, Switch } from './controls';
 import { copiesOf, instanceName } from './sides';
 import { openPieceFlow } from './flow';
 import Icon from './Icon';
-import ColourBlockPanel from './ColourBlockPanel';
+import { CollarControl } from './Inspector';
+import { hasCollar } from './editHelpers';
 
 /** Click handler for the Seams tool: first click starts a range, second ends it. A and B fill in turn. `instance` is the copy that was clicked. */
 export function pickSeamPoint(pieceId: string, pointId: string, instance?: number) {
@@ -77,8 +78,6 @@ export default function ConstructionPanel() {
 
   return (
     <>
-      <TabHeader icon="construction" title="Construction" subtitle="How the pieces are cut and sewn together." />
-
       {seamHint && (
         <div className="callout-box" role="status"><Icon name="check" size={16} /><span>{seamHint}</span></div>
       )}
@@ -113,12 +112,8 @@ export default function ConstructionPanel() {
           <button className="btn block" onClick={() => useStore.getState().cancelTools()}>Done</button>
         </section>
       )}
-      {tool === 'pen' && <PenCard />}
-      {tool === 'block' && <ColourBlockPanel />}
 
-      <PiecesSection />
-
-      <Disclosure id="con-seams" title="Seams" icon="seams" count={rows.length}>
+      <Disclosure id="con-seams" title="Seams, sewn or open" icon="seams" count={rows.length} openFirst>
         {seams.length === 0 && <div className="group-note">This garment has no seam list yet. Custom seams still work.</div>}
         <ul className="seam-list">
           {rows.map((s) => {
@@ -135,7 +130,7 @@ export default function ConstructionPanel() {
         <p className="fit-note">Turn a seam off to leave that edge open. The 3D garment follows.</p>
       </Disclosure>
 
-      <Disclosure id="con-join" title="Join seams" icon="seams" count={edits?.customSeams.length ?? 0}>
+      <Disclosure id="con-join" title="Join seams by hand" icon="seams" count={edits?.customSeams.length ?? 0}>
         <p className="group-note">Sew any stretch of one piece to a stretch of another. Each pick belongs to the side of the piece you click.</p>
         <button className="btn block" disabled={joining} onClick={() => set({ tool: 'seams', seamDraft: EMPTY_SEAM_DRAFT })}><Icon name="seams" size={16} /> {joining ? 'Joining, see the card above' : 'Start joining'}</button>
         {!!edits?.customSeams.length && (
@@ -157,6 +152,14 @@ export default function ConstructionPanel() {
       </Disclosure>
 
       <PleatSection />
+
+      {hasCollar(project.pieces) && (
+        <Disclosure id="con-closures" title="Collar position" icon="collar">
+          <CollarControl />
+        </Disclosure>
+      )}
+
+      <PiecesSection />
     </>
   );
 }
@@ -274,7 +277,7 @@ function PiecesSection() {
 }
 
 /** The pen tool's controls: a card above the sections so nothing has to be opened. */
-function PenCard() {
+export function PenCard() {
   const { set, penDraft, penSnap } = usePick('set', 'penDraft', 'penSnap');
   return (
     <section className="tool-card" aria-label="Drawing a new piece">

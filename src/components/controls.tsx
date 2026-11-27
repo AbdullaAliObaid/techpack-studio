@@ -100,10 +100,10 @@ export function LenInput({ value, onChange, label, min, max, units, step }: { va
  * Every section starts closed. It opens only when the user presses its arrow, and that choice is remembered for this
  * session only. Nothing opens a section for the user: picking an option inside one never expands another.
  */
-export function Disclosure({ id, title, icon, count, action, children }: {
-  id: string; title: string; icon: string; count?: number; action?: ReactNode; children: ReactNode;
+export function Disclosure({ id, title, icon, count, action, children, openFirst }: {
+  id: string; title: string; icon: string; count?: number; action?: ReactNode; children: ReactNode; openFirst?: boolean;
 }) {
-  const open = useStore((s) => !!s.sections[id]);
+  const open = useStore((s) => s.sections[id] ?? !!openFirst);
   const setSection = useStore((s) => s.setSection);
   return (
     <section className={`dsc ${open ? 'open' : ''}`}>

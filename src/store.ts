@@ -83,7 +83,7 @@ export interface OutfitItem {
 export interface Outfit { id: string; name: string; body: Body; items: OutfitItem[]; updatedAt: number }
 
 export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen' | 'note' | 'block';
-/** Colour block tool settings (src/data/colourBlock.ts) */
+/** Edge paint tool settings (src/data/colourBlock.ts) */
 export interface BlockSettings { colour: string; sheen: import('./data/edits').Sheen; look: 'dyed' | 'printed'; h: number; mode: 'rect' | 'poly' }
 /** a block being drawn: world points, on the copy it started on */
 export interface BlockDraft { key: string; pts: Pt[]; rect: boolean }
@@ -258,7 +258,7 @@ export interface State {
   measureFlash: { n: number; keys: string[]; points: string[] } | null;
   colourBlock: BlockSettings;
   blockDraft: BlockDraft | null;
-  /** add colour blocks (one undo step) and select the first */
+  /** add edge paint blocks (one undo step) and select the first */
   addColourBlocks: (list: Omit<Attachment, 'id'>[]) => void;
   movePiece: (pieceId: string, offset: Pt) => void;
   insertPoint: (pieceId: string, seg: number, t: number) => string | null;
@@ -319,6 +319,10 @@ export interface State {
   designSel: string[];
   /** Design workspace right panel: the patch layers or the band tool */
   dwTab: 'layers' | 'band';
+  /** Design workspace: the patch designer, or inserting a ready made design on the garment */
+  designMode: 'patch' | 'insert';
+  /** Paint workspace right panel: Edge paint or Bands across the garment */
+  paintTab: 'edge' | 'bands';
   selBand: string | null;
   addBand: (b?: Partial<Omit<Band, 'id'>>) => string;
   updateBand: (id: string, patch: Partial<Band>) => void;
@@ -721,7 +725,9 @@ export const useStore = create<State>((set, get) => {
     loadProject: (p) => set((s) => ({ project: withCollar({ ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1, sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' })),
     rename: (name) => set((s) => ({ project: { ...s.project, name, updatedAt: Date.now() } })),
 
-    workspace: 'construct',
+    workspace: 'shape',
+    designMode: 'patch',
+    paintTab: 'edge',
     setWorkspace: (w) => { const m = { ...readWorkspaceMap(), [get().project.id]: w }; writeWorkspaceMap(m); set({ workspace: w }); },
     design: newDesign(),
     setDesign: (patch) => set((s) => ({ design: { ...s.design, ...(typeof patch === 'function' ? patch(s.design) : patch) } })),
