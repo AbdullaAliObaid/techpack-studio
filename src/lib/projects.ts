@@ -1,4 +1,4 @@
-import type { BodyPreset, Project } from '../store';
+import type { BodyPreset, Outfit, Project } from '../store';
 import { useStore } from '../store';
 import { migrateGarment } from '../data/catalog';
 import { FEMALE_BODY, MALE_BODY } from '../three/body';
@@ -50,6 +50,35 @@ export function deleteProject(id: string) {
   const all = { ...readAll() };
   delete all[id];
   writeAll(all);
+}
+
+// ---- outfits: several saved garment projects worn together (src/sim/outfit.ts). Stored as a list; each item points
+// at a saved project by id, so a garment edited on its own shows up changed in every outfit that wears it ----
+
+const OUTFITS_KEY = 'techit.outfits.v1';
+
+function readOutfits(): Outfit[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(OUTFITS_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((o: Outfit) => o && typeof o.id === 'string' && Array.isArray(o.items)) : [];
+  } catch {
+    return [];
+  }
+}
+function writeOutfits(list: Outfit[]) {
+  try { localStorage.setItem(OUTFITS_KEY, JSON.stringify(list)); } catch { /* storage full or blocked */ }
+}
+
+/** Saved outfits, newest first. Items whose project is gone are left out. */
+export function listOutfits(): Outfit[] {
+  const have = new Set(Object.keys(readAll()));
+  return readOutfits().map((o) => ({ ...o, items: o.items.filter((i) => have.has(i.projectId)) })).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+export function saveOutfit(o: Outfit) {
+  writeOutfits([...readOutfits().filter((q) => q.id !== o.id), o]);
+}
+export function deleteOutfit(id: string) {
+  writeOutfits(readOutfits().filter((q) => q.id !== id));
 }
 
 /** Projects that came from someone else's shared file. */

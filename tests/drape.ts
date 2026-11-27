@@ -1,5 +1,5 @@
 // Run: npx tsx tests/drape.ts   (every catalog style drapes on the default body; BODY=female for the female preset)
-// Sections (argv[2]): a style id, 'edits', 'collar', 'collar-edits'.
+// Sections (argv[2]): a style id, 'edits', 'collar', 'collar-edits', 'hats'.
 // Checks: no NaN, seams closed, strain sane, the garment stays where it belongs (hats on the head, pants on the hips).
 import { makePreset } from '../src/data/presets';
 import { CATALOG } from '../src/data/catalog';
@@ -10,7 +10,8 @@ import type { Attachment, Edits } from '../src/data/edits';
 import type { Piece } from '../src/data/presets';
 import type { StyleId } from '../src/data/catalog';
 import { calibratedField } from '../src/three/bodyField';
-import { meshField, GridCollider } from '../src/three/mesher';
+import { meshField, GridCollider, PosedCollider } from '../src/three/mesher';
+import { hatPose } from './hatLib';
 
 const DEFAULT_BODY = process.env.BODY === 'female' ? FEMALE_BODY : MALE;
 const FF = calibratedField(DEFAULT_BODY);
@@ -382,6 +383,23 @@ if (!only || only === 'collar-edits') {
       const r = run(assemble(st, re, DEFAULT_BODY, SP, collider, E({ collar: 'down' }))!);
       verdict(r.ok, `${st} collar down, 4 cm longer then regraded: ${r.msg}`);
     }
+  }
+}
+
+// ---- hats stay on: a long settle on the posed collider the app uses, the crown centred on the head, the brim level ----
+if (!only || only === 'hats') {
+  console.log('\n== hats ==');
+  const grid = meshField(FF).grid;
+  for (const g of ['bucket-hat', 'cap'] as StyleId[]) {
+    const col = new PosedCollider(grid, [FF.f.ankleH + 6, FF.f.crotchH + 1], f);
+    const G = assemble(g, makePreset(g, DEFAULT_BODY), DEFAULT_BODY, SP, col)!;
+    G.sim.awake = true; // never sleeps: any slow creep would show
+    for (let i = 0; i < 60; i++) G.sim.step();
+    const a = hatPose(G, f);
+    for (let i = 0; i < 1140; i++) G.sim.step();
+    const b = hatPose(G, f);
+    const ok = b.axis < 2 && Math.abs(b.y - a.y) < 1 && b.lr < 1 && b.fb < 4 && b.y > f.headBandH;
+    verdict(ok, `${g.padEnd(11)} after 20 s: crown centre ${b.axis.toFixed(2)} cm off the head axis, moved ${(b.y - a.y).toFixed(2)} cm, brim tilt left/right ${b.lr.toFixed(2)} cm, front/back ${b.fb.toFixed(2)} cm`);
   }
 }
 

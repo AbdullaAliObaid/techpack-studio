@@ -1,5 +1,7 @@
 // Cloth simulation runs here, off the main thread, so the editor stays smooth while fabric drapes.
-import { assemble, displayPositions, warmStart, type Garment3D } from './setup';
+import { assemble, displayPositions, setFloat, warmStart, type Garment3D } from './setup';
+import { assembleOutfit, displayOutfit, mergeDetails, mergeHardware, warmStartOutfit, type Outfit3D } from './outfit';
+import type { Project } from '../store';
 import type { GarmentType, Piece } from '../data/presets';
 import type { Body } from '../three/body';
 import { calibratedField } from '../three/bodyField';
@@ -48,37 +50,65 @@ type BuildMsg =
   /** edits (attachments, seam edits, pleats from src/data/edits.ts) are optional; without them the garment is the plain pattern */
   | { type: 'build'; garment: GarmentType; pieces: Piece[]; body: Body; warm: boolean; spacing: number; edits?: Edits }
   | { type: 'mode'; mode: Mode }
-  | { type: 'attachments'; attachments: Attachment[] }
-  | { type: 'pose'; pose: CustomPose };
+  /** stitching and trims of the attachments; in an outfit, projectId says which garment's they are */
+  | { type: 'attachments'; attachments: Attachment[]; projectId?: string }
+  | { type: 'pose'; pose: CustomPose }
+  /**
+   * An outfit: every garment (its own pieces, fabrics, edits) in one simulation on the outfit body (src/sim/outfit.ts).
+   * items: the garments to show, any order (hidden ones left out by the sender); layer lower = closer to the skin, tuck
+   * for tops. warm: start every garment that was in the last outfit from its drape (send it when one garment was
+   * edited). The 'built' reply has the same fields as for one garment, over all garments, plus `garments`.
+   */
+  | { type: 'outfit'; items: { project: Project; layer: number; tuck?: 'in' | 'out' }[]; body: Body; spacing: number; warm: boolean }
+  /**
+   * The body display is off: the cloth floats in its draped shape (no gravity, no body, no movement) until it is
+   * turned back on, when the normal simulation picks up from that shape. Builds while floating float too.
+   */
+  | { type: 'float'; on: boolean };
 
 let attachments: Attachment[] = [];
+/** outfit: attachments per garment project (the outfit message brings them, an attachments message updates one) */
+const outfitAttachments = new Map<string, Attachment[]>();
 /** what the last posted stitching / hardware were built from; an attachments message rebuilds only what changed */
 let sentKeys = { stitch: '', hardware: '' };
+const stitchOf = (list: Attachment[]) => list.filter((a) => a.kind !== 'hardware' && a.kind !== 'print' && a.kind !== 'embroidery');
+const hardwareOf = (list: Attachment[]) => list.filter((a) => a.kind === 'hardware');
 function postAttachDetails(force = true) {
   if (!G) return;
-  const keys = {
-    stitch: JSON.stringify(attachments.filter((a) => a.kind !== 'hardware' && a.kind !== 'print' && a.kind !== 'embroidery')),
-    hardware: JSON.stringify(attachments.filter((a) => a.kind === 'hardware')),
-  };
+  const O = outfitOf(G);
+  const lists = O ? O.garments.map((g) => outfitAttachments.get(g.projectId) ?? []) : [attachments];
+  const keys = { stitch: JSON.stringify(lists.map(stitchOf)), hardware: JSON.stringify(lists.map(hardwareOf)) };
   const stitch = force || keys.stitch !== sentKeys.stitch, hardware = force || keys.hardware !== sentKeys.hardware;
   sentKeys = keys;
   if (stitch) try {
-    const det = buildAttachmentDetails(G, attachments);
+    // an outfit: per garment, on its own cloth, then shifted to the outfit's particle numbering
+    const det = O
+      ? mergeDetails(O.garments.map((g, k) => buildAttachmentDetails(g.own, lists[k])), O.garments.map((g) => g.start), O.sim.n)
+      : buildAttachmentDetails(G, attachments);
     (self as unknown as Worker).postMessage(det, detailTransfers(det as never));
   } catch (err) {
     console.warn('attachment details failed', err);
   }
   if (hardware) try {
     // hardware trims: anchors on the host cloth per copy (instance), drawn by src/three/Hardware.tsx
-    const hw = buildHardware(G, attachments, G.panelSign ? Array.from(G.panelSign) : outwardSignsHosted(G.panels, G.sim.pos));
+    const one = (g: Garment3D, list: Attachment[]) => buildHardware(g, list, g.panelSign ? Array.from(g.panelSign) : outwardSignsHosted(g.panels, g.sim.pos));
+    const hw = O ? mergeHardware(O.garments.map((g, k) => one(g.own, lists[k])), O.garments.map((g) => g.start), O.sim.n) : one(G, attachments);
     (self as unknown as Worker).postMessage(hw, hardwareTransfers(hw));
   } catch (err) {
     console.warn('hardware failed', err);
   }
 }
 
+const outfitOf = (g: Garment3D | null): Outfit3D | null => (g && 'garments' in g ? (g as Outfit3D) : null);
+const display = (g: Garment3D, out: Float32Array) => { const O = outfitOf(g); if (O) displayOutfit(O, out); else displayPositions(g, out); };
+
+// ---- float: the body display is off, the cloth holds its draped shape in the air ----
+let floating = false;
+/** frames a garment rebuilt while floating is still stepped (seams close, in the air) before it freezes */
+let floatSettle = 0;
+
 function wake() {
-  if (!G || !G.sim.sleeping) return;
+  if (!G || !G.sim.sleeping || floating) return; // floating: frozen until the body is back
   G.sim.sleeping = false;
   G.sim.frames = Math.max(G.sim.frames, G.sim.sewFrames + 1);
   if (timer) clearTimeout(timer);
@@ -92,12 +122,13 @@ function loop(myGen: number) {
   // move the body a little on every substep so fast limbs cannot tunnel through the cloth
   posePrev = poseCur;
   if (mode === 'custom' && poseDistance(poseCur, poseTarget) > 0) { poseCur = stepPose(poseCur, poseTarget, POSE_SPEED / 60); poseMovedAt = simTime; }
-  G.sim.substepHook = (k, n) => applyPose(((k + 1) / n) / 60);
-  G.sim.awake = mode === 'custom' ? poseT < 1.2 || simTime - poseMovedAt < 1.0 : mode !== 'stand' || poseT < 1.2;
+  G.sim.substepHook = floating ? null : (k, n) => applyPose(((k + 1) / n) / 60);
+  G.sim.awake = floating ? false : mode === 'custom' ? poseT < 1.2 || simTime - poseMovedAt < 1.0 : mode !== 'stand' || poseT < 1.2;
+  if (floating && floatSettle-- <= 0) G.sim.sleeping = true;
   G.sim.step();
   simTime += 1 / 60;
   const pos = new Float32Array(G.sim.n * 3);
-  displayPositions(G, pos);
+  display(G, pos);
   let strain: Float32Array | undefined;
   let peak: { ratio: number; strain: number; y: number; over: number } | undefined;
   if (G.sim.frames % 6 === 0 || G.sim.sleeping) {
@@ -150,7 +181,7 @@ async function handle(m: BuildMsg) {
     modeStart = simTime;
     motionPeak = 0;
     motionPeakInfo = null;
-    if (G) {
+    if (G && !floating) {
       G.sim.sleeping = false;
       G.sim.frames = Math.max(G.sim.frames, G.sim.sewFrames + 1);
       if (timer) clearTimeout(timer);
@@ -158,12 +189,23 @@ async function handle(m: BuildMsg) {
     }
     return;
   }
+  if (m.type === 'float') {
+    if (floating === m.on) return;
+    floating = m.on;
+    if (G) {
+      setFloat(G, floating);
+      if (timer) clearTimeout(timer);
+      loop(gen);
+    }
+    return;
+  }
   if (m.type === 'attachments') {
-    attachments = m.attachments;
+    if (m.projectId !== undefined && outfitOf(G)) outfitAttachments.set(m.projectId, m.attachments);
+    else attachments = m.attachments;
     postAttachDetails(false);
     return;
   }
-  if (m.type !== 'build') return;
+  if (m.type !== 'build' && m.type !== 'outfit') return;
   if (timer) clearTimeout(timer);
   const key = JSON.stringify(m.body);
   if (key !== bodyKey || !collider) {
@@ -188,9 +230,21 @@ async function handle(m: BuildMsg) {
   modeStart = simTime + (m.warm ? 0 : 2.0);
   motionPeak = 0;
   motionPeakInfo = null;
-  const next = assemble(m.garment, m.pieces, m.body, m.spacing, collider!, m.edits);
+  let next: Garment3D | null;
+  if (m.type === 'outfit') {
+    const O = assembleOutfit(m.items, m.body, collider!, m.spacing);
+    const prev = outfitOf(G);
+    if (O && m.warm && prev) warmStartOutfit(O, prev);
+    outfitAttachments.clear();
+    for (const it of m.items) outfitAttachments.set(it.project.id, it.project.edits?.attachments ?? []);
+    next = O;
+  } else {
+    next = assemble(m.garment, m.pieces, m.body, m.spacing, collider!, m.edits);
+    if (next && m.warm && G && !outfitOf(G)) warmStart(next, G);
+  }
   if (!next) { G = null; return; }
-  if (m.warm && G) warmStart(next, G);
+  // a build while the body is hidden floats too: the cloth is sewn in the air round where the body was
+  if (floating) { setFloat(next, true); next.sim.sleeping = false; floatSettle = m.warm ? 20 : 90; }
   G = next;
   gen++;
   const index: number[] = [];
@@ -209,7 +263,7 @@ async function handle(m: BuildMsg) {
     groups.push({ start, count: index.length - start, panel: k });
   });
   const pos = new Float32Array(G.sim.n * 3);
-  displayPositions(G, pos);
+  display(G, pos);
   // ---- picking and prints: which pattern piece and pattern point every cloth vertex is ----
   //   pieceIds[k]         id of entry k: a pattern piece id, or for a cloth attachment panel the attachment id
   //                       (a user piece patched on keeps its own piece id)
@@ -255,15 +309,31 @@ async function handle(m: BuildMsg) {
     attachmentId: p.attach.id, start: p.offset, count: p.mesh.uv.length, kind: p.attach.kind,
     hostPieceId: G!.panels[p.attach.host].piece.id, hostInstance: G!.panels[p.attach.host].instance, face: p.attach.face,
   }] : []);
-  const insideFabrics = G.panels.map((p) => (p.attach ? null : m.edits?.insideFabric?.[p.piece.id] ?? null));
+  //   garments            outfits only: per garment { projectId, style, category, layer, tuck, start, count (vertex range),
+  //                       panelStart, panelCount (range of groups / panels / fabrics), indexStart, indexCount (range
+  //                       of the index buffer) }. Piece ids are unique across projects, so pieceIds, vertexPiece and
+  //                       the rest work over the whole outfit as they do for one garment.
+  const inside: Record<string, { id: string; color: number }> = m.type === 'outfit'
+    ? Object.assign({}, ...m.items.map((it) => it.project.edits?.insideFabric ?? {}))
+    : m.edits?.insideFabric ?? {};
+  const insideFabrics = G.panels.map((p) => (p.attach ? null : inside[p.piece.id] ?? null));
+  const O = outfitOf(G);
+  const garments = O?.garments.map((g) => ({
+    projectId: g.projectId, style: g.style, category: g.category, layer: g.layer, ...(g.tuck ? { tuck: g.tuck } : {}),
+    start: g.start, count: g.count, panelStart: g.panelStart, panelCount: g.panelCount,
+    indexStart: groups[g.panelStart]?.start ?? 0,
+    indexCount: g.panelCount ? groups[g.panelStart + g.panelCount - 1].start + groups[g.panelStart + g.panelCount - 1].count - (groups[g.panelStart]?.start ?? 0) : 0,
+  }));
   (self as unknown as Worker).postMessage({
     type: 'built', n: G.sim.n, index: new Uint32Array(index), groups, uv, pos,
     fabrics: G.panels.map((p) => p.piece.fabric),
     pieceIds, vertexPiece, vertexPatternUv, panels, attachmentPanels,
-    panelSign: Array.from(G.panelSign), insideFabrics, collar: G.collar,
+    panelSign: Array.from(G.panelSign), insideFabrics, collar: G.collar, ...(garments ? { garments } : {}),
   }, [vertexPiece.buffer, vertexPatternUv.buffer]);
   try {
-    const det = buildDetails(G, styleById(migrateGarment(m.garment)).details);
+    const det = O
+      ? mergeDetails(O.garments.map((g) => buildDetails(g.own, styleById(migrateGarment(g.style)).details)), O.garments.map((g) => g.start), O.sim.n)
+      : buildDetails(G, styleById(migrateGarment((m as Extract<BuildMsg, { type: 'build' }>).garment)).details);
     (self as unknown as Worker).postMessage(det, detailTransfers(det));
   } catch (err) {
     console.warn('details failed', err);

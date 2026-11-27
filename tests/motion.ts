@@ -8,6 +8,7 @@ import { meshField, PosedCollider } from '../src/three/mesher';
 import { boneMatrices, invert, jointPoints, lerpPose, poseAt, stepPose, POSE_LIMITS, clampPose, type Mode } from '../src/sim/pose';
 import { EMPTY_EDITS, ZERO_POSE, ZERO_SIDE, type CustomPose, type Edits, type SideAngles } from '../src/data/edits';
 import type { Piece } from '../src/data/presets';
+import { hatPose } from './hatLib';
 
 /** jeans with a back pocket and a belt loop on both legs, and a knife pleat drafted into the front */
 function pleatedJeans(): [Piece[], Edits] {
@@ -76,6 +77,30 @@ for (const [g, mode, make] of process.env.CUSTOM_ONLY ? ([] as typeof cases) : c
   if (!ok) fails++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${(make ? g + '+edits' : g).padEnd(12)} ${mode.padEnd(6)} ${ms.toFixed(1)}ms/frame  y ${before[0].toFixed(0)}..${before[1].toFixed(0)} -> ${after[0].toFixed(0)}..${after[1].toFixed(0)}  deep-inside ${(100 * inside / sim.n).toFixed(1)}%  peak (p99.5) ${(worst * 100).toFixed(0)}% of safe, ${(over * 100).toFixed(1)}% of cloth over its safe stretch`);
 }
+// ---- hats stay on through every movement: the crown centre and brim checked in the head's own frame ----
+console.log('\n== hats in motion ==');
+for (const g of process.env.CUSTOM_ONLY ? [] : (['bucket-hat', 'cap'] as StyleId[])) for (const mode of ['walk', 'sit', 'jacks', 'cross', 'hug'] as Mode[]) {
+  const col = new PosedCollider(mesh.grid, [f.ankleH + 6, f.crotchH + 1], f);
+  const G = assemble(g, makePreset(g, DEFAULT_BODY), DEFAULT_BODY, 1.8, col)!;
+  const sim = G.sim;
+  for (let i = 0; i < 200; i++) sim.step();
+  const rest = hatPose(G, f);
+  sim.sleeping = false; sim.awake = true;
+  let worst = 0, worstY = 0, M = boneMatrices(f, poseAt(mode, 0, f));
+  for (let i = 0; i < 300; i++) {
+    sim.substepHook = (k, n) => { const Mk = boneMatrices(f, poseAt(mode, (i + (k + 1) / n) / 60, f)); col.setPose(Mk, invert(Mk)); };
+    sim.step();
+    M = boneMatrices(f, poseAt(mode, (i + 1) / 60, f));
+    const p = hatPose(G, f, invert(M));
+    worst = Math.max(worst, p.axis); worstY = Math.max(worstY, Math.abs(p.y - rest.y));
+  }
+  const end = hatPose(G, f, invert(M));
+  let bad = 0; for (const v of sim.pos) if (!Number.isFinite(v)) bad++;
+  const ok = bad === 0 && worst < 2 && worstY < 1.5 && end.lr < 1;
+  if (!ok) fails++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${g.padEnd(11)} ${mode.padEnd(6)} stays on the head: crown centre up to ${worst.toFixed(2)} cm off the axis, up to ${worstY.toFixed(2)} cm up or down, brim tilt ${end.lr.toFixed(2)} cm, NaN ${bad}`);
+}
+
 // ---- custom pose: the user moves joints with sliders; the body follows at a capped joint speed like the worker ----
 console.log('\n== custom pose ==');
 const D = Math.PI / 180;

@@ -1374,6 +1374,35 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   return { sim, panels: insts.map(({ place: _p, shape: _s, mech: _m, ...rest }) => rest), limits, seamLinks, body: body3d, contact, panelSign, collar: collarIs, foldLayers, ...(layerNear.length ? { layerNear } : {}) };
 }
 
+/**
+ * Float: the body is hidden, so the cloth is shown in its draped shape in the air instead of acting as if a body were
+ * there. On: the cloth is frozen where it is (the solver stops: sim.sleeping), and should it be stepped anyway (a
+ * garment rebuilt while floating is stepped a few frames to close its seams) there is no gravity, no body and no
+ * riding on the head, so nothing falls or sinks. The cloth on its own can not hold a drape (fabric springs back flat
+ * without the body and gravity shaping it), which is why it is frozen rather than simulated. Off: gravity and the body
+ * come back and the drape picks up from that shape. The body collider is kept on the garment (`floatSaved`).
+ */
+export function setFloat(G: Garment3D & { floatSaved?: { collider: ClothSim['collider']; carry: ClothSim['carrySource'] } }, on: boolean) {
+  const sim = G.sim;
+  if (on) {
+    if (!G.floatSaved) G.floatSaved = { collider: sim.collider, carry: sim.carrySource };
+    sim.collider = null;
+    sim.carrySource = null;
+    sim.gravity = 0;
+    sim.vel.fill(0);
+    sim.prev.set(sim.pos);
+    sim.awake = false;
+    sim.sleeping = true;
+  } else if (G.floatSaved) {
+    sim.collider = G.floatSaved.collider;
+    sim.carrySource = G.floatSaved.carry;
+    sim.gravity = -981;
+    delete G.floatSaved;
+    sim.sleeping = false;
+    sim.frames = Math.max(sim.frames, sim.sewFrames + 1);
+  }
+}
+
 /** bone of the head (and upper neck) in the pose rig (src/sim/pose.ts) */
 export const HEAD_BONE = 10;
 

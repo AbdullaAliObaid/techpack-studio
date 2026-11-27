@@ -323,9 +323,11 @@ function lifted(m: THREE.Material, lift: number, sgn: number) {
 interface Slot { canvas: HTMLCanvasElement; tex: THREE.CanvasTexture; sig: string; hgt?: HTMLCanvasElement; hgtTex?: THREE.CanvasTexture }
 interface ThreadSlot { col: HTMLCanvasElement; hgt: HTMLCanvasElement; colTex: THREE.CanvasTexture; hgtTex: THREE.CanvasTexture; sig: string; k: number }
 
-export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometry; pat: VertexPattern; visible: boolean }) {
+/** `all`: every attachment to draw when the cloth holds more than the open project (an outfit); default the open project's */
+export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGeometry; pat: VertexPattern; visible: boolean; all?: Attachment[] }) {
   const { gl, camera, controls } = useThree();
-  const attachments = useStore((s) => s.project.edits?.attachments);
+  const own = useStore((s) => s.project.edits?.attachments);
+  const attachments = all ?? own;
   const sel = useStore((s) => s.selAttachment);
   const list = useMemo(() => attachments ?? [], [attachments]);
   // pictures and pattern tiles decode asynchronously: repaint the artwork that uses them when they have
