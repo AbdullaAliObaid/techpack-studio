@@ -1,20 +1,19 @@
-/* ---------- start screen (tech-it front door): a sheet of woven fabric ---------- */
+/* ---------- start screen (tech-it front door): a calm sheet of fabric ---------- */
 :root {
-  --fabric: #ebe8e1;
-  --fabric-warp: rgba(70, 60, 45, 0.07);
-  --fabric-weft: rgba(70, 60, 45, 0.05);
-  --fabric-slub: rgba(255, 255, 255, 0.35);
-  --fabric-shade: #1b1712;
+  --fabric: oklch(0.935 0.006 85);
+  --fabric-thread: oklch(0.4 0.01 85 / 0.045);
+  --fabric-shade: oklch(0.2 0.01 85);
+  --splash-hair: oklch(0 0 0 / 0.1);
 }
 :root[data-theme='dark'] {
-  --fabric: #35353a;
-  --fabric-warp: rgba(255, 255, 255, 0.045);
-  --fabric-weft: rgba(255, 255, 255, 0.03);
-  --fabric-slub: rgba(255, 255, 255, 0.04);
-  --fabric-shade: #000000;
+  /* depth in dark mode comes from a lighter surface, not a shadow */
+  --fabric: oklch(0.3 0.004 270);
+  --fabric-thread: oklch(1 0 0 / 0.035);
+  --fabric-shade: oklch(0.1 0 0);
+  --splash-hair: oklch(1 0 0 / 0.12);
 }
 
-.splash { position: fixed; inset: 0; z-index: 1000; color: var(--label); font-family: var(--font); overflow: hidden; }
+.splash { position: fixed; inset: 0; height: 100vh; height: 100dvh; z-index: 1000; color: var(--label); font-family: var(--font); overflow: hidden; }
 
 .fab { position: absolute; inset: 0; }
 .fab-half { position: absolute; left: 0; right: 0; height: 50%; }
@@ -23,25 +22,19 @@
 .fab-strip {
   position: absolute; top: 0; bottom: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; will-change: transform;
   background-color: var(--fabric);
-  background-image:
-    repeating-linear-gradient(90deg, var(--fabric-warp) 0 1px, transparent 1px 3px),
-    repeating-linear-gradient(0deg, var(--fabric-weft) 0 1px, transparent 1px 3px),
-    repeating-linear-gradient(90deg, var(--fabric-slub) 0 1px, transparent 1px 17px);
+  background-image: repeating-linear-gradient(90deg, var(--fabric-thread) 0 1px, transparent 1px 4px);
 }
 .fab-top .fab-strip { transform-origin: 50% 0; }
 .fab-bot .fab-strip { transform-origin: 50% 100%; }
-/* soft shading that deepens as a strip turns away */
-.fab-strip i { position: absolute; inset: 0; background: var(--fabric-shade); opacity: 0; pointer-events: none; }
-.fab-top .fab-strip i { background: linear-gradient(to bottom, transparent, var(--fabric-shade) 85%); }
-.fab-bot .fab-strip i { background: linear-gradient(to top, transparent, var(--fabric-shade) 85%); }
-.fab-top .fab-strip::after, .fab-bot .fab-strip::after { content: ''; position: absolute; left: 0; right: 0; height: 1px; background: var(--fabric-warp); }
-.fab-top .fab-strip::after { bottom: 0; }
-.fab-bot .fab-strip::after { top: 0; }
+/* a strip dims a little as it turns away */
+.fab-strip i { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.fab-top .fab-strip i { background: linear-gradient(in oklch to bottom, transparent, var(--fabric-shade)); }
+.fab-bot .fab-strip i { background: linear-gradient(in oklch to top, transparent, var(--fabric-shade)); }
 
-/* the opening behind the blades */
+/* the hairline opening that trails the crossing point, fading out behind it */
 .fab-slit {
-  position: absolute; left: 0; right: 0; top: 50%; height: 26px; margin-top: -13px; pointer-events: none; clip-path: inset(0 100% 0 0);
-  background: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(0, 0, 0, 0.5), transparent 70%);
+  position: absolute; left: 0; top: 50%; width: 200px; height: 2px; margin-top: -1px; pointer-events: none;
+  background: linear-gradient(in oklch to left, oklch(0 0 0 / 0.4), transparent);
 }
 .splash.idle .fab-slit { opacity: 0; }
 
@@ -51,8 +44,8 @@
 }
 .splash-head h1 { margin: 0; font-size: clamp(40px, 6vw, 64px); line-height: 1.05; font-weight: 700; letter-spacing: -0.03em; }
 .splash-head p { margin: 12px 0 0; font-size: clamp(15px, 1.8vw, 19px); line-height: 1.35; color: var(--text-2); letter-spacing: -0.01em; }
-.splash-line { position: absolute; left: 0; top: 50%; width: 100%; height: 1px; overflow: visible; color: var(--text-2); }
-.splash-line line { stroke: currentColor; stroke-width: 3.5; stroke-linecap: round; stroke-dasharray: 0.01 11; }
+.splash-line { position: absolute; left: 0; top: 50%; margin-top: -0.5px; width: 100%; height: 1px; overflow: visible; color: var(--text-2); }
+.splash-line line { stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 0.01 11; }
 .splash-foot {
   position: absolute; left: 0; right: 0; top: calc(50% + 88px); display: flex; justify-content: center;
   transition: opacity 220ms ease, transform 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -60,23 +53,32 @@
 .splash-head.away { opacity: 0; transform: translateY(-14px); }
 .splash-foot.away { opacity: 0; transform: translateY(14px) scale(0.96); pointer-events: none; }
 .splash-start {
-  display: inline-flex; align-items: center; justify-content: center; min-width: 176px; min-height: 52px; padding: 0 32px;
+  position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 176px; min-height: 52px; padding: 0 32px;
   border: 0; border-radius: 14px; background: var(--accent-fill); color: #fff; font: 600 17px/1 var(--font); letter-spacing: -0.01em;
   cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
   transition: filter 150ms ease, transform 150ms ease;
+  animation: splash-pulse 2.8s ease-out 1.2s infinite;
 }
+.splash.cutting .splash-start { animation: none; }
 button.splash-start:hover { filter: brightness(1.08); }
 button.splash-start:active { transform: scale(0.97); filter: brightness(0.94); }
 button.splash-start:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 14px; }
+@keyframes splash-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--accent-fill) 45%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 16px color-mix(in oklch, var(--accent-fill) 0%, transparent); }
+}
 
-.splash-scissors { position: absolute; top: 50%; width: 0; height: 0; will-change: transform; color: var(--label); filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.25)); }
-.splash-scissors circle { stroke: var(--fabric); }
+/* the scissors: the crossing point is the element origin, which sits exactly on the dotted line (top 50%) */
+.splash-scissors { position: absolute; top: 50%; width: 0; height: 0; will-change: transform; color: var(--label); pointer-events: none; }
+.splash-scissors.over { filter: drop-shadow(0 1px 1px oklch(0 0 0 / 0.22)); }
+:root[data-theme='dark'] .splash-scissors.over { filter: none; }
 
 /* reduced motion: a short crossfade instead of the cut */
 .splash.rm.cutting { animation: splash-fade 240ms ease forwards !important; pointer-events: none; }
 @keyframes splash-fade { to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .splash.rm.cutting { animation: splash-fade 240ms ease forwards !important; }
+  .splash-start { animation: none; }
   .splash-start, .splash-head, .splash-foot { transition: none; }
 }
 @media (max-width: 600px) { .splash-head { bottom: calc(50% + 72px); } .splash-foot { top: calc(50% + 72px); } }

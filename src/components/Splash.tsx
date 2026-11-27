@@ -1,43 +1,60 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Scissors } from './Logo';
-import '../splash.css';
+import './../splash.css';
 
-/* Start screen. The screen is a sheet of woven fabric with a dotted cut line across the middle.
-   Press Start: the scissors travel along the line, and the sheet opens behind the blades, strip by strip.
-   The two halves then fold back like cloth flaps and reveal Home, which is already mounted underneath.
-   Everything animates with transforms on plain divs (no canvas, no libraries). Reduced motion: a quick crossfade. */
+/* Start screen. A calm sheet of fabric with a dotted cut line across the middle and the tech-it scissors resting on it.
+   Press Start: the scissors glide along the line in one eased motion, the blades opening and closing gently on a sine
+   tied to the distance travelled. The lower blade slides under the sheet, the upper blade rides over it, and the sheet
+   parts behind the crossing point, progressively, then both halves fold softly away to reveal Home (already mounted).
+   One requestAnimationFrame clock drives everything from timestamps; nothing is stepped per snip and no CSS transition
+   restarts mid cut. Reduced motion: a quick crossfade. */
 
-const CUT_MS = 1800; // from the first snip to the last strip folding away
+const CUT_MS = 1800; // from press to the last strip folding away
 const SCALE = 2.4; // scissor size in px per drawing unit
-const REACH = 45 * SCALE; // pivot to blade tip
-const PERSP = 2200; // gentle: each strip foreshortens about its own hinge, so neighbours never gap
-const FOLD_DEG = 94; // how far a flap turns (past 90 so it ends edge on and gone)
+const PERSP = 2200; // each strip foreshortens about its own hinge, so neighbours never gap
+const FOLD_DEG = 94; // a little past 90 so a flap ends edge on and gone
+const PITCH = 180; // px of travel per blade cycle
 const clamp = (t: number) => Math.min(1, Math.max(0, t));
 const smoother = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
 
 const skip = () => typeof location !== 'undefined' && new URLSearchParams(location.search).has('nosplash');
 const reduced = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+/* One blade with its handle, same drawing as the logo. Drawn about the pivot at (0,0), blade pointing right. */
+function Blade({ flip, gref }: { flip?: boolean; gref?: React.Ref<SVGGElement> }) {
+  const edge = 5, ring = { cx: -26, cy: 5, rx: 10.5, ry: 7.5 }, sw = 3.4;
+  return (
+    <g ref={gref} transform={`rotate(${flip ? 12 : -12})`}>
+      <g transform={flip ? 'scale(1,-1)' : undefined}>
+        <path d={`M0 ${-edge} L45 -0.6 Q46.5 0 45 0.7 L0 0 Z`} fill="currentColor" />
+        <path d={`M-1 0.2 L${ring.cx + ring.rx - 0.5} ${ring.cy - 1.2}`} stroke="currentColor" strokeWidth={sw} strokeLinecap="round" fill="none" />
+        <ellipse cx={ring.cx} cy={ring.cy} rx={ring.rx} ry={ring.ry} fill="none" stroke="currentColor" strokeWidth={sw} />
+      </g>
+    </g>
+  );
+}
+
 export default function Splash() {
   const [phase, setPhase] = useState<'idle' | 'cutting' | 'done'>(() => (skip() ? 'done' : 'idle'));
   const [size, setSize] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
   const { w, h } = size;
   const rootRef = useRef<HTMLDivElement>(null);
-  const aRef = useRef<SVGGElement>(null);
-  const bRef = useRef<SVGGElement>(null);
-  const scisRef = useRef<HTMLDivElement>(null);
+  const aRef = useRef<SVGGElement>(null); // upper blade
+  const bRef = useRef<SVGGElement>(null); // lower blade, under the sheet
+  const b2Ref = useRef<SVGGElement>(null); // lower blade again, over the sheet, clipped to behind the crossing point
+  const underRef = useRef<HTMLDivElement>(null);
+  const overRef = useRef<HTMLDivElement>(null);
   const lineRef = useRef<SVGSVGElement>(null);
   const slitRef = useRef<HTMLDivElement>(null);
   const strips = useRef<{ top: HTMLElement[]; bot: HTMLElement[]; topShade: HTMLElement[]; botShade: HTMLElement[]; xs: number[] }>({ top: [], bot: [], topShade: [], botShade: [], xs: [] });
   const t0 = useRef(0);
+  const theta = useRef(12);
   const rm = reduced();
-  const px0 = Math.max(64, Math.min(w * 0.12, 200)) + 40 * SCALE; // left margin plus the handles
-  const sw = 16; // strip width in px
+  const px0 = Math.max(64, Math.min(w * 0.12, 200)) + 40 * SCALE; // left margin plus the handles; the crossing point rests here
+  const sw = 10; // strip width in px
   const n = Math.ceil(w / sw);
-  const span = Math.max(360, w * 0.42); // how far the blades travel while one strip folds away
-  const exit = w + 40 * SCALE + 24; // pivot position where the whole scissors are off screen
-  const end = Math.max(exit, w + span);
+  const span = Math.max(520, w * 0.55); // distance behind the blades over which a strip folds away
+  const end = w + span; // crossing point position at the end; the last strip is gone by then
 
   useEffect(() => {
     let raf = 0;
@@ -87,37 +104,46 @@ export default function Splash() {
   useEffect(() => {
     if (phase !== 'done') return;
     const home = document.querySelector<HTMLElement>('.home');
-    if (home) home.style.removeProperty('scale');
+    if (home) { home.style.removeProperty('scale'); home.style.removeProperty('mask-image'); home.style.removeProperty('-webkit-mask-image'); }
     if (!document.activeElement || document.activeElement === document.body) document.querySelector<HTMLElement>('.new-card')?.focus({ preventScroll: true });
   }, [phase]);
 
-  // rAF loop: idle snipping, then the cut
+  // the single clock: idle blade breathing, then the cut
   useEffect(() => {
     if (phase === 'done') return;
     const setTheta = (th: number) => {
+      theta.current = th;
       aRef.current?.setAttribute('transform', `rotate(${-th})`);
       bRef.current?.setAttribute('transform', `rotate(${th})`);
+      b2Ref.current?.setAttribute('transform', `rotate(${th})`);
     };
-    if (rm) { setTheta(17); return; }
+    if (rm) { setTheta(14); return; }
     const homeEl = document.querySelector<HTMLElement>('.home');
     let raf = 0;
     const t00 = performance.now();
+    const theta0 = theta.current;
     const place = (x: number) => {
-      if (scisRef.current) scisRef.current.style.transform = `translate3d(${x - px0}px,0,0)`;
-      // the dotted line only exists ahead of the blades
-      if (lineRef.current) lineRef.current.style.clipPath = `inset(-4px 0 -4px ${Math.max(0, x + 70)}px)`;
+      const tr = `translate3d(${x}px,0,0)`;
+      if (underRef.current) underRef.current.style.transform = tr;
+      if (overRef.current) overRef.current.style.transform = tr;
+      // the dotted line only exists ahead of the crossing point
+      if (lineRef.current) lineRef.current.style.clipPath = `inset(-4px 0 -4px ${Math.max(0, x)}px)`;
+      if (slitRef.current) slitRef.current.style.transform = `translate3d(${x - 200}px,0,0)`;
     };
     place(px0);
     const tick = (now: number) => {
       if (phase === 'idle') {
-        setTheta(12 + 7 * Math.sin(((now - t00) / 2600) * Math.PI * 2)); // a slow open and close
+        setTheta(12 + 6 * Math.sin(((now - t00) / 2800) * Math.PI * 2)); // a slow, quiet open and close
       } else {
-        const t = now - t0.current;
+        const t = Math.max(0, now - t0.current);
         const k = clamp(t / CUT_MS);
-        const e = 0.3 * k + 0.7 * (0.5 - 0.5 * Math.cos(Math.PI * k)); // eases in, then keeps moving
-        const f = px0 + (end - px0) * e; // where the cut is right now
+        const e = 0.12 * k + 0.88 * (0.5 - 0.5 * Math.cos(Math.PI * k)); // one continuous glide, soft at both ends
+        const f = px0 + (end - px0) * e; // the crossing point, on the line
         place(f);
-        setTheta(3 + 15 * (0.5 + 0.5 * Math.cos(((f - px0) / 96) * Math.PI * 2))); // a snip every ~96 px
+        // blade angle: a sine of distance travelled (so snips follow the motion), eased in from the idle angle
+        const target = 10.5 + 7 * Math.cos(((f - px0) / PITCH) * Math.PI * 2);
+        const b = smoother(clamp(t / 320));
+        setTheta(theta0 + (target - theta0) * b);
         const s = strips.current;
         let sum = 0;
         for (let i = 0; i < s.xs.length; i++) {
@@ -125,26 +151,24 @@ export default function Splash() {
           const x = s.xs[i] >= px0 ? s.xs[i] : px0 + (px0 - s.xs[i]) * 0.22;
           const u = smoother(clamp((f - x) / span));
           sum += u;
-          // a small ripple along the sheet, strongest mid fold, so the flaps read as cloth and not as a blind
-          const rip = Math.sin(i * 0.9 + t / 160) * 5 * Math.sin(Math.PI * u);
-          const a = u * FOLD_DEG + rip * (u > 0 && u < 1 ? 1 : 0);
-          const hide = u >= 0.999;
-          const sh = (0.62 * u + 0.1 * Math.sin(i * 1.7 + 1) * Math.sin(Math.PI * u)).toFixed(3);
+          const a = u * FOLD_DEG;
           const top = s.top[i], bot = s.bot[i];
           if (top && bot) {
             top.style.transform = `perspective(${PERSP}px) rotateX(${-a}deg)`;
             bot.style.transform = `perspective(${PERSP}px) rotateX(${a}deg)`;
-            top.style.visibility = bot.style.visibility = hide ? 'hidden' : '';
-            s.topShade[i].style.opacity = s.botShade[i].style.opacity = sh;
+            top.style.visibility = bot.style.visibility = u >= 0.999 ? 'hidden' : '';
+            s.topShade[i].style.opacity = s.botShade[i].style.opacity = (0.4 * u).toFixed(3);
           }
         }
         const g = sum / Math.max(1, s.xs.length);
-        if (slitRef.current) {
-          slitRef.current.style.clipPath = `inset(0 ${Math.max(0, w - f)}px 0 0)`;
-          slitRef.current.style.opacity = String(clamp(1 - g * 1.4));
+        if (slitRef.current) slitRef.current.style.opacity = String(clamp(1 - g * 1.6));
+        if (homeEl) {
+          // Home comes in behind the opening through a soft mask that travels with the cut
+          const m = `linear-gradient(90deg, #000 ${(f - 60).toFixed(1)}px, transparent ${(f + 60).toFixed(1)}px)`;
+          homeEl.style.setProperty('mask-image', m);
+          homeEl.style.setProperty('-webkit-mask-image', m);
+          homeEl.style.scale = String(0.96 + 0.04 * smoother(g));
         }
-        if (homeEl) homeEl.style.scale = String(0.955 + 0.045 * smoother(g));
-        if (rootRef.current) rootRef.current.style.setProperty('--g', g.toFixed(3));
         if (k >= 1) { setPhase('done'); return; }
       }
       raf = requestAnimationFrame(tick);
@@ -166,11 +190,18 @@ export default function Splash() {
 
   if (phase === 'done') return null;
   const cutting = phase === 'cutting';
+  const drawing = (children: React.ReactNode) => (
+    <svg width="1" height="1" style={{ overflow: 'visible', display: 'block' }} focusable="false">
+      <g transform={`scale(${SCALE})`}>{children}</g>
+    </svg>
+  );
   return createPortal(
     <div ref={rootRef} className={`splash ${phase} ${rm ? 'rm' : ''}`} role="dialog" aria-label="tech-it start screen">
+      <div className="fab-slit" ref={slitRef} style={{ transform: `translate3d(${px0 - 200}px,0,0)` }} aria-hidden="true" />
+      {/* lower blade: below the sheet, so it slides under the fabric ahead of the cut */}
+      {!rm && <div ref={underRef} className="splash-scissors under" style={{ left: 0, transform: `translate3d(${px0}px,0,0)` }} aria-hidden="true">{drawing(<Blade flip gref={bRef} />)}</div>}
       <div className="fab">{stripEls}</div>
-      <div className="fab-slit" ref={slitRef} aria-hidden="true" />
-      <svg ref={lineRef} className="splash-line" aria-hidden="true" focusable="false">
+      <svg ref={lineRef} className="splash-line" style={{ clipPath: `inset(-4px 0 -4px ${px0}px)` }} aria-hidden="true" focusable="false">
         <line x1="0" x2="100%" y1="0.5" y2="0.5" />
       </svg>
       <div className={`splash-head ${cutting ? 'away' : ''}`}>
@@ -178,13 +209,19 @@ export default function Splash() {
         <p>Patterns, fit and tech packs in one place</p>
       </div>
       <div className={`splash-foot ${cutting ? 'away' : ''}`}>
-        <button className="splash-start" onClick={start} tabIndex={cutting ? -1 : 0} aria-hidden={cutting} >Start</button>
+        <button className="splash-start" onClick={start} tabIndex={cutting ? -1 : 0} aria-hidden={cutting}>Start</button>
       </div>
+      {/* upper blade rides over the sheet; the lower blade's handle shows again behind the crossing point */}
       {!rm && (
-        <div ref={scisRef} className="splash-scissors" style={{ left: px0 }} aria-hidden="true">
-          <svg width="1" height="1" style={{ overflow: 'visible' }} focusable="false">
-            <g transform={`scale(${SCALE})`}><Scissors aRef={aRef} bRef={bRef} detail /></g>
-          </svg>
+        <div ref={overRef} className="splash-scissors over" style={{ left: 0, transform: `translate3d(${px0}px,0,0)` }} aria-hidden="true">
+          {drawing(
+            <>
+              <defs><clipPath id="splash-behind"><rect x="-80" y="-80" width="78.5" height="160" /></clipPath></defs>
+              <g clipPath="url(#splash-behind)"><Blade flip gref={b2Ref} /></g>
+              <Blade gref={aRef} />
+              <circle className="splash-pivot" r="3.4" fill="currentColor" stroke="var(--fabric)" strokeWidth="1.2" />
+            </>,
+          )}
         </div>
       )}
     </div>,
