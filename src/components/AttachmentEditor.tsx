@@ -13,6 +13,9 @@ import { DEFAULT_ZIPPER } from './Artwork';
 import { copiesOf } from './sides';
 import DrawSheet from './DrawSheet';
 import EmblemEditor from './EmblemEditor';
+import { MethodPicker } from './Insert';
+import { canConvert, convertMethod, isMethod } from './artworkMethod';
+import { DEFAULT_OPTS } from './designLibrary';
 import Icon from './Icon';
 
 export default function AttachmentEditor({ att }: { att: Attachment }) {
@@ -85,6 +88,15 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
         <button className="icon-btn sm danger" aria-label={`Delete ${att.name}`} title="Delete" onClick={() => removeAttachment(att.id)}><Icon name="trash" size={16} /></button>
         <button className="btn small" onClick={() => set({ selAttachment: null, selLayer: null, designTab: 'add' })}>Done</button>
       </div>
+
+      {isMethod(att.kind) && (
+        <div className="frow stack">
+          <span className="lbl">Made as</span>
+          <MethodPicker label="How this design is made" value={att.kind} ink={att.layers[0]?.color ?? DEFAULT_OPTS.ink} thread={att.thread ?? DEFAULT_OPTS.thread} cloth={att.fabric?.hex ?? 'var(--fill)'}
+            disabled={(m) => m !== att.kind && !canConvert(att, m)} onChange={(m) => { const p = convertMethod(att, m, DEFAULT_OPTS); if (p) { useStore.getState().commit(); patch(p); } }} />
+          <span className="group-note" style={{ padding: 0 }}>Same artwork, same place. Pictures stay prints, and a ring cannot be cut from fabric.</span>
+        </div>
+      )}
 
       {canHostDesigns(att.kind) && (
         <button className="btn add-onto" onClick={() => openDesign('add')}>

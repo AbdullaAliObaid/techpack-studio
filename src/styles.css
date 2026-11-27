@@ -1722,3 +1722,35 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
   .mtray-hint { display: none; }
   .mtray-row { flex-wrap: nowrap; }
 }
+
+/* ---------- Insert section: the bright place where things get added ---------- */
+.insert-sec {
+  display: flex; flex-direction: column; gap: 10px; padding: 10px; border-radius: var(--radius-panel);
+  background: linear-gradient(in oklch, var(--accent-soft), color-mix(in oklch, var(--accent-soft) 40%, transparent));
+  border: 1.5px solid color-mix(in oklch, var(--accent) 55%, transparent);
+}
+.insert-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.insert-head h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--accent-text); }
+.insert-ico { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 8px; background: var(--accent-fill); color: #fff; }
+.insert-sub { font-size: 12px; color: var(--label-2); }
+.insert-hint, .insert-notice { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 8px 10px; border-radius: 8px; background: var(--bg-elevated); font-size: 12px; line-height: 1.35; box-shadow: 0 0 0 0.5px var(--separator); }
+.insert-notice { color: var(--orange-text); font-weight: 500; }
+.insert-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.insert-body .target-card { box-shadow: 0 0 0 0.5px var(--separator); }
+.insert-body .photo-card { box-shadow: 0 0 0 0.5px var(--separator); }
+.insert-body .dsc { background: var(--bg-elevated); }
+.tile.pulse { animation: tile-pulse 600ms ease-out; }
+@keyframes tile-pulse { 0% { box-shadow: 0 0 0 0 var(--accent); background: var(--accent-soft); } 100% { box-shadow: 0 0 0 8px transparent; } }
+.method-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.method-tile {
+  position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 2px; min-height: 44px; padding: 4px 4px 6px; border: 0; border-radius: 10px;
+  background: var(--bg-elevated); color: var(--label); text-align: center; box-shadow: 0 0 0 0.5px var(--separator); transition: box-shadow var(--ease);
+}
+.method-tile:disabled { opacity: 0.45; }
+.method-tile.on { box-shadow: 0 0 0 2px var(--accent); }
+.method-tile .mt-art { width: 100%; height: auto; aspect-ratio: 64 / 40; border-radius: 6px; display: block; }
+.method-tile .mt-name { font-size: 12px; font-weight: 600; }
+.method-tile .mt-blurb { font-size: 11px; color: var(--label-2); line-height: 1.2; }
+.method-tile.on .mt-name { color: var(--accent-text); }
+.dz-lib-head.insert-head-bar { background: linear-gradient(in oklch, var(--accent-soft), transparent); }
+@media (prefers-reduced-motion: reduce) { .tile.pulse { animation: none; box-shadow: 0 0 0 2px var(--accent); } }

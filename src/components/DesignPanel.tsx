@@ -4,12 +4,15 @@ import { useRef, useState } from 'react';
 import { useStore, usePick } from '../store';
 import type { Attachment, HardwareType } from '../data/edits';
 import { fabricById } from '../data/fabrics';
+import { SHAPES } from '../lib/shapes';
 import { centroid, samplePoly } from '../lib/geometry';
 import { ArtworkGroup, outlineD } from './Artwork';
 import {
-  appliqueShape, appliqueText, ATTACHMENT_MIME, DEFAULT_OPTS, drawnHardware, embroideryShape, embroideryText, hardwareAttachment, HARDWARE, hwDefaults, newDraft, PATCHES, POCKETS,
-  printShape, printStripe, printText, SINGLE_SHAPES, STRAPS, TAG_DEFAULTS, tagAttachment, THREAD_SHAPES, clean, type DesignOpts, type DrawDraft, type HwOpts, type Kind4, type TagOpts, type Tile,
+  ATTACHMENT_MIME, DEFAULT_OPTS, drawnHardware, hardwareAttachment, HARDWARE, hwDefaults, newDraft, PATCHES, POCKETS,
+  SINGLE_SHAPES, STRAPS, TAG_DEFAULTS, tagAttachment, THREAD_SHAPES, clean, type DesignOpts, type DrawDraft, type HwOpts, type Kind4, type TagOpts, type Tile,
 } from './designLibrary';
+import { makeArtwork, methodAllows, type Art, type Method } from './artworkMethod';
+import { InsertSection, MethodPicker } from './Insert';
 import { designHost, faceName, normaliseOutline, KIND_BLURB, LABEL_TYPES, SEWN_LABEL, type AttachTemplate, KIND_ICON, KIND_LABEL, rootPiece } from './editHelpers';
 import { ColorField, Disclosure, LenInput, NumInput, Row, Seg, SubLabel } from './controls';
 import { FabricPick, FinishPick, SheenPick, ZipperFields } from './TrimFields';
@@ -49,6 +52,8 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
   const [hw, setHw] = useState<Record<HardwareType, HwOpts>>(() => Object.fromEntries(HARDWARE.map((d) => [d.type, hwDefaults(d)])) as Record<HardwareType, HwOpts>);
   const [tag, setTag] = useState<TagOpts>(TAG_DEFAULTS);
   const [armedKey, setArmedKey] = useState<string | null>(null);
+  const [method, setMethod] = useState<Method>('print');
+  const [notice, setNotice] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<DrawDraft | null>(null);
   const [pullerSheet, setPullerSheet] = useState(false);
   const reg = useRef(new Map<string, Armed>());
@@ -67,8 +72,9 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
   /** the face goes on the template, so a dragged tile carries it too */
   const withFace = (t: AttachTemplate): AttachTemplate => (t.face ? t : designFace === 'inside' ? { ...t, face: 'inside' } : t);
 
-  const addTo = (t0: AttachTemplate, at?: { x: number; y: number }) => {
-    if (!host) return;
+  const addTo = (t0: AttachTemplate, at?: { x: number; y: number }): boolean => {
+    if (!host) { setNotice('Tap a piece on the pattern first, or drag this onto one.'); window.setTimeout(() => setNotice(null), 3500); return false; }
+    setNotice(null);
     const t = withFace(t0);
     // a new design lands at the middle of its target, nudged so repeats do not hide each other
     let x = at?.x ?? 0, y = at?.y ?? 0;
@@ -80,6 +86,7 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
     addAttachment({ ...t, pieceId: host.id, x, y, ...(inst !== undefined ? { instance: inst } : {}) });
     set({ selLayer: null, viewFace: t.face === 'inside' ? 'inside' : useStore.getState().viewFace });
     openDesign('edit');
+    return true;
   };
 
   /** one draggable tile: click to pick it, double click to add it, drag it onto the garment */
@@ -90,19 +97,16 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
     return (
       <button
         key={key}
-        className={`tile ${on ? 'on' : ''}`}
+        className={`tile ${on ? 'pulse' : ''}`}
         draggable
-        aria-pressed={on}
-        aria-label={`${label}. Drag onto the garment, or double click to add it.`}
-        title={extra?.title ?? 'Drag onto the garment, or double click to add it'}
-        onClick={() => setArmedKey(key)}
-        onDoubleClick={() => addTo(make())}
+        aria-label={`Insert ${label}. Click to add it to the selected piece, or drag it onto the garment.`}
+        title={extra?.title ?? 'Click to add it to the middle of the piece, or drag it onto the garment'}
+        onClick={() => { if (addTo(make())) flash(key); }}
         onDragStart={(e) => {
           const payload = withFace(make()); // fresh ids for every drag
           e.dataTransfer.setData(ATTACHMENT_MIME, JSON.stringify(payload));
           e.dataTransfer.setData('text/plain', payload.name);
           e.dataTransfer.effectAllowed = 'copy';
-          setArmedKey(key);
         }}
       >
         <Preview t={t} host={hostHex} />
@@ -110,7 +114,13 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
       </button>
     );
   };
+  /** a brief pulse on the tile that just inserted */
+  const flash = (key: string) => { setArmedKey(key); window.setTimeout(() => setArmedKey((k) => (k === key ? null : k)), 700); };
   const tiles = (list: Tile[]) => <div className="tile-grid">{list.map((t) => tile(t.key, t.label, () => t.make(opts)))}</div>;
+
+  /** one artwork tile: the same artwork whatever the method, drawn the way the chosen method makes it */
+  const art = (a: Art, label: string) => tile(`${method}-${a.type === 'shape' ? a.shape : a.type}${a.type === 'text' ? clean(opts.text) : ''}`, label, () => makeArtwork(a, method, opts));
+  const clothHex = (() => { const f = opts.fabric ? fabricById(opts.fabric.id) : null; return f ? (f.colors[opts.fabric!.color] ?? f.colors[0]).hex : hostHex; })();
 
   const hwDef = HARDWARE.find((d) => d.type === hwType)!;
   const hwo = hw[hwType];
@@ -147,11 +157,10 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
     reg.current.set(key, { key, label: `${def.name} tag`, make: () => tagAttachment(o) });
     const on = tag.type === id;
     return (
-      <button key={key} className={`tile ${on ? 'on' : ''}`} draggable aria-pressed={on} title={def.blurb}
-        aria-label={`${def.name} tag. ${def.blurb} Drag onto the garment, or double click to add it.`}
-        onClick={() => { setTag({ ...tag, type: id, color: def.color, sheen: def.sheen }); setArmedKey(key); }}
-        onDoubleClick={() => addTo(tagAttachment({ ...tag, type: id, color: def.color, sheen: def.sheen }))}
-        onDragStart={(e) => { const p = withFace(tagAttachment({ ...tag, type: id, color: id === tag.type ? tag.color : def.color, sheen: id === tag.type ? tag.sheen : def.sheen })); e.dataTransfer.setData(ATTACHMENT_MIME, JSON.stringify(p)); e.dataTransfer.setData('text/plain', p.name); e.dataTransfer.effectAllowed = 'copy'; setTag({ ...tag, type: id, color: def.color, sheen: def.sheen }); setArmedKey(key); }}>
+      <button key={key} className={`tile ${armedKey === key ? 'pulse' : on ? 'on' : ''}`} draggable aria-pressed={on} title={`${def.blurb} Click to add it, or drag it onto the garment.`}
+        aria-label={`Insert ${def.name} tag. ${def.blurb} Click to add it to the selected piece, or drag it onto the garment.`}
+        onClick={() => { const o2 = { ...tag, type: id, color: def.color, sheen: def.sheen }; setTag(o2); if (addTo(tagAttachment(o2))) flash(key); }}
+        onDragStart={(e) => { const p = withFace(tagAttachment({ ...tag, type: id, color: id === tag.type ? tag.color : def.color, sheen: id === tag.type ? tag.sheen : def.sheen })); e.dataTransfer.setData(ATTACHMENT_MIME, JSON.stringify(p)); e.dataTransfer.setData('text/plain', p.name); e.dataTransfer.effectAllowed = 'copy'; setTag({ ...tag, type: id, color: def.color, sheen: def.sheen }); }}>
         <Preview t={tagAttachment({ ...tag, type: id, color: id === tag.type ? tag.color : def.color, sheen: id === tag.type ? tag.sheen : def.sheen, w: 5, h: 2.5 })} host={hostHex} />
         <span>{def.name}</span>
       </button>
@@ -162,6 +171,7 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
 
   return (
     <>
+      <InsertSection notice={notice}>
       {/* where it goes */}
       <div className={`target-card ${host ? '' : 'none'}`}>
         {host ? (
@@ -179,61 +189,50 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
         )}
       </div>
 
-      {!trims && <div className="photo-card">
-        <span className="att-ico"><Icon name="print" size={18} /></span>
-        <div className="att-text"><span className="att-name">From a photo</span><small>Print it, stitch it or cut it from fabric. You can also drag a picture onto the chart or the 3D view, or paste one.</small></div>
-        <label className="btn small photo-pick">
-          Choose a photo
-          <input type="file" accept="image/*" aria-label="Choose a photo to insert" onChange={(e) => { const f = imageFileOf(e.target.files); if (f) openPhoto(f); e.target.value = ''; }} />
-        </label>
-      </div>}
-
-      <Disclosure id={trims ? 'trims-cut' : 'design-cut'} title={trims ? 'Pockets, patches and straps' : 'Appliqué, cut and sewn'} icon={trims ? 'pocket' : 'scissors'} openFirst>
-        {trims && <Seg label="Kind of cloth piece" value={cutKind === 'applique' ? 'pocket' : cutKind} onChange={(k) => { setCutKind(k); setArmedKey(null); }}
-          options={[{ id: 'pocket', label: 'Pocket' }, { id: 'patch', label: 'Patch' }, { id: 'strap', label: 'Strap' }]} />}
-        {trims && <p className="group-note">{KIND_BLURB[cutKind === 'applique' ? 'pocket' : cutKind]}</p>}
-        {trims && cutKind === 'pocket' && tiles(POCKETS)}
-        {trims && cutKind === 'patch' && tiles(PATCHES)}
-        {trims && cutKind === 'strap' && tiles(STRAPS)}
-        {!trims && (
-          <>
-            <SubLabel>Shapes</SubLabel>
-            <div className="tile-grid">{SINGLE_SHAPES.map((s) => { const t = appliqueShape(s); return tile(t.key, t.label, () => t.make(opts)); })}</div>
-            <SubLabel>Letters</SubLabel>
-            {textRow('app-text', 'Block capitals cut from fabric.')}
-            <div className="tile-grid">{(() => { const t = appliqueText(); return tile(t.key, `"${clean(opts.text)}"`, () => t.make(opts)); })()}</div>
-          </>
-        )}
-        <SubLabel>Fabric and stitching</SubLabel>
-        <FabricPick value={opts.fabric} onChange={(fabric) => setOpts({ ...opts, fabric })} />
-        <div className="frow stack"><span className="lbl">Stitch thread</span><ColorField label="Stitch thread" value={opts.thread} onChange={(c) => setOpts({ ...opts, thread: c })} /></div>
-      </Disclosure>
-
-      {!trims && <Disclosure id="design-embroidery" title="Embroidery" icon="embroidery">
-        <p className="group-note">Thread stitched into the piece. One shape or word at a time.</p>
-        <SubLabel>Shapes</SubLabel>
-        <div className="tile-grid">{THREAD_SHAPES.map((s) => { const t = embroideryShape(s); return tile(t.key, t.label, () => t.make(opts)); })}</div>
-        <SubLabel>Letters</SubLabel>
-        {textRow('emb-text', 'Stitched in block capitals.')}
-        <div className="tile-grid">{(() => { const t = embroideryText(); return tile(t.key, `"${clean(opts.text)}"`, () => t.make(opts)); })()}</div>
-        <SubLabel>Thread colour</SubLabel>
-        <ColorField label="Thread colour" value={opts.thread} onChange={(c) => setOpts({ ...opts, thread: c })} />
-      </Disclosure>}
-
-      {!trims && <Disclosure id="design-print" title="Print" icon="print">
-        <p className="group-note">Ink printed onto the piece. Add a second stripe by adding it again.</p>
-        <SubLabel>Shapes</SubLabel>
-        <div className="tile-grid">{THREAD_SHAPES.map((s) => { const t = printShape(s); return tile(t.key, t.label, () => t.make(opts)); })}</div>
-        <SubLabel>Text and stripes</SubLabel>
-        {textRow('prt-text', 'Printed in block capitals.')}
-        <div className="tile-grid">
-          {(() => { const t = printText(); return tile(t.key, `"${clean(opts.text)}"`, () => t.make(opts)); })()}
-          {(() => { const t = printStripe(); return tile(t.key, t.label, () => t.make(opts)); })()}
-        </div>
-        <SubLabel>Ink colour</SubLabel>
-        <ColorField label="Ink colour" value={opts.ink} onChange={(c) => setOpts({ ...opts, ink: c })} />
-      </Disclosure>}
-
+      {!trims && (
+        <>
+          <span className="lbl">How to make it</span>
+          <MethodPicker value={method} onChange={(m) => { setMethod(m); setArmedKey(null); }} ink={opts.ink} thread={opts.thread} cloth={clothHex} />
+          {method === 'print' && <div className="frow stack"><span className="lbl">Ink colour</span><ColorField label="Ink colour" value={opts.ink} onChange={(c) => setOpts({ ...opts, ink: c })} /></div>}
+          {method === 'embroidery' && <div className="frow stack"><span className="lbl">Thread colour</span><ColorField label="Thread colour" value={opts.thread} onChange={(c) => setOpts({ ...opts, thread: c })} /></div>}
+          {method === 'applique' && (
+            <>
+              <SubLabel>Fabric and stitching</SubLabel>
+              <FabricPick value={opts.fabric} onChange={(fabric) => setOpts({ ...opts, fabric })} />
+              <div className="frow stack"><span className="lbl">Stitch thread</span><ColorField label="Stitch thread" value={opts.thread} onChange={(c) => setOpts({ ...opts, thread: c })} /></div>
+            </>
+          )}
+          <SubLabel>Shapes</SubLabel>
+          <div className="tile-grid">{THREAD_SHAPES.filter((sh) => methodAllows({ type: 'shape', shape: sh }, method)).map((sh) => art({ type: 'shape', shape: sh }, SHAPES[sh].name))}</div>
+          <SubLabel>Letters and stripes</SubLabel>
+          <div className="frow stack">
+            <label htmlFor="art-text">Letters or a word</label>
+            <input id="art-text" className="txt" value={opts.text} maxLength={12} placeholder="ABC" onChange={(e) => setOpts({ ...opts, text: e.target.value })} onBlur={() => setOpts({ ...opts, text: clean(opts.text) })} />
+          </div>
+          <div className="tile-grid">{art({ type: 'text' }, `"${clean(opts.text)}"`)}{art({ type: 'stripe' }, 'Stripe')}</div>
+          <div className="photo-card">
+            <span className="att-ico"><Icon name="print" size={18} /></span>
+            <div className="att-text"><span className="att-name">Picture</span><small>Choose a photo, then print it, stitch it or cut it from fabric. You can also drop one on the chart or the 3D view, or paste it.</small></div>
+            <label className="btn small photo-pick">
+              Choose a photo
+              <input type="file" accept="image/*" aria-label="Choose a photo to insert" onChange={(e) => { const f = imageFileOf(e.target.files); if (f) openPhoto(f); e.target.value = ''; }} />
+            </label>
+          </div>
+        </>
+      )}
+      {trims && (
+        <Disclosure id="trims-cut" title="Pockets, patches and straps" icon="pocket" openFirst>
+          <Seg label="Kind of cloth piece" value={cutKind === 'applique' ? 'pocket' : cutKind} onChange={(k) => { setCutKind(k); setArmedKey(null); }}
+            options={[{ id: 'pocket', label: 'Pocket' }, { id: 'patch', label: 'Patch' }, { id: 'strap', label: 'Strap' }]} />
+          <p className="group-note">{KIND_BLURB[cutKind === 'applique' ? 'pocket' : cutKind]}</p>
+          {cutKind === 'pocket' && tiles(POCKETS)}
+          {cutKind === 'patch' && tiles(PATCHES)}
+          {cutKind === 'strap' && tiles(STRAPS)}
+          <SubLabel>Fabric and stitching</SubLabel>
+          <FabricPick value={opts.fabric} onChange={(fabric) => setOpts({ ...opts, fabric })} />
+          <div className="frow stack"><span className="lbl">Stitch thread</span><ColorField label="Stitch thread" value={opts.thread} onChange={(c) => setOpts({ ...opts, thread: c })} /></div>
+        </Disclosure>
+      )}
       {trims && <Disclosure id="design-tags" title="Tags" icon="tag">
         <p className="group-note">A clothing tag with your design. Goes on the inside by default.</p>
         <button className="btn primary wide" onClick={addNeckTag}><Icon name="tag" size={16} /> Neck tag, inside the back neck</button>
@@ -262,11 +261,10 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
             const shown = d.type === 'zipper' ? { ...t, h: 8 } : t; // the zipper tile shows a short stretch
             const S = d.type === 'zipper' ? 9 : Math.max(t.w, t.h) * 1.5;
             return (
-              <button key={key} className={`tile ${on || hwType === d.type ? 'on' : ''}`} draggable aria-pressed={hwType === d.type}
-                aria-label={`${d.label}. Drag onto the garment, or double click to add it.`} title="Drag onto the garment, or double click to add it"
-                onClick={() => { setHwType(d.type); setArmedKey(key); }}
-                onDoubleClick={() => addTo(make())}
-                onDragStart={(e) => { const p = withFace(make()); e.dataTransfer.setData(ATTACHMENT_MIME, JSON.stringify(p)); e.dataTransfer.setData('text/plain', p.name); e.dataTransfer.effectAllowed = 'copy'; setHwType(d.type); setArmedKey(key); }}>
+              <button key={key} className={`tile ${on ? 'pulse' : hwType === d.type ? 'on' : ''}`} draggable aria-pressed={hwType === d.type}
+                aria-label={`Insert ${d.label}. Click to add it to the selected piece, or drag it onto the garment.`} title="Click to add it, or drag it onto the garment. Change its options below or after it is placed."
+                onClick={() => { setHwType(d.type); if (addTo(make())) flash(key); }}
+                onDragStart={(e) => { const p = withFace(make()); e.dataTransfer.setData(ATTACHMENT_MIME, JSON.stringify(p)); e.dataTransfer.setData('text/plain', p.name); e.dataTransfer.effectAllowed = 'copy'; setHwType(d.type); }}>
                 <svg viewBox={`${-S / 2} ${-S / 2} ${S} ${S}`} aria-hidden="true" pointerEvents="none">
                   <ArtworkGroup a={shown} />
                 </svg>
@@ -300,8 +298,10 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
         <button className="btn wide" disabled={!host} onClick={() => addTo(hardwareAttachment(hwType, hwo))}><Icon name="plus" size={16} /> Add {hwDef.label.toLowerCase()}{host ? ` to ${targetLabel}` : ''}</button>
       </Disclosure>}
 
+      </InsertSection>
+
       <Disclosure id={trims ? 'trims-list' : 'design-list'} title={trims ? 'Trims on this garment' : 'Designs on this garment'} icon="layers" count={listed.length}>
-        {listed.length === 0 && <div className="group-note">Nothing added yet. Drag a tile onto the garment, or pick a piece and double click a tile.</div>}
+        {listed.length === 0 && <div className="group-note">Nothing added yet. Click a tile to add it to the selected piece, or drag it onto the garment.</div>}
         <ul className="att-list">
           {listed.map((a) => {
             const parent = atts.find((q) => q.id === a.pieceId);
