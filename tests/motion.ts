@@ -8,6 +8,21 @@ import { meshField, PosedCollider } from '../src/three/mesher';
 import { boneMatrices, invert, jointPoints, lerpPose, poseAt, stepPose, POSE_LIMITS, clampPose, type Mode } from '../src/sim/pose';
 import { EMPTY_EDITS, ZERO_POSE, ZERO_SIDE, type CustomPose, type Edits, type SideAngles } from '../src/data/edits';
 import type { Piece } from '../src/data/presets';
+import { styleEdits } from '../src/data/construction';
+import { locate } from '../src/sim/setup';
+import type { Attachment } from '../src/data/edits';
+import type { Garment3D } from '../src/sim/setup';
+
+/** gap between the two fronts (or placket strips) along centre front, halfway between each pair of buttons (cm) */
+function frontGaps(G: Garment3D, role: string, holes: Attachment) {
+  const O = G.panels.find((p) => !p.attach && p.piece.role === role && p.instance === holes.instance)!;
+  const U = G.panels.find((p) => !p.attach && p.piece.role === role && p.instance !== holes.instance)!;
+  const at3 = (P: typeof O, x: number, y: number) => { const L = locate(P.mesh, { x, y }); return [0, 1, 2].map((k) => L.v.reduce((s2, v, n) => s2 + G.sim.pos[(P.offset + v) * 3 + k] * L.w[n], 0)); };
+  const n = holes.hardware!.count ?? 1, sp = holes.hardware!.spacing ?? 0, y0 = holes.y - ((n - 1) / 2) * sp;
+  const gaps: number[] = [];
+  for (let k = 0; k + 1 < n; k++) { const y = y0 + (k + 0.5) * sp, a = at3(O, 0, y), b = at3(U, 0, y); gaps.push(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])); }
+  return gaps;
+}
 
 /** jeans with a back pocket and a belt loop on both legs, and a knife pleat drafted into the front */
 function pleatedJeans(): [Piece[], Edits] {
@@ -76,6 +91,30 @@ for (const [g, mode, make] of process.env.CUSTOM_ONLY ? ([] as typeof cases) : c
   if (!ok) fails++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${(make ? g + '+edits' : g).padEnd(12)} ${mode.padEnd(6)} ${ms.toFixed(1)}ms/frame  y ${before[0].toFixed(0)}..${before[1].toFixed(0)} -> ${after[0].toFixed(0)}..${after[1].toFixed(0)}  deep-inside ${(100 * inside / sim.n).toFixed(1)}%  peak (p99.5) ${(worst * 100).toFixed(0)}% of safe, ${(over * 100).toFixed(1)}% of cloth over its safe stretch`);
 }
+// ---- fronts that button: held closed by their buttons while moving (gap between the fronts halfway between buttons) ----
+console.log('\n== buttoned fronts in motion ==');
+for (const [g, mode] of ([['button-up', 'walk'], ['jacket', 'jacks'], ['jacket', 'hug'], ['polo', 'walk']] as [StyleId, Mode][]).filter(() => !process.env.CUSTOM_ONLY)) {
+  const col = new PosedCollider(mesh.grid, [f.ankleH + 6, f.crotchH + 1], f);
+  const pieces = makePreset(g, DEFAULT_BODY);
+  const edits = styleEdits(g, pieces, DEFAULT_BODY, { ...EMPTY_EDITS, collar: 'down' });
+  const holes = edits.attachments.find((a) => a.buttonhole)!;
+  const role = g === 'polo' ? 'placket' : 'front';
+  const G = assemble(g, pieces, DEFAULT_BODY, 1.8, col, edits)!;
+  const sim = G.sim;
+  for (let i = 0; i < 200; i++) sim.step();
+  sim.sleeping = false; sim.awake = true;
+  let worst = 0;
+  for (let i = 0; i < 150; i++) {
+    sim.substepHook = (k, n) => { const M = boneMatrices(f, poseAt(mode, (i + (k + 1) / n) / 60, f)); col.setPose(M, invert(M)); };
+    sim.step();
+    if (i % 10 === 9) worst = Math.max(worst, ...frontGaps(G, role, holes));
+  }
+  let bad = 0; for (const v of sim.pos) if (!Number.isFinite(v)) bad++;
+  const ok = bad === 0 && worst < 0.5 && G.buttoned.length === holes.hardware!.count;
+  if (!ok) fails++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${g.padEnd(10)} ${mode.padEnd(6)} ${G.buttoned.length} buttons buttoned, widest gap between buttons while moving ${worst.toFixed(2)} cm, NaN ${bad}`);
+}
+
 // ---- custom pose: the user moves joints with sliders; the body follows at a capped joint speed like the worker ----
 console.log('\n== custom pose ==');
 const D = Math.PI / 180;

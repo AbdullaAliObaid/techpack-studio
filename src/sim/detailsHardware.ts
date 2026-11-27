@@ -75,13 +75,24 @@ export function buildHardware(G: Garment3D, attachments: Attachment[], signs: nu
     return [(dx * e2y - dy * e2x) / det, (e1x * dy - e1y * dx) / det];
   };
 
+  // a button buttoned through a buttonhole shows on top of the buttonhole's piece (the front that laps over), so it is
+  // drawn there, in the button's own design; an unbuttoned button shows where it is sewn, a buttonhole alone draws nothing
+  const buttoned = G.buttoned ?? [];
+  const inHole = new Set(buttoned.map((b) => `${b.button}|${b.buttonIndex}|${b.buttonInstance}`));
+  const holeOf = new Map(buttoned.map((b) => [`${b.hole}|${b.holeIndex}|${b.holeInstance}`, b.button]));
+  const byId = new Map(attachments.map((a) => [a.id, a]));
+  const designOf = new Map<string, number>();
+  const designFor = (a: Attachment) => {
+    let di = designOf.get(a.id);
+    if (di === undefined) { di = designs.length; designs.push({ attachmentId: a.id, hardware: a.hardware!, thread: a.thread || '#d8d2c4', face: a.face ?? 'outside', sheen: a.sheen }); designOf.set(a.id, di); }
+    return di;
+  };
+
   for (const a of attachments) {
-    const hw = a.hardware;
-    if (a.kind !== 'hardware' || !hw) continue;
-    const ti = HW_TYPES.indexOf(hw.type), fi = Math.max(0, HW_FINISHES.indexOf(hw.finish));
-    if (ti < 0) continue;
-    const di = designs.length;
-    designs.push({ attachmentId: a.id, hardware: hw, thread: a.thread || '#d8d2c4', face: a.face ?? 'outside', sheen: a.sheen });
+    const hw0 = a.hardware;
+    if (a.kind !== 'hardware' || !hw0) continue;
+    if (HW_TYPES.indexOf(hw0.type) < 0) continue;
+    const di0 = a.buttonhole ? -1 : designFor(a);
     // trims on the inside face sit on the inner side of the cloth: flip the outward normal
     const fs = a.face === 'inside' ? -1 : 1;
     const r = (a.rotation * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
@@ -90,7 +101,8 @@ export function buildHardware(G: Garment3D, attachments: Attachment[], signs: nu
     const hosts = panels.map((P, k) => ({ P, k })).filter(({ P }) => !P.attach && P.piece.id === a.pieceId && (a.instance === undefined || P.instance === a.instance));
     for (const { P, k } of hosts) {
       const to = (lx: number, ly: number) => ({ x: a.x + c * lx - s * ly, y: a.y + s * lx + c * ly });
-      if (hw.type === 'zipper') {
+      if (hw0.type === 'zipper') {
+        const hw = hw0, fi = Math.max(0, HW_FINISHES.indexOf(hw.finish)), di = di0;
         const len = Math.max(1, a.h);
         const ns = Math.max(2, Math.ceil(len / ZIP_STEP) + 1);
         const start = zTri.length / 3;
@@ -106,9 +118,17 @@ export function buildHardware(G: Garment3D, attachments: Attachment[], signs: nu
         zFinish.push(fi); zSize.push(Math.max(0.5, hw.size)); zOpen.push(hw.open ? 1 : 0); zStart.push(start); zLen.push(got); zDesign.push(di);
         continue;
       }
-      const n = Math.max(1, Math.min(60, Math.round(hw.count ?? 1)));
-      const gap = hw.spacing ?? hw.size * 2.2;
+      const n = Math.max(1, Math.min(60, Math.round(hw0.count ?? 1)));
+      const gap = hw0.spacing ?? hw0.size * 2.2;
       for (let i = 0; i < n && kind.length < MAX_ITEMS; i++) {
+        // the trim drawn here: a button not in a hole, or the button buttoned into this buttonhole
+        let hw = hw0, di = di0;
+        if (a.buttonhole) {
+          const b = byId.get(holeOf.get(`${a.id}|${i}|${P.instance}`) ?? '');
+          if (!b?.hardware) continue;
+          hw = b.hardware; di = designFor(b);
+        } else if (inHole.has(`${a.id}|${i}|${P.instance}`)) continue;
+        const ti = HW_TYPES.indexOf(hw.type), fi = Math.max(0, HW_FINISHES.indexOf(hw.finish));
         const p = to((i - (n - 1) / 2) * gap, 0);
         const l = loc(k).at(p.x, p.y);
         if (!l) continue;

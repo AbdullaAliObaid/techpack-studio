@@ -11,6 +11,7 @@ import type { Piece } from '../src/data/presets';
 import type { StyleId } from '../src/data/catalog';
 import { calibratedField } from '../src/three/bodyField';
 import { meshField, GridCollider } from '../src/three/mesher';
+import { styleEdits } from '../src/data/construction';
 
 const DEFAULT_BODY = process.env.BODY === 'female' ? FEMALE_BODY : MALE;
 const FF = calibratedField(DEFAULT_BODY);
@@ -99,6 +100,8 @@ function staysOn(G: Garment3D, id: string) {
   return { copies: A.length, worst, avg: n ? sum / n : Infinity };
 }
 const E = (e: Partial<Edits>): Edits => ({ attachments: [], customSeams: [], detachedSeams: [], pleats: [], ...e });
+/** edits with the style's own details (buttons and buttonholes): split fronts hang open without them, as worn unbuttoned */
+const SE = (st: StyleId, pieces: Piece[], e: Partial<Edits>): Edits => styleEdits(st, pieces, DEFAULT_BODY, E(e));
 if (!only || only === 'edits') {
   console.log('\n== edits ==');
   {
@@ -204,7 +207,8 @@ if (!only || only === 'collar') {
   };
   for (const st of ['polo', 'button-up', 'collared-tee', 'jacket'] as StyleId[]) {
     for (const cs of ['down', 'up'] as const) {
-      const { ok, G } = drape(st, makePreset(st, DEFAULT_BODY), E({ collar: cs }), `${st} ${cs}`);
+      const pc = makePreset(st, DEFAULT_BODY);
+      const { ok, G } = drape(st, pc, SE(st, pc, { collar: cs }), `${st} ${cs}`);
       const c = collarCB(G);
       const shape = cs === 'up'
         // popped: the outer edge stands well above the seam and the neck base
@@ -268,26 +272,82 @@ if (!only || only === 'collar') {
     const tips = [btn('cbr', collar.id, bx, by), btn('cbl', collar.id, -bx, by)];
     // where the collar points come to rest on their own: the front buttons go there
     const { G: G0 } = drape('button-up', pieces, E({ collar: 'down', attachments: tips }), 'shirt tips');
-    const C0 = G0.panels.find((p) => p.piece.role === 'collar')!, F0 = G0.panels.find((p) => p.piece.role === 'front')!;
+    // split fronts: each collar point rests on its own front (left front copy 0, right front copy 1)
+    const C0 = G0.panels.find((p) => p.piece.role === 'collar')!, F0s = G0.panels.filter((p) => p.piece.role === 'front' && !p.attach);
     const at3 = (P: typeof C0, x: number, y: number) => { const L = locate(P.mesh, { x, y }); return [0, 1, 2].map((k) => L.v.reduce((s2, v, n) => s2 + G0.sim.pos[(P.offset + v) * 3 + k] * L.w[n], 0)); };
     const under = (x: number, y: number) => {
       const p = at3(C0, x, y);
-      let bj = 0, bd = Infinity;
-      F0.mesh.uv.forEach((_, j) => { const q = F0.offset + j; const d = Math.hypot(G0.sim.pos[q * 3] - p[0], G0.sim.pos[q * 3 + 1] - p[1], G0.sim.pos[q * 3 + 2] - p[2]); if (d < bd) { bd = d; bj = j; } });
-      return { uv: F0.mesh.uv[bj], d: bd };
+      let best = { uv: F0s[0].mesh.uv[0], d: Infinity, inst: 0 };
+      for (const F0 of F0s) F0.mesh.uv.forEach((uv, j) => { const q = F0.offset + j; const d = Math.hypot(G0.sim.pos[q * 3] - p[0], G0.sim.pos[q * 3 + 1] - p[1], G0.sim.pos[q * 3 + 2] - p[2]); if (d < best.d) best = { uv, d, inst: F0.instance }; });
+      return best;
     };
     const ur = under(bx, by), ul = under(-bx, by);
-    const all = [...tips, btn('fbr', front.id, ur.uv.x, ur.uv.y), btn('fbl', front.id, ul.uv.x, ul.uv.y)];
+    const all = [...tips, { ...btn('fbr', front.id, ur.uv.x, ur.uv.y), instance: ur.inst }, { ...btn('fbl', front.id, ul.uv.x, ul.uv.y), instance: ul.inst }];
     const { ok, G } = drape('button-up', pieces, E({ collar: 'down', attachments: all }), 'button-down');
     const pairs = Object.entries(G.seamLinks).filter(([k]) => k.startsWith('fasten:'));
     const gaps = pairs.map(([, ls]) => ls.map(([i, j]) => dist(G, i, j))[0] ?? Infinity);
-    // the collar points stay on the shirt front
-    const C = G.panels.find((p) => p.piece.role === 'collar')!, F = G.panels.find((p) => p.piece.role === 'front')!;
-    const tipOff = [bx, -bx].map((x) => { const L = locate(C.mesh, { x, y: by }); const v = C.offset + L.v[L.w.indexOf(Math.max(...L.w))]; let bd = Infinity; for (let j = 0; j < F.mesh.uv.length; j++) bd = Math.min(bd, dist(G, v, F.offset + j)); return bd; });
+    // the collar points stay on the shirt fronts
+    const C = G.panels.find((p) => p.piece.role === 'collar')!, Fs = G.panels.filter((p) => p.piece.role === 'front' && !p.attach);
+    const tipOff = [bx, -bx].map((x) => { const L = locate(C.mesh, { x, y: by }); const v = C.offset + L.v[L.w.indexOf(Math.max(...L.w))]; let bd = Infinity; for (const F of Fs) for (let j = 0; j < F.mesh.uv.length; j++) bd = Math.min(bd, dist(G, v, F.offset + j)); return bd; });
     verdict(ok && pairs.length === 2 && gaps.every((g) => g < 0.8) && tipOff.every((d) => d < 1.5), `button-down collar: ${pairs.length} collar points buttoned (gaps ${gaps.map((g) => g.toFixed(2)).join(', ')} cm), points ${tipOff.map((d) => d.toFixed(2)).join(' / ')} cm off the front (rest on their own ${ur.d.toFixed(2)} / ${ul.d.toFixed(2)} cm)`);
     // popped up, the points are far from the front buttons: nothing buttons
     const Gu = assemble('button-up', pieces, DEFAULT_BODY, SP, collider, E({ collar: 'up', attachments: all }))!;
     verdict(!Object.keys(Gu.seamLinks).some((k) => k.startsWith('fasten:')), 'collar up: the collar point buttons do not reach the front buttons');
+  }
+}
+
+// ---- fronts that button: split fronts held closed only at the buttons, an open jacket, every style with its details ----
+/** world position of a pattern point on a placed copy of a piece */
+const at3 = (G: Garment3D, P: Garment3D['panels'][number], x: number, y: number) => {
+  const L = locate(P.mesh, { x, y });
+  return [0, 1, 2].map((k) => L.v.reduce((s2, v, n) => s2 + G.sim.pos[(P.offset + v) * 3 + k] * L.w[n], 0));
+};
+/** gap between the two fronts (or placket strips) along centre front, halfway between each pair of buttons (cm) */
+export function frontGaps(G: Garment3D, role: string, holes: Attachment) {
+  const O = G.panels.find((p) => !p.attach && p.piece.role === role && p.instance === holes.instance)!;
+  const U = G.panels.find((p) => !p.attach && p.piece.role === role && p.instance !== holes.instance)!;
+  const n = holes.hardware!.count ?? 1, sp = holes.hardware!.spacing ?? 0, y0 = holes.y - ((n - 1) / 2) * sp;
+  const gaps: number[] = [];
+  for (let k = 0; k + 1 < n; k++) {
+    const y = y0 + (k + 0.5) * sp, a = at3(G, O, 0, y), b = at3(G, U, 0, y);
+    gaps.push(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+  }
+  return gaps;
+}
+if (!only || only === 'closure') {
+  console.log('\n== fronts that button ==');
+  for (const st of ['button-up', 'jacket', 'polo'] as StyleId[]) {
+    const pieces = makePreset(st, DEFAULT_BODY);
+    const edits = styleEdits(st, pieces, DEFAULT_BODY, E({ collar: 'down' }));
+    const holes = edits.attachments.find((a) => a.buttonhole)!;
+    const { ok, G } = drape(st, pieces, edits, `${st} buttoned`);
+    const gaps = frontGaps(G, st === 'polo' ? 'placket' : 'front', holes);
+    const n = holes.hardware!.count!;
+    verdict(ok && G.buttoned.length === n && Math.max(...gaps) < 0.5, `${st}: ${G.buttoned.length} of ${n} buttons buttoned, fronts between buttons ${gaps.map((g) => g.toFixed(2)).join(' / ')} cm apart`);
+  }
+  {
+    // worn open: nothing buttons, the fronts hang apart at centre front
+    const pieces = makePreset('jacket', DEFAULT_BODY);
+    const edits = styleEdits('jacket', pieces, DEFAULT_BODY, E({ collar: 'down', closure: 'open' }));
+    const { ok, G } = drape('jacket', pieces, edits, 'jacket open');
+    const L = G.panels.find((p) => !p.attach && p.piece.role === 'front' && p.instance === 0)!, R = G.panels.find((p) => !p.attach && p.piece.role === 'front' && p.instance === 1)!;
+    const ext = -Math.min(...L.piece.points.map((q) => q.x));
+    const ys = [30, 45, 60];
+    // the front edges: the left front's edge is at +x of the right front's edge when they overlap; open, they part
+    const parts = ys.map((y) => at3(G, L, -ext, y)[0] - at3(G, R, -ext, y)[0]);
+    const fastened = Object.keys(G.seamLinks).filter((k) => k.startsWith('fasten:')).length;
+    verdict(ok && fastened === 0 && G.buttoned.length === 0 && parts.every((d) => d > 0.5), `open jacket: ${fastened} buttons fastened, front edges ${parts.map((d) => d.toFixed(1)).join(' / ')} cm apart at ${ys.join(', ')} cm down`);
+  }
+}
+if (!only || only === 'details') {
+  console.log('\n== every style with its details ==');
+  for (const style of CATALOG) {
+    const pieces = makePreset(style.id, DEFAULT_BODY);
+    const edits = styleEdits(style.id, pieces, DEFAULT_BODY, E(pieces.some((p) => p.role === 'collar') ? { collar: 'down' } : {}));
+    const { ok, G } = drape(style.id, pieces, edits, `${style.id}+det`);
+    const cloth = edits.attachments.filter((a) => a.kind === 'pocket' || a.kind === 'strap');
+    const worst = Math.max(0, ...cloth.map((a) => staysOn(G, a.id).worst));
+    verdict(ok && worst < 3, `${style.id} with its ${edits.attachments.length} style details drapes, cloth details stay on (worst ${worst.toFixed(2)} cm)`);
   }
 }
 
@@ -352,19 +412,20 @@ if (!only || only === 'collar-edits') {
       for (const [name, edit] of Object.entries(EDITS)) {
         const pieces = makePreset(st, DEFAULT_BODY);
         edit(pieces.find((p) => p.role === 'collar')!);
-        const r = run(assemble(st, pieces, DEFAULT_BODY, SP, collider, E({ collar: cs }))!);
+        const r = run(assemble(st, pieces, DEFAULT_BODY, SP, collider, SE(st, pieces, { collar: cs }))!);
         verdict(r.ok, `${st} collar ${cs}, ${name}: ${r.msg}`);
       }
     }
     {
       // warm start: drape the drafted shirt, then the user makes the collar longer and the neck edge no longer matches
       const pieces = makePreset(st, DEFAULT_BODY);
-      const G0 = assemble(st, pieces, DEFAULT_BODY, SP, collider, E({ collar: 'down' }))!;
+      const ed = SE(st, pieces, { collar: 'down' });
+      const G0 = assemble(st, pieces, DEFAULT_BODY, SP, collider, ed)!;
       for (let k = 0; k < 600 && !G0.sim.sleeping; k++) G0.sim.step();
       const p2 = pieces.map((p) => ({ ...p, points: p.points.map((q) => ({ ...q })) }));
       EDITS['neck edge +3 cm'](p2.find((p) => p.role === 'collar')!);
       EDITS['points 4 cm longer'](p2.find((p) => p.role === 'collar')!);
-      const G = assemble(st, p2, DEFAULT_BODY, SP, collider, E({ collar: 'down' }))!;
+      const G = assemble(st, p2, DEFAULT_BODY, SP, collider, ed)!;
       const warm = warmStart(G, G0);
       const r = run(G);
       verdict(warm && r.ok, `${st} collar down, edited after draping (warm start): ${r.msg}`);
@@ -379,7 +440,7 @@ if (!only || only === 'collar-edits') {
         const da = a.find((d) => d.role === pc.role), db = b.find((d) => d.role === pc.role);
         return da && db ? { ...pc, points: regradePoints(pc.points, da.points, db.points) } : pc;
       });
-      const r = run(assemble(st, re, DEFAULT_BODY, SP, collider, E({ collar: 'down' }))!);
+      const r = run(assemble(st, re, DEFAULT_BODY, SP, collider, SE(st, re, { collar: 'down' }))!);
       verdict(r.ok, `${st} collar down, 4 cm longer then regraded: ${r.msg}`);
     }
   }

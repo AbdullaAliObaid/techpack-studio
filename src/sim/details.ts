@@ -1,4 +1,6 @@
-// Construction details derived from the simulated panels: stitching, hems, belt loops, rivets, buttons.
+// Construction details derived from the simulated panels: seam topstitching and hems, plus the pocket opening and fly
+// stitching of the pattern (stitchLines in src/data/construction.ts). Buttons, buttonholes, rivets, belt loops and
+// pockets are not made here: they are attachments on the pattern (builtin: true) and draw as hardware and cloth.
 // Everything is generic: it keys off piece roles and the sewing constraints, never garment names.
 // Each stitch point is stored as barycentric coordinates on a cloth triangle (found in pattern space), so the
 // main thread only has to interpolate three particle positions per point every frame.
@@ -7,6 +9,8 @@ import type { Details } from '../data/catalog';
 import { fabricById } from '../data/fabrics';
 import type { Pt } from '../lib/geometry';
 import type { Garment3D, PanelInst } from './setup';
+import { stitchLines } from '../data/construction';
+import type { Piece } from '../data/presets';
 
 export const DASH = 0.3; // dash length, cm
 const GAP = 0.15; // gap between dashes, cm
@@ -147,12 +151,14 @@ export function buildDetails(G: Garment3D, d: Details): DetailsMsg {
   const palette: string[] = [];
   const colIdx = (hex: string) => { let i = palette.indexOf(hex); if (i < 0) { i = palette.length; palette.push(hex); } return i; };
 
-  // sewing partners per particle
+  // sewing partners per particle (a button through its buttonhole is not a seam)
+  const fastened = new Set<string>();
+  for (const [id, ls] of Object.entries(G.seamLinks ?? {})) if (id.startsWith('fasten:')) for (const [a, b] of ls) { fastened.add(`${a},${b}`); fastened.add(`${b},${a}`); }
   const partners = new Map<number, number[]>();
   for (let c = sim.nStretch; c < sim.ca.length; c++) {
     if (sim.rest[c] !== 0) continue;
     const a = sim.ca[c], b = sim.cb[c];
-    if (a === b) continue;
+    if (a === b || fastened.has(`${a},${b}`)) continue;
     (partners.get(a) ?? partners.set(a, []).get(a)!).push(b);
     (partners.get(b) ?? partners.set(b, []).get(b)!).push(a);
   }
@@ -320,161 +326,16 @@ export function buildDetails(G: Garment3D, d: Details): DetailsMsg {
     }
   });
 
-  /* ---- helpers for placed details ---- */
-  const byRole = (r: string) => panels.map((P, k) => ({ P, k })).filter((e) => (e.P.piece.role as string) === r);
-  const uvBox = (P: PanelInst) => {
-    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const q of P.mesh.uv) { x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); }
-    return { x0, x1, y0, y1 };
-  };
-  /** extent (first and last y) of a vertical line at pattern x that lies on the cloth */
-  const vertExtent = (k: number, x: number) => {
-    const bb = uvBox(panels[k]);
-    let top = NaN, bot = NaN;
-    for (let y = bb.y0; y <= bb.y1; y += 0.4) if (locs[k].at(x, y, 0.01)) { if (isNaN(top)) top = y; bot = y; }
-    return { top, bot };
-  };
-
-  /* ---- belt loops ---- */
-  if (d.beltLoops) {
-    for (const { P, k } of byRole('waistband')) {
-      const bb = uvBox(P);
-      const Wd = bb.x1 - bb.x0, h = bb.y1 - bb.y0;
-      // the band's front-most particle marks centre front
-      let uf = bb.x0, zBest = -Infinity;
-      for (let i = 0; i < P.mesh.uv.length; i++) {
-        const z = pos[(P.offset + i) * 3 + 2];
-        if (z > zBest) { zBest = z; uf = P.mesh.uv[i].x; }
-      }
-      const n = d.beltLoops;
-      const step = n > 1 ? 0.68 / (n - 1) : 0;
-      for (let j = 0; j < n; j++) {
-        const s = 0.5 + (j - (n - 1) / 2) * step; // fraction of the circumference measured from centre front
-        const u = bb.x0 + ((((uf + s * Wd) - bb.x0) % Wd) + Wd) % Wd;
-        const loc = locs[k].at(u, bb.y0 + h / 2);
-        if (loc) addAnchor(k, ANCHOR.loop, loc, panelHex(P), [Math.min(4.5, h * 0.95), 1.0]);
-      }
-    }
-  }
-
-  /* ---- pants-style pockets and rivets (front and back panels sewn to a waistband) ---- */
-  if (d.rivets) {
-    const copper = '#c47a3c';
-    const thread = (P: PanelInst) => threadColor(P, d.topstitch?.color);
-    panels.forEach((P, k) => {
-      const role = P.piece.role as string;
-      if (role !== 'front' && role !== 'back') return;
-      const { uv, boundary } = P.mesh;
-      // waist edge = boundary run sewn to a waistband panel
-      const edge = boundary.filter((b) => (partners.get(P.offset + b) ?? []).some((q) => (panels[panelOf(q)].piece.role as string) === 'waistband'));
-      if (edge.length < 4) return;
-      let u0 = Infinity, u1 = -Infinity;
-      for (const b of edge) { u0 = Math.min(u0, uv[b].x); u1 = Math.max(u1, uv[b].x); }
-      const vAt = (u: number) => { let best = edge[0]; for (const b of edge) if (Math.abs(uv[b].x - u) < Math.abs(uv[best].x - u)) best = b; return uv[best].y; };
-      // which end of the waist edge is the side seam: the one further from the body centre line
-      const ex = (u: number) => { let best = edge[0]; for (const b of edge) if (Math.abs(uv[b].x - u) < Math.abs(uv[best].x - u)) best = b; return Math.abs(pos[(P.offset + best) * 3]); };
-      const e = ex(u0) > ex(u1) ? 1 : -1; // direction from the side seam towards the centre, in u
-      const uOut = e > 0 ? u0 : u1;
-      const sideU = (v: number) => { // pattern u of the side seam at depth v
-        let best = e > 0 ? Infinity : -Infinity;
-        for (const b of boundary) if (Math.abs(uv[b].y - v) < 1.2) best = e > 0 ? Math.min(best, uv[b].x) : Math.max(best, uv[b].x);
-        return isFinite(best) ? best : uOut;
-      };
-      const vTop = vAt(uOut);
-      if (role === 'front') {
-        // pocket opening: scoop from the waist down to the side seam, with a rivet at each end
-        const A = { x: uOut + e * 7.5, y: vAt(uOut + e * 7.5) + 1.2 };
-        const vB = vTop + 13.5;
-        const B = { x: sideU(vB) + e * 1.0, y: vB };
-        const C = { x: B.x + e * 5.5, y: A.y + 9.5 };
-        const curve: Pt[] = [];
-        for (let i = 0; i <= 24; i++) {
-          const t = i / 24, a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, c = t * t;
-          curve.push({ x: a * A.x + b * C.x + c * B.x, y: a * A.y + b * C.y + c * B.y });
-        }
-        stitchLine(k, curve, thread(P));
-        const off2 = curve.map((q, i) => { const n = curve[Math.min(i + 1, 24)], p = curve[Math.max(i - 1, 0)]; const tx = n.x - p.x, ty = n.y - p.y, l = Math.hypot(tx, ty) || 1; return { x: q.x + (ty / l) * e * 0.55 * -1, y: q.y + (tx / l) * e * 0.55 }; });
-        void off2;
-        for (const q of [A, B]) {
-          const loc = locs[k].at(q.x, q.y);
-          if (loc) addAnchor(k, ANCHOR.rivet, loc, copper, [0.42, 0]);
-        }
-      } else {
-        // back pocket: five sided patch pocket centred on the half back
-        const vP = vTop + 6.5;
-        const out = sideU(vP + 7), inn = e > 0 ? u1 : u0;
-        const cu = (out + inn) / 2 + e * 0.5;
-        const hw = 7, ht = 12.5, pt = 15.5;
-        const poly: Pt[] = [
-          { x: cu - hw, y: vP }, { x: cu + hw, y: vP }, { x: cu + hw, y: vP + ht }, { x: cu, y: vP + pt }, { x: cu - hw, y: vP + ht },
-        ];
-        if (Math.abs(out - inn) > 2 * hw + 4) {
-          stitchLine(k, poly, thread(P), true);
-          stitchLine(k, [{ x: cu - hw, y: vP + 0.9 }, { x: cu + hw, y: vP + 0.9 }], thread(P));
-          for (const q of [poly[0], poly[1]]) {
-            const loc = locs[k].at(q.x + (q === poly[0] ? 0.6 : -0.6), q.y + 0.6);
-            if (loc) addAnchor(k, ANCHOR.rivet, loc, copper, [0.38, 0]);
-          }
-        }
-      }
-    });
-  }
-
-  /* ---- buttons ---- */
-  if (d.buttons) {
-    const n = d.buttons;
-    const crowns = byRole('crown');
-    const buttonFor = (P: PanelInst) => (lum(panelHex(P)) > 0.65 ? '#cfc8b4' : '#eee9db');
-    if (crowns.length) {
-      // covered button on the crown top: the highest particle of the crown panels
-      let best = -1, bk = 0, by = -Infinity;
-      for (const { P, k } of crowns) for (let i = 0; i < P.mesh.uv.length; i++) {
-        const y = pos[(P.offset + i) * 3 + 1];
-        if (y > by) { by = y; best = i; bk = k; }
-      }
-      if (best >= 0) {
-        const P = panels[bk], q = P.mesh.uv[best];
-        const loc = locs[bk].at(q.x, q.y);
-        if (loc) addAnchor(bk, ANCHOR.coveredButton, loc, panelHex(P), [0.7, 0]);
-      }
-    } else {
-      const plackets = byRole('placket');
-      const targets = plackets.length ? plackets.slice(0, 1) : byRole('front').slice(0, 1);
-      for (const { P, k } of targets) {
-        let top: number, bot: number, x: number;
-        if (plackets.length) {
-          const bb = uvBox(P);
-          x = (bb.x0 + bb.x1) / 2;
-          const ex = vertExtent(k, x);
-          top = ex.top; bot = ex.bot;
-          if (isNaN(top)) { top = bb.y0; bot = bb.y1; }
-        } else {
-          x = 0;
-          const ex = vertExtent(k, 0);
-          top = ex.top; bot = ex.bot;
-        }
-        if (isNaN(top) || isNaN(bot)) continue;
-        const span = bot - top;
-        const first = plackets.length ? top + 2 : top + 2.6;
-        const last = plackets.length ? bot - 2 : top + span * 0.8;
-        const pitch = n > 1 ? Math.min(plackets.length ? 8 : 12, (last - first) / (n - 1)) : 0;
-        const y0 = n > 1 ? first : (first + last) / 2;
-        const col = buttonFor(P);
-        for (let j = 0; j < n; j++) {
-          const loc = locs[k].at(x, y0 + j * pitch);
-          if (loc) addAnchor(k, ANCHOR.button, loc, col, [0.62, 0]);
-        }
-        // placket edge stitching on a body panel that has a front opening but no placket piece
-        if (!plackets.length && n >= 3) {
-          const t = d.topstitch;
-          const color = threadColor(P, t?.color);
-          for (const s of [-1, 1]) {
-            const ex = vertExtent(k, s * 1.7);
-            if (isNaN(ex.top)) continue;
-            stitchLine(k, [{ x: s * 1.7, y: ex.top + 0.5 }, { x: s * 1.7, y: ex.bot - (d.hem ? d.hem.depth + 0.6 : 0.6) }], color);
-          }
-        }
-      }
+  /* ---- stitching drawn on the pattern: pocket openings, fly J stitch (src/data/construction.ts) ---- */
+  if (G.style) {
+    const pieces: Piece[] = [];
+    for (const P of panels) if (!P.attach && !pieces.includes(P.piece)) pieces.push(P.piece);
+    for (const L of stitchLines(G.style, pieces, G.edits)) {
+      if (L.kind !== 'pocket' && L.kind !== 'fly') continue;
+      panels.forEach((P, k) => {
+        if (P.attach || P.piece.id !== L.pieceId || (L.instance !== undefined && P.instance !== L.instance)) return;
+        stitchLine(k, L.points, threadColor(P, L.color));
+      });
     }
   }
 

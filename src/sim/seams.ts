@@ -10,7 +10,7 @@
 
 import type { Piece } from '../data/presets';
 import { migrateGarment, styleById, type StyleId } from '../data/catalog';
-import { frontOffset } from '../data/draft';
+import { frontOffset, isSplitFront } from '../data/draft';
 import type { Attachment, EdgeRef, Edits, Face } from '../data/edits';
 
 export interface BuiltinSeam {
@@ -33,6 +33,9 @@ export function instanceCount(style: StyleId, p: Piece): number {
   if (p.role === 'cuff') return fam === 'shirt' || fam === 'pants' ? 2 : 1;
   if (fam === 'pants' && (p.role === 'front' || p.role === 'back')) return 2;
   if (p.role === 'custom') return p.cut > 1 ? 2 : 1; // a user piece cut twice is placed as a pair
+  if (p.role === 'front' && isSplitFront(p)) return 2; // split fronts: 0 the wearer's left, 1 the right (mirrored)
+  if (p.role === 'placket' && fam === 'polo') return 2; // two placket strips, one on each side of the opening
+  if (p.role === 'facing' || p.role === 'pocketFacing' || p.role === 'pocketBag') return 2;
   return 1;
 }
 
@@ -126,25 +129,33 @@ export function builtinSeams(style: StyleId, pieces: Piece[], edits?: Pick<Edits
   const fo = frontOffset(st.id);
   const F = (i: number, m = '') => `front.${i + fo}${m}`;
   const B = (i: number, m = '') => `back.${i}${m}`;
+  // a split front is cut twice: the wearer's right is copy 1 (mirrored) with the same keys; a closed front has the
+  // right half as "m" keys on its one copy
+  const split = isSplitFront(fr);
+  /** edge on the front's right half (the wearer's right, -x) */
+  const FR = (from: number, to: number) => (split ? E(fr, F(from), F(to), 1) : E(fr, F(from, 'm'), F(to, 'm')));
   // right side of the body (+x): front keys without "m" meet back keys with "m"
   S('shoulder-r', 'Left shoulder', E(fr, F(2), F(3)), E(bk, B(2, 'm'), B(3, 'm')));
-  S('shoulder-l', 'Right shoulder', E(fr, F(2, 'm'), F(3, 'm')), E(bk, B(2), B(3)));
+  S('shoulder-l', 'Right shoulder', FR(2, 3), E(bk, B(2), B(3)));
   S('side-r', 'Left side seam', E(fr, F(5), F(7)), E(bk, B(5, 'm'), B(7, 'm')));
-  S('side-l', 'Right side seam', E(fr, F(5, 'm'), F(7, 'm')), E(bk, B(5), B(7)));
+  S('side-l', 'Right side seam', FR(5, 7), E(bk, B(5), B(7)));
   const sleeve = role('sleeve');
   if (sleeve) {
     for (const i of [0, 1]) {
       const r = i === 0;
       S(`underarm-${sfx(i)}`, `${sideName(i)} sleeve seam`, E(sleeve, 'sleeve.3', 'sleeve.4', i), E(sleeve, 'sleeve.3m', 'sleeve.4m', i));
-      S(`sleeve-cap-front-${sfx(i)}`, `${sideName(i)} sleeve cap, front`, E(sleeve, 'sleeve.0', 'sleeve.3', i), r ? E(fr, F(3), F(5)) : E(fr, F(3, 'm'), F(5, 'm')), `sleeve-cap-${sfx(i)}`);
+      S(`sleeve-cap-front-${sfx(i)}`, `${sideName(i)} sleeve cap, front`, E(sleeve, 'sleeve.0', 'sleeve.3', i), r ? E(fr, F(3), F(5)) : FR(3, 5), `sleeve-cap-${sfx(i)}`);
       S(`sleeve-cap-back-${sfx(i)}`, `${sideName(i)} sleeve cap, back`, E(sleeve, 'sleeve.0', 'sleeve.3m', i), r ? E(bk, B(3, 'm'), B(5, 'm')) : E(bk, B(3), B(5)), `sleeve-cap-${sfx(i)}`);
     }
   }
   const placket = role('placket');
   if (placket) {
+    // two strips, each the full width of the opening: copy 0 sewn to the left side of the opening, copy 1 (mirrored) to
+    // the right side; both sewn across the base. They overlap and button together.
     S('placket-r', 'Left placket', E(placket, 'placket.1', 'placket.2'), E(fr, 'front.2', 'front.1'));
-    S('placket-l', 'Right placket', E(placket, 'placket.1m', 'placket.2m'), E(fr, 'front.2m', 'front.1m'));
-    S('placket-base', 'Placket base', E(placket, 'placket.2', 'placket.2m'), E(fr, 'front.1', 'front.1m'));
+    S('placket-l', 'Right placket', E(placket, 'placket.1', 'placket.2', 1), E(fr, 'front.2m', 'front.1m'));
+    S('placket-base', 'Left placket base', E(placket, 'placket.2', 'placket.2m'), E(fr, 'front.1', 'front.1m'));
+    S('placket-base-l', 'Right placket base', E(placket, 'placket.2', 'placket.2m', 1), E(fr, 'front.1m', 'front.1'));
   }
   const band = role('neckband');
   if (band) {
@@ -155,9 +166,11 @@ export function builtinSeams(style: StyleId, pieces: Piece[], edits?: Pick<Edits
   const collar = role('collar');
   if (collar) {
     // the polo neckline ends at the placket edge on each side (front.2 / front.2m)
-    const neck = [E(fr, F(0), F(2)), E(bk, B(2, 'm'), B(0)), E(bk, B(0), B(2)), E(fr, F(2, 'm'), fo && collarSet ? F(0, 'm') : F(0))];
-    // polo: the collar runs from the middle of the placket, round the neck, back to the middle of the placket
-    if (placket) { neck.unshift(E(placket, 'placket.0', 'placket.1')); neck.push(E(placket, 'placket.1m', 'placket.0')); }
+    // a split front: from centre front on the left front round the neck to centre front on the right front
+    const neck = [E(fr, F(0), F(2)), E(bk, B(2, 'm'), B(0)), E(bk, B(0), B(2)), split ? E(fr, F(2), F(0), 1) : E(fr, F(2, 'm'), fo && collarSet ? F(0, 'm') : F(0))];
+    // polo: the collar runs from the middle of the placket, round the neck, back to the middle of the placket (the
+    // middle of the right strip's top; projects from before the collar option: the old run on the one strip)
+    if (placket) { neck.unshift(E(placket, 'placket.0', 'placket.1')); neck.push(collarSet ? E(placket, 'placket.1', 'placket.0', 1) : E(placket, 'placket.1m', 'placket.0')); }
     M('collar', 'Collar', [E(collar, 'collar.1', 'collar.1m')], neck);
   }
   const cuff = role('cuff');
