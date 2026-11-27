@@ -1780,3 +1780,5 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .prod-check { display: grid; gap: 8px; padding: 12px; border-radius: 12px; background: color-mix(in oklch, var(--orange, oklch(0.75 0.16 60)) 12%, transparent); border: 0.5px solid color-mix(in oklch, var(--orange, oklch(0.75 0.16 60)) 35%, transparent); }
 .prod-check.done { background: var(--fill-3, var(--fill-2)); border-color: var(--separator); }
 .prod-check .group-note { margin: 0; }
+.poi-row { min-height: 44px; }
+.poi-row small { display: block; font-size: 11px; }

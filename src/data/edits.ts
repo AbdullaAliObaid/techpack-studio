@@ -245,6 +245,8 @@ export interface Edits {
   /** fabric on the inside face of a piece (under collar, placket facing, lining look); key = piece id */
   bands?: Band[];
   insideFabric?: Record<string, { id: string; color: number; hex?: string; pattern?: import('./fabrics').FabricPattern }>;
+  /** ids of points of interest (src/lib/poi.ts) the designer left out of the tech pack's close-up pages */
+  techpackSkip?: string[];
   /** a front that buttons: worn buttoned (default) or open (buttonholes left unbuttoned, the fronts hang free) */
   closure?: 'buttoned' | 'open';
   /**

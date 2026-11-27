@@ -5,6 +5,7 @@
 //   3  Trims and details list: every item numbered, with its measured position
 //   4+ Detail sheets: per item a close-up photo of the draped garment, a placement drawing with measurements from
 //      the usual references, the specs and the artwork layers
+//   .. Close-ups: one page per point of interest (src/lib/poi.ts): 3D close-up, locator, flat piece and spec table
 //   .. Construction: seams, stitches, inside finishing, pleats, custom and detached seams, notes
 //   .. Pattern pieces (with placement marks, callout numbers and the notes drawn on the chart)
 //   .. Cut list, points of measure, body vs garment, seam check
@@ -20,6 +21,8 @@ import { BODY_FIELDS, limbGirths } from '../three/body';
 import { bbox, centroid, offsetInward, samplePoly, type Pt } from './geometry';
 import { constructionReport, seamReport, cutList, fabricBom, fabricText, fitTable, garmentSpecs, hardwareMarks, noteRows, pieceSpecs, placementMarks, trimDetails, trimsReport, type TrimDetail, FABRIC_WIDTH, MARKER_WASTE } from './specs';
 import { pathRings, shapePolygon } from './shapes';
+import { includedPois, POI_KIND_LABEL, type Poi } from './poi';
+import { bandRanges } from '../components/designDoc';
 import { captureShots, type ShotProvider, type ShotRequest } from './detailShots';
 import { toUnit, type Units } from './units';
 
@@ -132,6 +135,73 @@ function picture(doc: jsPDF, img: string | null, x: number, y: number, w: number
 function poly(doc: jsPDF, pts: Pt[], style: string) {
   if (pts.length < 2) return;
   doc.lines(pts.slice(1).map((q, i) => [q.x - pts[i].x, q.y - pts[i].y]), pts[0].x, pts[0].y, [1, 1], style, true);
+}
+
+const VIEW_NAME = { front: 'Front view', back: 'Back view', side: "Side view, wearer's left" } as const;
+
+/** One close-up page: the 3D picture, where it is on the garment, the flat piece with the spot marked, and the numbers. */
+function poiPage(sh: Sheet, o: Poi, p: Project, pics: (string | null)[], loc: string | null, no: number, of: number, u: (cm: number) => string, U: string) {
+  const { doc } = sh;
+  sh.page(`Close-up ${no} of ${of}`);
+  doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(ACCENT).text(POI_KIND_LABEL[o.kind].toUpperCase(), M, sh.y + 2);
+  doc.setFont('helvetica', 'bold').setFontSize(15).setTextColor(INK).text(o.title, M, sh.y + 9);
+  const y0 = sh.y + 13;
+  const two = o.targets.length > 1, ps = two ? 74 : 112;
+  o.targets.forEach((tg, k) => {
+    const x = M + k * (ps + 2);
+    picture(doc, pics[k] ?? null, x, y0, ps, ps, 'No photo (export from the 3D view)');
+    if (pics[k]) { doc.setDrawColor(ACCENT).setLineWidth(0.4).circle(x + ps / 2, y0 + ps / 2, ps * 0.07, 'S'); }
+    doc.setFont('helvetica', 'normal').setFontSize(7).setTextColor(MUTED).text(`${VIEW_NAME[tg.view]}${tg.face === 'inside' ? ', inside face' : ''}`, x + 1.5, y0 + ps - 1.5);
+  });
+  // spec table and callouts on the right
+  const sx = M + (two ? 2 * ps + 6 : ps + 6), sw = W - M - sx;
+  sh.y = y0 - 1;
+  doc.setFont('helvetica', 'bold').setFontSize(9).setTextColor(INK).text('Specification', sx, sh.y + 3);
+  doc.setDrawColor(INK).setLineWidth(0.3).line(sx, sh.y + 4.5, sx + sw, sh.y + 4.5);
+  sh.y += 6;
+  pairs(sh, sx, sw, o.spec.map(([k, v]) => [k, v] as [string, string]), 7.8);
+  if (o.callouts.length) {
+    sh.y += 2;
+    doc.setFont('helvetica', 'bold').setFontSize(8.5).setTextColor(INK).text('Notes for the factory', sx, sh.y + 3);
+    sh.y += 5.5;
+    doc.setFont('helvetica', 'normal').setFontSize(7.8);
+    for (const c of o.callouts) {
+      const lines = doc.splitTextToSize(c, sw - 4) as string[];
+      if (sh.y + lines.length * 3.4 > BOTTOM) break;
+      doc.setTextColor(c.startsWith('TO CONFIRM') ? '#b42318' : INK).text('•', sx, sh.y + 3).text(lines, sx + 3.5, sh.y + 3);
+      sh.y += lines.length * 3.4 + 1;
+    }
+  }
+  // locator and flat piece along the bottom of the left block
+  const by = y0 + ps + 5, bh = BOTTOM - by;
+  if (bh > 24) {
+    const lw = Math.min(bh, 52);
+    picture(doc, loc, M, by, lw, lw, 'No locator');
+    doc.setFont('helvetica', 'normal').setFontSize(6.5).setTextColor(MUTED).text('Where on the garment', M, by + lw + 3);
+    flatPiece(doc, o, p, M + lw + 4, by, (two ? 2 * ps + 2 : ps) - lw - 4, bh, u, U);
+  }
+}
+
+/** The flat pattern piece with the spot marked (and the band stripes, where the page is about a band). */
+function flatPiece(doc: jsPDF, o: Poi, p: Project, x: number, y: number, w: number, h: number, u: (cm: number) => string, U: string) {
+  doc.setFillColor('#ffffff').setDrawColor(LINE).setLineWidth(0.2).roundedRect(x, y, w, h, 1.5, 1.5, 'FD');
+  const pc = p.pieces.find((q) => q.id === o.pieceId);
+  if (!pc) return;
+  const outline = samplePoly(pc.points, 16), bb = bbox(outline);
+  const pad = 5, s = Math.min((w - 2 * pad) / bb.w, (h - 2 * pad - 3) / bb.h);
+  const ox = x + (w - bb.w * s) / 2 - bb.minX * s, oy = y + pad - bb.minY * s;
+  const P = (q: Pt) => ({ x: ox + q.x * s, y: oy + q.y * s });
+  doc.setFillColor(PANEL).setDrawColor(INK).setLineWidth(0.3);
+  poly(doc, outline.map(P), 'FD');
+  const band = o.kind === 'band' ? p.edits?.bands?.find((b) => `band:${b.id}` === o.id) : undefined;
+  const rng = band ? bandRanges(band, pc) : null;
+  if (rng) for (const st of rng) { doc.setFillColor(css(st.color, '#888888')); poly(doc, [{ x: bb.minX, y: st.y0 }, { x: bb.maxX, y: st.y0 }, { x: bb.maxX, y: st.y1 }, { x: bb.minX, y: st.y1 }].map(P), 'F'); }
+  doc.setDrawColor(ACCENT).setLineWidth(0.3);
+  for (const m of o.outlines) poly(doc, m.map(P), 'S');
+  for (const m of o.marks) { const c = P(m.at); doc.circle(c.x, c.y, Math.max(0.5, m.r * s), 'S'); }
+  const c = P(o.at), rr = Math.max(1.6, Math.min(4, o.radiusCm * s * 0.5));
+  doc.setDrawColor(ACCENT).setLineWidth(0.45).circle(c.x, c.y, rr, 'S').line(c.x - rr - 1, c.y, c.x + rr + 1, c.y).line(c.x, c.y - rr - 1, c.x, c.y + rr + 1);
+  doc.setFont('helvetica', 'normal').setFontSize(6.5).setTextColor(MUTED).text(`${pc.name}, flat piece, ${u(bb.w)} x ${u(bb.h)} ${U}`, x + 1.5, y + h - 1.5);
 }
 
 /** Placement drawing: host outline, the item, and the measured distances from the references. */
@@ -280,6 +350,19 @@ export async function buildTechPack(p: Project, units: Units, snapshot: string |
     requests.push({ kind: 'inside', view: pc.role === 'back' ? 'back' : 'front', target: { pieceId: id, instance: 0, x: bb.minX + bb.w / 2, y: bb.minY + bb.h / 2, radiusCm: Math.min(24, Math.max(6, Math.max(bb.w, bb.h) / 2 + 3)), face: 'inside' } });
   }
   const shots = await captureShots(requests, size, opts.capture);
+  // close-up pages: a big picture per target and a small whole-garment locator with a ring on the spot
+  const pois = includedPois(p);
+  const poiReq: ShotRequest[] = [], locReq: ShotRequest[] = [];
+  const poiIdx: number[][] = [];
+  for (const o of pois) {
+    poiIdx.push(o.targets.map((tg) => {
+      poiReq.push({ kind: tg.face === 'inside' ? 'inside' : 'attachment', view: tg.view, target: { pieceId: tg.pieceId, instance: tg.instance, x: tg.at.x, y: tg.at.y, radiusCm: o.radiusCm, face: tg.face } });
+      return poiReq.length - 1;
+    }));
+    locReq.push({ kind: 'overview', view: o.view, marker: true, target: { pieceId: o.pieceId, instance: o.instance, x: o.at.x, y: o.at.y, radiusCm: o.radiusCm, face: o.face } });
+  }
+  const poiShots = await captureShots(poiReq, Math.round(size * 1.4), opts.capture);
+  const locShots = await captureShots(locReq, 360, opts.capture);
   const overview = [shots[0] ?? snapshot, shots[1], shots[2]];
   const haveOverview = overview.some(Boolean);
 
@@ -430,6 +513,9 @@ export async function buildTechPack(p: Project, units: Units, snapshot: string |
     }
     sh.y = saveY;
   });
+
+  // ================= 4b. close-ups, one page per point of interest =================
+  pois.forEach((o, i) => poiPage(sh, o, p, poiIdx[i].map((k) => poiShots[k] ?? null), locShots[i] ?? null, i + 1, pois.length, u, U));
 
   // ================= 5. construction =================
   sh.page('Construction');

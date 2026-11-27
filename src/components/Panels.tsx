@@ -1,12 +1,13 @@
 // The right panel. Each workspace shows only its own job here; the chart and the 3D view stay where they are.
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useStore, usePick } from '../store';
 import { productionChecks } from '../lib/specs';
+import { pointsOfInterest, POI_KIND_LABEL } from '../lib/poi';
 import type { WashSequence } from '../data/edits';
 import { CATALOG, migrateGarment } from '../data/catalog';
 import { fabricById } from '../data/fabrics';
 import { WORKSPACES } from './designDoc';
-import { Disclosure, Seg, TabHeader } from './controls';
+import { Disclosure, Seg, Switch, TabHeader } from './controls';
 import { FabricSwatch, fabricLabel } from './FabricBrowser';
 import FabricBrowser from './FabricBrowser';
 import ConstructionPanel, { PenCard } from './ConstructionPanel';
@@ -144,6 +145,26 @@ function ProductionChecks() {
   );
 }
 
+/** Every close-up page the tech pack prints, each one switchable. */
+function CloseUps() {
+  const { project, setTechpackInclude } = usePick('project', 'setTechpackInclude');
+  const pois = useMemo(() => pointsOfInterest(project), [project]);
+  if (!pois.length) return null;
+  const skip = new Set(project.edits?.techpackSkip ?? []);
+  const n = pois.filter((o) => !skip.has(o.id)).length;
+  return (
+    <Disclosure id="review-closeups" title={`Close-ups in the tech pack (${n})`} icon="target">
+      <p className="group-note">Each one gets its own page with a 3D close-up, where it is on the garment, the flat piece and the numbers. Switch off the ones you do not want printed.</p>
+      {pois.map((o) => (
+        <div className="kv poi-row" key={o.id}>
+          <span>{o.title}<small className="muted"> {POI_KIND_LABEL[o.kind]}</small></span>
+          <Switch on={!skip.has(o.id)} onChange={(v) => setTechpackInclude(o.id, v)} label={`Include ${o.title} in the tech pack`} />
+        </div>
+      ))}
+    </Disclosure>
+  );
+}
+
 function NotesList() {
   const { project, selNote, tool, set, removeNote } = usePick('project', 'selNote', 'tool', 'set', 'removeNote');
   const notes = project.notes ?? [];
@@ -178,7 +199,7 @@ function Body({ ws }: { ws: string }) {
     case 'fit': return <FitPanel />;
     case 'outfit': return <OutfitPanel />;
     case 'finish': return <FinishCard />;
-    case 'review': return <><ProductionChecks /><NotesList /><ReviewSections /></>;
+    case 'review': return <><ProductionChecks /><CloseUps /><NotesList /><ReviewSections /></>;
     default: return null;
   }
 }

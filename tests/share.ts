@@ -11,6 +11,7 @@ import { exportShareFile, importShareFile, readShareFile, ShareError } from '../
 import { BUILTIN_BODIES, deleteBodyPreset, listBodyPresets, listImported, listProjects, renameBodyPreset, saveBodyPreset } from '../src/lib/projects';
 import { productionChecks, constructionReport, fabricBom, noteRows, trimDetails, trimsReport } from '../src/lib/specs';
 import { buildTechPack } from '../src/lib/exportPdf';
+import { pointsOfInterest, includedPois } from '../src/lib/poi';
 import type { Attachment } from '../src/data/edits';
 
 let fails = 0;
@@ -107,11 +108,49 @@ async function main() {
 
   console.log('\n== pdf ==');
   const shots: string[] = [];
-  const doc = await buildTechPack(p, 'cm', null, { capture: async (reqs) => { shots.push(...reqs.map((r) => r.kind)); return reqs.map(() => null); } });
+  const doc = await buildTechPack(p, 'cm', null, { capture: async (reqs) => { shots.push(...reqs.map((r) => (r.marker ? 'locator' : r.kind))); return reqs.map(() => null); } });
   ok('pdf builds without photos', doc.getNumberOfPages() >= 8);
-  ok('asks for overview, one close-up per item, one inside view', shots.filter((k) => k === 'overview').length === 3 && shots.filter((k) => k === 'attachment').length === 3 && shots.includes('inside'));
+  ok('asks for overview, one close-up per item, one inside view', shots.filter((k) => k === 'overview').length === 3 && shots.filter((k) => k === 'attachment').length >= 3 && shots.includes('inside'));
   const none = await buildTechPack(p, 'cm', null);
   ok('pdf builds when the 3D view is missing', none.getNumberOfPages() === doc.getNumberOfPages());
+
+  console.log('\n== close-ups (points of interest) ==');
+  {
+    const j = freshProject('jeans', 'Jeans');
+    const kinds = (q: typeof j) => pointsOfInterest(q).map((o) => o.kind);
+    const base = pointsOfInterest(j);
+    ok('jeans: fly, rivets, belt loops, pockets', ['fly', 'hardware', 'beltloops', 'attachment'].every((k) => kinds(j).includes(k as never)), kinds(j).join());
+    const back = j.pieces.find((q) => q.role === 'back')!;
+    ok('back pocket rivets are one page, on the back view', base.filter((o) => o.kind === 'hardware' && o.view === 'back').length === 1 && base.find((o) => o.kind === 'beltloops')!.title.includes('5'));
+    ok('every page has a target, radius and spec rows', base.every((o) => o.targets.length >= 1 && o.radiusCm >= 4 && o.spec.length >= 3 && j.pieces.some((q) => q.id === o.pieceId)));
+    ok('ids are unique', new Set(base.map((o) => o.id)).size === base.length);
+    const front = j.pieces.find((q) => q.role === 'front')!, bag = j.pieces.find((q) => q.role === 'pocketBag')!;
+    let q = j;
+    const grow = (name: string, mut: (q: typeof j) => typeof j, kind: string) => {
+      const before = pointsOfInterest(q).length, q2 = mut(q);
+      const after = pointsOfInterest(q2);
+      ok(`adding ${name} adds one page`, after.length === before + 1 && after.some((o) => o.kind === kind), `${before} to ${after.length}`);
+      return q2;
+    };
+    const withEdits = (e: Partial<NonNullable<typeof j.edits>>) => (z: typeof j) => ({ ...z, edits: { ...z.edits!, ...e } });
+    q = grow('a band', withEdits({ bands: [{ id: 'b1', from: 'hem', offset: 20, stripes: [{ height: 2, color: '#ffffff' }, { height: 3, color: '#b3202a' }], method: 'woven' }] }), 'band');
+    const band = pointsOfInterest(q).find((o) => o.kind === 'band')!;
+    ok('band page shows front and back and lists stripes', band.targets.length === 2 && band.spec.filter((r) => /^Stripe/.test(r[0])).length === 2);
+    q = grow('an inside fabric', (z) => withEdits({ insideFabric: { [bag.id]: { id: 'poplin', color: 2 } } })(z), 'inside');
+    q = grow('a patterned fabric', (z) => ({ ...z, pieces: z.pieces.map((pc) => (pc.id === front.id ? { ...pc, fabric: { ...pc.fabric, pattern: { id: 'gingham', colors: ['#ffffff', '#b3202a'], scale: 1, rotation: 0 } as never } } : pc)) }), 'pattern');
+    ok('pattern page has a wider radius and the repeat size', pointsOfInterest(q).find((o) => o.kind === 'pattern')!.radiusCm >= 9 && pointsOfInterest(q).find((o) => o.kind === 'pattern')!.spec.some((r) => r[0] === 'Repeat size'));
+    const emb: Attachment = { id: 'emb1', kind: 'embroidery', name: 'Crest', pieceId: back.id, x: 0, y: 4, rotation: 0, w: 4, h: 4, outline: 'rect', layers: [], thread: '#c9933a' };
+    q = grow('an embroidery', (z) => withEdits({ attachments: [...z.edits!.attachments, emb] })(z), 'attachment');
+    const all = pointsOfInterest(q);
+    const pagesOf = async (z: typeof j) => (await buildTechPack(z, 'cm', null)).getNumberOfPages();
+    const p0 = await pagesOf(j), p1 = await pagesOf(q);
+    ok('tech pack page count grows with the close-ups', p1 - p0 >= all.length - base.length && all.length - base.length === 4, `${p0} to ${p1} pages, ${all.length} close-ups`);
+    const skipped = { ...q, edits: { ...q.edits!, techpackSkip: [all[0].id, all[1].id] } };
+    ok('excluded close-ups drop out', includedPois(skipped).length === all.length - 2 && (await pagesOf(skipped)) === p1 - 2);
+    const reqs: string[] = [];
+    await buildTechPack(q, 'cm', null, { capture: async (r) => { reqs.push(...r.map((x) => `${x.kind}${x.marker ? '+marker' : ''}`)); return r.map(() => null); } });
+    ok('asks for a close-up and a locator per page', reqs.filter((k) => k === 'overview+marker').length === all.length);
+  }
 
   if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }
   {

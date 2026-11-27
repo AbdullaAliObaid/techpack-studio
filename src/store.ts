@@ -324,6 +324,8 @@ export interface State {
   duplicateAttachment: (id: string) => string | null;
   setCollar: (c: 'down' | 'up') => void;
   setWashSequence: (w: import('./data/edits').WashSequence) => void;
+  /** include or leave out one tech pack close-up page (point of interest id) */
+  setTechpackInclude: (id: string, include: boolean) => void;
   /** a front that buttons: worn buttoned or open */
   setClosure: (c: 'buttoned' | 'open') => void;
   /** fabric on the inside face of a piece; null = same as the outside */
@@ -968,6 +970,7 @@ export const useStore = create<State>((set, get) => {
     },
     setCollar: (c) => { get().commit(); setEdits((e) => ({ ...e, collar: c })); },
     setWashSequence: (w) => { get().commit(); setEdits((e) => ({ ...e, washSequence: w })); },
+    setTechpackInclude: (id, include) => setEdits((e) => { const rest = (e.techpackSkip ?? []).filter((q) => q !== id); return { ...e, techpackSkip: include ? rest : [...rest, id] }; }),
     setClosure: (c) => { get().commit(); setEdits((e) => ({ ...e, closure: c })); },
     setInsideFabric: (pieceId, fabric) => {
       get().commit();
