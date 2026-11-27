@@ -10,6 +10,7 @@ import type { ShapeLayer } from '../data/edits';
 import type { PieceFabric } from '../data/presets';
 import type { CSSProperties } from 'react';
 import { uid } from '../lib/units';
+import { linkedMoves } from '../data/symmetry';
 
 /* ------------------------------------------------------------------ fabrics */
 
@@ -437,23 +438,12 @@ export function toLayers(paths: TracedPath[], palette: string[], w: number, h: n
  * piece (both legs front and back, front and back bodies, both sleeves). Matched by anchor tag, else by position in the
  * outline. Used only to highlight; the move itself is the store's.
  */
-export function linkedPoints(pieces: import('../data/presets').Piece[], pieceId: string, pointId: string): { pieceId: string; pointId: string }[] {
-  const me = pieces.find((p) => p.id === pieceId);
-  const pt = me?.points.find((q) => q.id === pointId);
-  if (!me || !pt || me.role === 'custom') return [];
-  const idx = me.points.indexOf(pt);
-  const body = (r: string) => r === 'front' || r === 'back';
-  const out: { pieceId: string; pointId: string }[] = [];
-  for (const o of pieces) {
-    if (o.id === me.id || o.role === 'custom') continue;
-    if (!(o.role === me.role || (body(o.role) && body(me.role)))) continue;
-    const m = (pt.tag && o.points.find((q) => q.tag === pt.tag)) || (o.points.length === me.points.length ? o.points[idx] : undefined);
-    if (m) out.push({ pieceId: o.id, pointId: m.id });
-    // its mirror twin moves too
-    const twin = m && m.mirror && m.mirror !== m.id ? o.points.find((q) => q.id === m.mirror) : undefined;
-    if (twin) out.push({ pieceId: o.id, pointId: twin.id });
-  }
-  return out;
+/** Points that move with the dragged one under total symmetry (src/data/symmetry.ts), for highlighting. */
+export function linkedPoints(pieces: import('../data/presets').Piece[], pieceId: string, pointId: string, style?: import('../data/catalog').StyleId): { pieceId: string; pointId: string }[] {
+  if (!style) return [];
+  return linkedMoves(style, pieces, pieceId, pointId, 0.5, 0.5)
+    .filter((m) => !(m.pieceId === pieceId && m.pointId === pointId))
+    .map((m) => ({ pieceId: m.pieceId, pointId: m.pointId }));
 }
 
 /** A copy of the picture scaled so the long side is at most maxPx. */

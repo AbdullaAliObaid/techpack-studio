@@ -1,3 +1,4 @@
+import { WEAVE_BASE } from '../data/fabrics';
 import type { Fabric } from '../data/fabrics';
 
 // Procedural, seamless fabric tiles drawn on a canvas. Shared by the 2D pattern fills and the 3D materials.
@@ -45,7 +46,7 @@ export function fabricCanvas(f: Fabric, hex: string): HTMLCanvasElement {
     for (let x = 0; x < S; x++) {
       let k = 0; // brightness offset, roughly -0.2..0.2
       const n = rand() - 0.5;
-      switch (f.weave) {
+      switch (WEAVE_BASE[f.weave] ?? f.weave) {
         case 'twill': {
           const d = (x + y) % 8;
           k = (d < 3 ? 0.1 : -0.06) + n * 0.12 + (blob(x, y) - 0.5) * 0.12;

@@ -417,7 +417,7 @@ export default function PatternEditor() {
       }
       st.select(pieceId, pointId);
       pick(ent);
-      if (st.totalSymmetry) st.set({ linkedHot: linkedPoints(st.project.pieces, pieceId, pointId) });
+      if (st.totalSymmetry) st.set({ linkedHot: linkedPoints(st.project.pieces, pieceId, pointId, st.project.garment) });
       drag.current = { mode: 'point', pieceId, pointId, key: ent.key, start: w, committed: false };
       return;
     }
