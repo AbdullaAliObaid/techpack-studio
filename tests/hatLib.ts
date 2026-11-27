@@ -19,7 +19,7 @@ export function hatPose(G: Garment3D, f: BodyFrame, Minv?: Float64Array) {
   const side = { l: 0, ln: 0, r: 0, rn: 0, f: 0, fn: 0, b: 0, bn: 0 };
   for (const p of G.panels) for (let k = 0; k < p.mesh.uv.length; k++) {
     const [x, y, z] = at(p.offset + k);
-    if (p.piece.role === 'crown') { cx += x; cy += y; cz += z; n++; }
+    if (p.piece.role === 'crown' || p.piece.role === 'crownFront' || p.piece.role === 'headband' || p.piece.role === 'strap') { cx += x; cy += y; cz += z; n++; }
     if (p.piece.role === 'brim') {
       if (x > 3) { side.l += y; side.ln++; } else if (x < -3) { side.r += y; side.rn++; }
       if (z - f.headCz > 3) { side.f += y; side.fn++; } else if (z - f.headCz < -3) { side.b += y; side.bn++; }

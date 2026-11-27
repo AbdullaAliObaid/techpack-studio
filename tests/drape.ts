@@ -5,7 +5,7 @@ import { makePreset } from '../src/data/presets';
 import { CATALOG } from '../src/data/catalog';
 import { DEFAULT_BODY, DEFAULT_BODY as MALE, FEMALE_BODY, bodyFrame } from '../src/three/body';
 import { assemble, locate, warmStart, type Garment3D } from '../src/sim/setup';
-import { draft, regradePoints } from '../src/data/draft';
+import { derivedGirths, draft, regradePoints } from '../src/data/draft';
 import type { Attachment, Edits } from '../src/data/edits';
 import type { Piece } from '../src/data/presets';
 import type { StyleId } from '../src/data/catalog';
@@ -60,7 +60,11 @@ function drape(g: StyleId, pieces: Piece[], edits?: Edits, label: string = g, sa
   // where it should sit
   const fam = style.family;
   let placed = true, where = '';
-  if (fam === 'bucket' || fam === 'cap') {
+  if (fam === 'visor') {
+    // open crown: the band round the head at the brow, nothing on the top of the head or below the chin
+    placed = minY > f.headY + 2 && maxY < f.H - 1.5 && maxY > f.headBandH + 2;
+    where = `band ${f.headBandH.toFixed(0)}, top ${f.H.toFixed(0)}`;
+  } else if (style.category === 'headwear') {
     // on the head: nothing below the chin, the crown resting on the top of the head
     placed = minY > f.headY + 2 && maxY > f.H - 1 && maxY < f.H + 3;
     where = `head ${f.headY.toFixed(0)}..${f.H.toFixed(0)}`;
@@ -72,7 +76,9 @@ function drape(g: StyleId, pieces: Piece[], edits?: Edits, label: string = g, sa
     where = `neck ${f.neckH.toFixed(0)}`;
   }
   // strain: no runaway stretch anywhere, the bulk of the cloth relaxed; the crotch fork of woven trousers is the expected hot spot
-  const ok = bad === 0 && avgGap < 0.6 && open / ns < 0.02 && p99 < 0.2 && p50 < 0.03 && r98 < safe && placed;
+  // a knit cut smaller than the body (a beanie: negative ease) is meant to be stretched by that much round it
+  const knitStretch = fam === 'beanie' ? Math.max(0, derivedGirths(DEFAULT_BODY).head / (2 * Math.max(...pieces.find((p) => p.role === 'crown')!.points.map((q) => q.x))) - 1) : 0;
+  const ok = bad === 0 && avgGap < 0.6 && open / ns < 0.02 && p99 < 0.2 + knitStretch && p50 < 0.03 + knitStretch && r98 < safe && placed;
   if (!ok) fails++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${label.padEnd(14)} ${sim.n} particles, ${ns} sew links | build ${(t1 - t0).toFixed(0)}ms | ${frames} frames ${((t3 - t2) / frames).toFixed(1)}ms/frame | NaN ${bad} | y ${minY.toFixed(1)}..${maxY.toFixed(1)} (${where}) | seam gap avg ${avgGap.toFixed(2)}cm, open ${open} | strain p50 ${(p50 * 100).toFixed(1)}% p99 ${(p99 * 100).toFixed(1)}%, p98 ${(r98 * 100).toFixed(0)}% of safe`);
   if (!ok || process.env.V) console.log(`     worst ${(st[wi] * 100).toFixed(0)}% on ${pan.piece.name}${pan.mirror ? ' (L)' : ''} at pattern (${uvw.x.toFixed(1)}, ${uvw.y.toFixed(1)}) world y ${sim.pos[wi * 3 + 1].toFixed(1)}`);
@@ -452,7 +458,7 @@ if (!only || only === 'collar-edits') {
 if (!only || only === 'hats') {
   console.log('\n== hats ==');
   const grid = meshField(FF).grid;
-  for (const g of ['bucket-hat', 'cap'] as StyleId[]) {
+  for (const g of CATALOG.filter((s) => s.category === 'headwear').map((s) => s.id)) {
     const col = new PosedCollider(grid, [FF.f.ankleH + 6, FF.f.crotchH + 1], f);
     const G = assemble(g, makePreset(g, DEFAULT_BODY), DEFAULT_BODY, SP, col)!;
     G.sim.awake = true; // never sleeps: any slow creep would show
@@ -460,7 +466,9 @@ if (!only || only === 'hats') {
     const a = hatPose(G, f);
     for (let i = 0; i < 1140; i++) G.sim.step();
     const b = hatPose(G, f);
-    const ok = b.axis < 2 && Math.abs(b.y - a.y) < 1 && b.lr < 1 && b.fb < 4 && b.y > f.headBandH;
+    // a five panel's wide front panel is flat and shorter than the crown panels, so its crown sits a little further back
+    const axisMax = g === 'five-panel' ? 2.5 : 2;
+    const ok = b.axis < axisMax && Math.abs(b.y - a.y) < 1 && b.lr < 1 && b.fb < 4 && b.y > f.headBandH;
     verdict(ok, `${g.padEnd(11)} after 20 s: crown centre ${b.axis.toFixed(2)} cm off the head axis, moved ${(b.y - a.y).toFixed(2)} cm, brim tilt left/right ${b.lr.toFixed(2)} cm, front/back ${b.fb.toFixed(2)} cm`);
   }
 }

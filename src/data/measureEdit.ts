@@ -135,7 +135,14 @@ const GARMENT: Record<string, Comp[]> = {
   'Back rise': [{ role: 'back', label: 'Rise' }],
   Outseam: [{ role: 'front', label: 'Length' }, { role: 'back', label: 'Length' }],
   'Ankle cuff': [{ role: 'cuff', label: 'Cuff length' }],
-  'Head band circumference': [{ role: 'crown', label: 'Panel base' }],
+  // every headwear block: crown panels (and a five panel front), a beanie body, a visor band and strap
+  'Head band circumference': [
+    { role: 'crown', label: 'Panel base' }, { role: 'crownFront', label: 'Panel base' }, { role: 'crown', label: 'Band width' },
+    { role: 'cuff', label: 'Cuff width' }, { role: 'headband', label: 'Band length' }, { role: 'strap', label: 'Strap length' },
+  ],
+  'Body length': [{ role: 'crown', label: 'Body length' }],
+  'Cuff height': [{ role: 'cuff', label: 'Cuff height' }],
+  'Band height': [{ role: 'headband', label: 'Band height' }],
   'Crown depth': [{ role: 'crown', edge: ['crown.0', 'crown.3'] }],
   'Visor depth': [{ role: 'brim', label: 'Visor depth' }],
   'Brim width': [{ role: 'brim', label: 'Brim width' }],
@@ -208,6 +215,8 @@ function fitRes(style: StyleId, pieces: Piece[], label: string): Res | null {
     case 'Outseam': return G('Outseam', bandH);
     case 'Head': return G('Head band circumference');
     case 'Crown depth': return G('Crown depth');
+    case 'Body length': return G('Body length');
+    case 'Band height': return G('Band height');
   }
   return null;
 }

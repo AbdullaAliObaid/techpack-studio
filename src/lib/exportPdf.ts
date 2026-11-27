@@ -209,7 +209,12 @@ function styleTrims(id: StyleId): string[][] {
     else out.push(['Shank button', '17 mm', '1'], ['Zip', 'Metal, 15 cm fly', '1']);
     if (s.details.rivets) out.push(['Rivets', 'Copper, 9 mm', '6']);
   } else if (s.family === 'cap') {
-    out.push(['Top button', 'Fabric covered, 18 mm', '1'], ['Visor insert', 'Plastic, pre-curved', '1'], ['Sweatband', 'Cotton tape, 3 cm', '1']);
+    if (s.details.buttons) out.push(['Top button', 'Fabric covered, 18 mm', '1']);
+    out.push(['Visor insert', s.id === 'five-panel' ? 'Soft plastic, lightly curved' : 'Plastic, pre-curved', '1'], ['Sweatband', 'Cotton tape, 3 cm', '1']);
+  } else if (s.family === 'visor') {
+    out.push(['Visor insert', 'Plastic, pre-curved', '1'], ['Sweatband', 'Terry tape, 3 cm', '1'], ['Elastic', '2.5 cm wide, knitted', '1']);
+  } else if (s.family === 'beanie') {
+    out.push(['Thread', 'Stretch overlock, matching', '1']);
   } else if (s.family === 'bucket') {
     out.push(['Sweatband', 'Cotton tape, 3 cm', '1']);
   } else if (s.family === 'jacket') {

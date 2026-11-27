@@ -26,7 +26,7 @@
 import type { PPoint } from '../lib/geometry';
 import { outlineLength } from '../lib/geometry';
 import type { Piece } from './presets';
-import { migrateGarment, styleById, type StyleId } from './catalog';
+import { isHatFamily, migrateGarment, styleById, type StyleId } from './catalog';
 import { frontOffset } from './draft';
 import { builtinSeams, instanceCount } from '../sim/seams';
 import type { EdgeRef } from './edits';
@@ -64,7 +64,7 @@ function specFor(style: StyleId): Spec | null {
       },
     };
   }
-  if (fam === 'bucket' || fam === 'cap') return null;
+  if (isHatFamily(fam)) return null;
   const fo = frontOffset(st.id);
   return {
     partners: (role, key) => {

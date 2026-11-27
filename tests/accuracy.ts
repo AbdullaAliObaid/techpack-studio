@@ -11,7 +11,7 @@ import { buildDetails } from '../src/sim/details';
 import { INSIDE_ROLES } from '../src/data/presets';
 import { computeSpec } from '../src/lib/specs';
 import { pointInPoly } from '../src/lib/geometry';
-import { fitTable, seamReport } from '../src/lib/specs';
+import { fitTable, garmentSpecs, seamReport } from '../src/lib/specs';
 import { calibratedField } from '../src/three/bodyField';
 import { meshField } from '../src/three/mesher';
 import { hullLength } from '../src/three/body';
@@ -115,7 +115,7 @@ for (const [name, b] of Object.entries(bodies)) {
   let top = 0; for (let i = 1; i < mesh.positions.length; i += 3) top = Math.max(top, mesh.positions[i]);
   check('rendered mesh height', top, b.height, 0.25);
 
-  const ROLES = new Set(['front', 'back', 'sleeve', 'neckband', 'collar', 'placket', 'cuff', 'waistband', 'crown', 'brim', 'facing', 'pocketFacing', 'pocketBag', 'flyFacing', 'flyShield']);
+  const ROLES = new Set(['front', 'back', 'sleeve', 'neckband', 'collar', 'placket', 'cuff', 'waistband', 'crown', 'crownFront', 'headband', 'strap', 'brim', 'facing', 'pocketFacing', 'pocketBag', 'flyFacing', 'flyShield']);
   for (const style of CATALOG) {
     const g = style.id, fam = style.family;
     const pieces = makePreset(g, b);
@@ -140,6 +140,16 @@ for (const [name, b] of Object.entries(bodies)) {
       const inseam = E.inseamLen ?? (E.cuffH ? f.crotchH - (f.ankleH - 1 + E.cuffH) + E.blouse : b.inseam - 3 + (E.inseam ?? 0));
       want('Inseam', inseam);
       if (E.cuffH) want('Ankle cuff', RIB.cuff * opening);
+    } else if (fam === 'beanie') {
+      // rib knit cut smaller than the head (negative ease), the body runs on past the band line over the ears
+      want('Head', d.head + E.head);
+      want('Body length', crownArc(d.head) + E.depth);
+      if (!(E.head < 0)) { fails++; console.log(`FAIL ${g} should have negative head ease`); }
+      if (garmentSpecs(g, pieces).find((r) => r.label === 'Cuff height')?.value !== E.cuff) { fails++; console.log(`FAIL ${g} cuff height`); }
+    } else if (fam === 'visor') {
+      // woven front band plus the elastic strap cut short: the whole band is the head + ease + strap ease
+      want('Head', d.head + E.head + E.strap);
+      want('Band height', E.band);
     } else if (fam === 'bucket' || fam === 'cap') {
       want('Head', d.head + E.head);
       want('Crown depth', crownArc(d.head) + E.depth);
@@ -161,7 +171,7 @@ for (const [name, b] of Object.entries(bodies)) {
     }
 
     // 3D garment: chest / hip ring perimeter must equal the pattern circumference
-    if (fam === 'bucket' || fam === 'cap') continue;
+    if (style.category === 'headwear') continue;
     const res = buildGarment(g, pieces, b);
     const front = pieces.find((p) => p.role === 'front')!, back = pieces.find((p) => p.role === 'back')!;
     const fp = samplePoly(front.points), bp = samplePoly(back.points);
@@ -208,7 +218,7 @@ console.log('\n== female body and rig ==');
   ok('female hips wider than her bust', halfW(f, f.hipH) > halfW(f, f.chestH));
   ok('female waist to hip drop deeper than male', b.hips / b.waist > MALE_BODY.hips / MALE_BODY.waist && halfW(f, f.hipH) / halfW(f, f.waistH) > halfW(fM, fM.hipH) / halfW(fM, fM.waistH));
   ok('female arms slimmer than male for the same chest', derivedGirths({ ...MALE_BODY, sex: 'female' }).bicep < derivedGirths(MALE_BODY).bicep);
-  const tops = CATALOG.filter((s) => s.family !== 'pants' && s.family !== 'bucket' && s.family !== 'cap');
+  const tops = CATALOG.filter((s) => s.family !== 'pants' && s.category !== 'headwear');
   ok(`every top drafts at least the bust at the bust line (${tops.length} styles)`, tops.every((s) => fitTable(s.id, makePreset(s.id, b), b).find((r) => r.label === 'Chest')!.garment >= b.chest + 4));
   for (const [name, m] of Object.entries(meshes)) {
     let worst = 0, range = true;
@@ -246,6 +256,8 @@ const SEAM_IDS: Record<string, string[]> = {
   pants: ['outseam-r', 'inseam-r', 'outseam-l', 'inseam-l', 'crotch-front', 'crotch-back', 'waistband-join', 'waistband'],
   bucket: ['crown-1', 'crown-2', 'crown-3', 'crown-4', 'crown-5', 'crown-6', 'brim-join', 'brim'],
   cap: ['crown-1', 'crown-2', 'crown-3', 'crown-4', 'crown-5', 'crown-6', 'visor'],
+  beanie: ['dart-front', 'dart-r1', 'dart-r2', 'dart-l1', 'dart-l2', 'back', 'cuff-join', 'cuff'],
+  visor: ['strap-r', 'strap-l', 'visor'],
 };
 const baseline = JSON.parse(readFileSync(new URL('./fixtures/sew-baseline.json', import.meta.url), 'utf8'));
 for (const st of CATALOG) {
@@ -257,6 +269,7 @@ for (const st of CATALOG) {
   const stable = JSON.stringify(builtinSeams(st.id, makePreset(st.id, bodies.big, 'relaxed')).map((q) => q.id)) === JSON.stringify(ids);
   let want = SEAM_IDS[st.family] ?? [];
   if (st.family === 'polo') want = SEAM_IDS.jacket.slice(0, 10).concat(pieces.some((q) => q.role === 'placket') ? ['placket-r', 'placket-l', 'placket-base', 'placket-base-l'] : [], ['collar']);
+  if (st.id === 'five-panel') want = ['crown-1', 'crown-2', 'crown-3', 'crown-4', 'crown-5', 'visor'];
   if (st.family === 'pants' && pieces.some((q) => q.role === 'cuff')) want = [...want.slice(0, 7), 'cuff-join-r', 'cuff-join-l', 'waistband', 'cuff-r', 'cuff-l'];
   const expected = JSON.stringify(ids) === JSON.stringify(want);
   pass(unique && stable && expected, `${st.id} built-in seams: ${ids.length} unique, stable ids${expected ? '' : ` (got ${ids.join(',')})`}`);
