@@ -11,7 +11,7 @@
 // transforms or strokes, so the SVG is tiny and easy to rasterise anywhere. All designs are generic (generic setts,
 // generic flowers, generic spots): nothing copies a trademarked or clan design.
 
-import type { FabricPattern, PatternId } from './fabrics';
+import type { FabricPattern, PatternId, PatternMotif, RepeatLayout } from './fabrics';
 
 export interface PatternDef {
   name: string;
@@ -56,12 +56,42 @@ export const PATTERN_IDS = Object.keys(PATTERNS) as PatternId[];
 
 const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
+export const REPEAT_LAYOUTS: RepeatLayout[] = ['block', 'half-drop', 'brick', 'mirror', 'turn', 'scatter'];
+
+const DATA_URL = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
+const PATH_D = /^[MLQCZHVSTAmlqczhvsta0-9 ,.eE+-]+$/;
+
+/** Keep only a motif that is safe to put into an SVG: base64 image data URL, hex colours, plain path data. */
+export function cleanMotif(m: PatternMotif | undefined): PatternMotif | undefined {
+  if (!m) return undefined;
+  const image = typeof m.image === 'string' && m.image.length < 6_000_000 && DATA_URL.test(m.image) ? m.image : undefined;
+  const paths = Array.isArray(m.paths)
+    ? m.paths.filter((q) => q && typeof q.path === 'string' && PATH_D.test(q.path) && HEX.test(q.color)).slice(0, 24).map((q) => ({ color: q.color.toLowerCase(), path: q.path }))
+    : undefined;
+  if (!image && !paths?.length) return undefined;
+  const aspect = Number.isFinite(m.aspect) && m.aspect > 0 ? Math.min(20, Math.max(0.05, m.aspect)) : 1;
+  const out: PatternMotif = { aspect };
+  if (image) out.image = image;
+  if (paths?.length) out.paths = paths;
+  if (m.detectedTile && m.detectedTile.w > 0 && m.detectedTile.h > 0) out.detectedTile = { w: m.detectedTile.w, h: m.detectedTile.h };
+  return out;
+}
+
 /** Fill in anything missing (old saves, partial UI state) and keep colours to safe CSS hex values. */
 export function withPatternDefaults(p: Partial<FabricPattern> & { id: PatternId }): FabricPattern {
   const d = (PATTERNS[p.id] ?? PATTERNS.solid).defaults;
   const colors = d.colors.map((c, i) => (p.colors?.[i] && HEX.test(p.colors[i]) ? p.colors[i].toLowerCase() : c));
   const scale = Number.isFinite(p.scale) && p.scale! > 0.05 ? p.scale! : d.scale;
-  return { id: PATTERNS[p.id] ? p.id : 'solid', colors, scale, rotation: Number.isFinite(p.rotation) ? p.rotation! : 0, method: p.method ?? d.method };
+  const out: FabricPattern = { id: PATTERNS[p.id] ? p.id : 'solid', colors, scale, rotation: Number.isFinite(p.rotation) ? p.rotation! : 0, method: p.method ?? d.method };
+  if (out.id === 'custom') {
+    const motif = cleanMotif(p.motif);
+    if (motif) out.motif = motif;
+    out.layout = p.layout && REPEAT_LAYOUTS.includes(p.layout) ? p.layout : 'block';
+    out.motifScale = Number.isFinite(p.motifScale) ? Math.min(1, Math.max(0.2, p.motifScale!)) : 0.7;
+    const rc = p.recolor?.filter((c) => HEX.test(c)).map((c) => c.toLowerCase());
+    if (rc?.length) out.recolor = rc;
+  }
+  return out;
 }
 
 /** Plain language summary for specs and the PDF: 'Gingham, 0.8 cm repeat, woven'. */
@@ -205,6 +235,7 @@ function woven(t: Tile, n: number, m: number, fill: string, on: (i: number, j: n
  */
 export function patternTile(pIn: FabricPattern): { size: [number, number]; svg: string; body: string } {
   const p = withPatternDefaults(pIn);
+  if (p.id === 'custom') return customTile(p);
   const S = p.scale;
   const c = p.colors;
   const rnd = rng(hash(p.id));
@@ -213,7 +244,6 @@ export function patternTile(pIn: FabricPattern): { size: [number, number]; svg: 
   t.rect(0, 0, S, H, c[0]); // ground
   switch (p.id) {
     case 'solid': break;
-    case 'custom': break; // motif repeat: filled in by the pattern agent
     case 'stripe': t.rect(0.3 * S, 0, 0.4 * S, H, c[1]); break;
     case 'pinstripe': { const w = Math.max(0.03 * S, 0.04); t.rect(0.5 * S - w / 2, 0, w, H, c[1]); break; }
     case 'breton': t.rect(0, 0.325 * S, S, 0.35 * S, c[1]); break;
@@ -343,4 +373,58 @@ export function patternTile(pIn: FabricPattern): { size: [number, number]; svg: 
   const body = t.out.join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${f(S)}" height="${f(H)}" viewBox="0 0 ${f(S)} ${f(H)}">${body}</svg>`;
   return { size: [S, H], svg, body };
+}
+
+// ---------------------------------------------------------------- custom motif repeats
+
+export interface MotifPlacement { x: number; y: number; rot: number; flip: boolean }
+
+/**
+ * Where the motif goes in one repeat of a layout. The cell is S x S; the tile is the smallest rectangle of whole
+ * cells that repeats seamlessly: block 1 x 1, half-drop 2 x 1 (the odd column is dropped half a cell), brick 1 x 2
+ * (the odd row is shifted half a cell), mirror 2 x 1 (the odd column is flipped), turn 2 x 2 (a chessboard of cells
+ * turned 180 degrees), scatter 3 x 3 (seeded jitter and turn, same at every scale). rot is in degrees.
+ */
+export function motifPlacements(layout: RepeatLayout, S: number): { W: number; H: number; items: MotifPlacement[] } {
+  const at = (cx: number, cy: number, rot = 0, flip = false): MotifPlacement => ({ x: cx * S, y: cy * S, rot, flip });
+  switch (layout) {
+    case 'half-drop': return { W: 2 * S, H: S, items: [at(0.5, 0.5), at(1.5, 1)] };
+    case 'brick': return { W: S, H: 2 * S, items: [at(0.5, 0.5), at(1, 1.5)] };
+    case 'mirror': return { W: 2 * S, H: S, items: [at(0.5, 0.5), at(1.5, 0.5, 0, true)] };
+    case 'turn': return { W: 2 * S, H: 2 * S, items: [at(0.5, 0.5), at(1.5, 0.5, 180), at(0.5, 1.5, 180), at(1.5, 1.5)] };
+    case 'scatter': {
+      const rnd = rng(hash('custom-scatter'));
+      const items: MotifPlacement[] = [];
+      for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) items.push(at(i + 0.5 + (rnd() - 0.5) * 0.5, j + 0.5 + (rnd() - 0.5) * 0.5, Math.round(rnd() * 360)));
+      return { W: 3 * S, H: 3 * S, items };
+    }
+    default: return { W: S, H: S, items: [at(0.5, 0.5)] };
+  }
+}
+
+function customTile(p: FabricPattern): { size: [number, number]; svg: string; body: string } {
+  const S = p.scale, layout = p.layout ?? 'block';
+  const { W, H, items } = motifPlacements(layout, S);
+  const out: string[] = [`<rect x="0" y="0" width="${f(W)}" height="${f(H)}" fill="${p.colors[0]}"/>`];
+  const m = p.motif;
+  const useImage = !!m?.image && !(m.paths?.length && p.recolor?.length);
+  if (m && (useImage || m.paths?.length)) {
+    const a = m.aspect, iw = a >= 1 ? 1 : a, ih = a >= 1 ? 1 / a : 1;
+    const id = 'mt' + hash(useImage ? m.image! : JSON.stringify([m.paths, p.recolor])).toString(36);
+    let def: string;
+    if (useImage) def = `<image x="${f(-iw / 2)}" y="${f(-ih / 2)}" width="${f(iw)}" height="${f(ih)}" preserveAspectRatio="none" href="${m.image}"/>`;
+    else def = m.paths!.map((q, i) => `<path d="${q.path}" fill="${p.recolor?.[i] ?? q.color}" fill-rule="evenodd"/>`).join('');
+    out.push(`<defs><g id="${id}">${def}</g></defs>`);
+    const sz = Math.min(1, Math.max(0.2, p.motifScale ?? 0.7)) * S;
+    const r = (Math.hypot(iw, ih) / 2) * sz; // turn-proof radius of the motif
+    for (const it of items) {
+      for (const oy of [0, -H, H]) for (const ox of [0, -W, W]) {
+        const x = it.x + ox, y = it.y + oy;
+        if (x + r <= 0 || x - r >= W || y + r <= 0 || y - r >= H) continue;
+        out.push(`<use href="#${id}" transform="translate(${f(x)} ${f(y)})${it.rot ? ` rotate(${f(it.rot)})` : ''} scale(${f(it.flip ? -sz : sz)} ${f(sz)})"/>`);
+      }
+    }
+  }
+  const body = out.join('');
+  return { size: [W, H], svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${f(W)}" height="${f(H)}" viewBox="0 0 ${f(W)} ${f(H)}">${body}</svg>`, body };
 }

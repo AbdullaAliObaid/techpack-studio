@@ -31,12 +31,14 @@ export function clothMaterials(fabrics: Piece['fabric'][], pat: VertexPattern, e
       inside.push(labelMaterial(att.label, att.sheen, inSide));
       return;
     }
-    outside.push(clothMaterial(fb, outSide));
+    // finish: the piece's sheen; a cloth attachment (pocket, patch) with its own sheen wins
+    const outFabric = att && att.sheen ? { ...fb, sheen: att.sheen } : fb;
+    outside.push(clothMaterial(outFabric, outSide));
     const pieceId = pat.pieceIds[info.pieceIndex];
     const inner = edits.insideFabric?.[pieceId];
     // the wrong side: woven patterns and plain cloth show through a little duller, a printed pattern is only ink on
-    // the outside so its inside is the ground colour
-    inside.push(inner ? clothMaterial(inner, inSide) : clothMaterial(fb, inSide, 0.8, { ground: !isPlain(fb.pattern) && !isWoven(fb.pattern) }));
+    // the outside so its inside is the ground colour; the finish stays on the outside unless the inside fabric names one
+    inside.push(inner ? clothMaterial(inner, inSide) : clothMaterial({ ...fb, sheen: undefined }, inSide, 0.8, { ground: !isPlain(fb.pattern) && !isWoven(fb.pattern) }));
   });
   return { outside, inside, twoSided };
 }
