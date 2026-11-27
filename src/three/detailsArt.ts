@@ -21,6 +21,23 @@ export const FONT_STACKS: Record<string, string> = {
 /** canvas font for a text layer of height h */
 export const fontOf = (l: ShapeLayer, h: number) => (FONT_STACKS[(l as { font?: string }).font ?? ''] ?? '700 {h}px system-ui, sans-serif').replace('{h}', String(h));
 
+/**
+ * Draw a text layer centred on the origin, h tall and at most w wide, in the current space (usually cm). Canvas text
+ * at a tiny font size (a few px, as cm units are) is hinted into blobs that read as a solid box, so the glyphs are laid
+ * out at 100 px and scaled down.
+ */
+export function drawText(ctx: CanvasRenderingContext2D, l: ShapeLayer, h: number, w: number, mode: 'fill' | 'stroke' = 'fill') {
+  const S = 100, k = h / S;
+  ctx.save();
+  ctx.scale(k, k);
+  ctx.font = fontOf(l, S);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (mode === 'stroke') { ctx.lineWidth /= k; const d = ctx.getLineDash(); if (d.length) ctx.setLineDash(d.map((v) => v / k)); ctx.strokeText(l.text ?? '', 0, 0, w / k); }
+  else ctx.fillText(l.text ?? '', 0, 0, w / k);
+  ctx.restore();
+}
+
 /* ---------- art version: bumps whenever an image or pattern tile finishes decoding, so painters can repaint ---------- */
 let version = 0;
 const subs = new Set<() => void>();
@@ -86,10 +103,7 @@ export function drawLayer(ctx: CanvasRenderingContext2D, l: ShapeLayer, fill: st
   ctx.fillStyle = fill;
   if (l.shape === 'text') {
     if (l.text) {
-      ctx.font = fontOf(l, Math.max(0.02, l.h));
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(l.text, 0, 0, Math.max(0.02, l.w));
+      drawText(ctx, l, Math.max(0.02, l.h), Math.max(0.02, l.w));
     }
   } else if (l.shape === 'image') {
     const img = pass === 'color' ? getImage(l.image) : null;

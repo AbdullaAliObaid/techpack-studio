@@ -38,5 +38,13 @@ for (const d of DESIGNS) {
   ok(got === want && (p.edits?.attachments ?? []).every((a) => ids.has(a.pieceId)), `${d.id}: ${want} attachments placed on real pieces`);
   ok((p.edits?.bands ?? []).every((b) => (b.skip ?? []).every((x) => ids.has(x))), `${d.id}: bands skip real pieces`);
 }
+{
+  // letters as the first layer of a patch or applique are cut letter by letter, not as a solid box
+  const { attachmentPatch, newDesign, newLayer, docFromAttachment } = await import('../src/components/designDoc');
+  const a = attachmentPatch({ ...newDesign(), makeAs: 'applique', layers: [newLayer('text', { text: 'AB12', w: 8, h: 3 })] });
+  ok(a.outline === 'shape' && a.shape === 'text' && a.text === 'AB12', 'letters patch: cut as letters, not a box');
+  const back = docFromAttachment({ ...a, id: 'x', pieceId: 'p', x: 0, y: 0, rotation: 0 } as never);
+  ok(back.layers[0]?.shape === 'text' && back.layers[0]?.text === 'AB12', 'letters patch: reopens with the letters as the base');
+}
 if (fails) { console.error(`${fails} failed`); process.exit(1); }
 console.log('designs ok');

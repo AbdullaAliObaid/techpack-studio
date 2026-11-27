@@ -10,7 +10,7 @@ import { registerHitCloth, type ClothHit } from './hitCloth';
 import { NONE, type VertexPattern } from './printsAdapter';
 import { fabricHex as hexOf } from './fabricAdapter';
 import { patternFill, isPlain } from './detailsPattern';
-import { artVersion, drawLayer, fontOf, fillRuleOf, hasPictures, subscribeArt, unitPath } from './detailsArt';
+import { artVersion, drawLayer, drawText, fillRuleOf, hasPictures, subscribeArt, unitPath } from './detailsArt';
 import { bandRanges, type BandStripe } from '../components/designDoc';
 import { applyLook, cottonTile, grainTile, labelLook, sheenLook, weaveTile, type LabelLook } from './detailsLook';
 
@@ -162,10 +162,7 @@ function stitchLayer(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2
     x.globalCompositeOperation = 'destination-in';
     x.fillStyle = '#000';
     if (l.shape === 'text') {
-      x.font = fontOf(l, Math.max(0.5, l.h));
-      x.textAlign = 'center';
-      x.textBaseline = 'middle';
-      x.fillText(l.text ?? '', 0, 0, w);
+      drawText(x, l, Math.max(0.5, l.h), w);
     } else {
       x.save(); x.scale(l.w, l.h); x.fill(unitPath(l)!, fillRuleOf(l)); x.restore();
     }
@@ -180,7 +177,7 @@ function stitchLayer(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2
     x.lineWidth = 0.075;
     x.setLineDash([0.16, 0.045]);
     x.lineCap = 'round';
-    if (l.shape === 'text') { x.font = fontOf(l, Math.max(0.5, l.h)); x.textAlign = 'center'; x.textBaseline = 'middle'; x.strokeText(l.text ?? '', 0, 0, w); }
+    if (l.shape === 'text') { drawText(x, l, Math.max(0.5, l.h), w, 'stroke'); }
     else { x.scale(l.w, l.h); x.lineWidth = 0.075 / Math.max(l.w, l.h); x.setLineDash([0.16 / Math.max(l.w, l.h), 0.045 / Math.max(l.w, l.h)]); x.stroke(unitPath(l)!); }
     x.restore();
   };
