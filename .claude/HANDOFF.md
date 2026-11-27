@@ -47,3 +47,5 @@ components use `usePick(...)` selectors, keep that), `npx tsc --noEmit`, `npm ru
 - Fly-away fix and soft skin merged and pushed (Body panel switch "Soft skin", tests in tests/worker.ts).
 - In flight: agent/hats (wt-hats: beanie, visor, five panel, HAT_DESIGNS, star stitch, user buttonholes) and agent/designs (wt-designs: designs library, src/data/designs.ts). Collar button pushed.
 - TODO collar fly-away: cold build with collar down after an up drape gives top 152.2 vs 155.6 fresh (worker state leaks across builds, maybe soft skin dents); node shows no fly-away, app path differs. Needs garment-engineer.
+- In flight: agent/insert (wt-insert): design snap, Insert section, merged artwork picker (print/embroidery/applique), scissor loading overlay, bands only editable in Paint, double click to edit piece/trim.
+- Queued after hats agent: collar fly-away (above), left/right placket edited separately, pocket and inserted shape outlines editable by dragging points, edge paint on both faces plus "contrast thread / binding" edge option, photo blend with fabric (leather gloss, weave showing through).
