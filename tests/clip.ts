@@ -11,6 +11,7 @@
 //
 // Env: STYLE=jeans only that style, BODY=male|female, QUICK=1 stand only, V=1 per case worst spots.
 import { makePreset, type Piece } from '../src/data/presets';
+import { styleEdits } from '../src/data/construction';
 import type { StyleId } from '../src/data/catalog';
 import { DEFAULT_BODY, FEMALE_BODY, bodyFrame, type Body, type BodyFrame } from '../src/three/body';
 import { assemble, displayPositions, type Garment3D } from '../src/sim/setup';
@@ -174,7 +175,9 @@ for (const [bname, body] of process.env.ONLY === 'attach' ? [] : BODIES) {
   const w = world(bname, body);
   for (const style of STYLES) {
     if (process.env.STYLE && process.env.STYLE !== style) continue;
-    const { G, col, M0 } = standing(w, style, makePreset(style, body));
+    // with the style's own details: split fronts buttoned, as every project has them
+    const pc = makePreset(style, body);
+    const { G, col, M0 } = standing(w, style, pc, styleEdits(style, pc, body));
     const r = clipOf(G, posed(w, M0));
     totals.stand[0] += r.inside; totals.stand[1] += r.samples;
     const ok = r.inside / r.samples < STAND_MAX / 100 && r.maxDepth <= STAND_DEPTH;
@@ -232,7 +235,8 @@ console.log('\n== collars down and up ==');
 for (const [bname, body] of BODIES.slice(0, 1)) {
   const w = world(bname, body);
   for (const style of ['polo', 'button-up'] as StyleId[]) for (const collar of ['down', 'up'] as const) {
-    const { G, M0 } = standing(w, style, makePreset(style, body), { ...EMPTY_EDITS, collar });
+    const pc = makePreset(style, body);
+    const { G, M0 } = standing(w, style, pc, styleEdits(style, pc, body, { ...EMPTY_EDITS, collar }));
     const r = clipOf(G, posed(w, M0));
     const ok = r.inside / r.samples < STAND_MAX / 100 && r.maxDepth <= STAND_DEPTH;
     if (!ok) fails++;
@@ -253,7 +257,7 @@ for (const [bname, body] of BODIES.slice(0, 1)) {
     const pieces = makePreset(style, body);
     const c = pieces.find((q) => q.role === 'collar')!;
     mv(c, 'collar.2', 2); mv(c, 'collar.1', 1.5);
-    const { G, M0 } = standing(w, style, pieces, { ...EMPTY_EDITS, collar });
+    const { G, M0 } = standing(w, style, pieces, styleEdits(style, pieces, body, { ...EMPTY_EDITS, collar }));
     const r = clipOf(G, posed(w, M0));
     const ok = r.inside / r.samples < STAND_MAX / 100 && r.maxDepth <= STAND_DEPTH && G.sim.recoveries === 0;
     if (!ok) fails++;

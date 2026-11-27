@@ -148,6 +148,19 @@ export interface Attachment {
   instance?: number;
   /** a colour block (src/data/colourBlock.ts): a print the chart clips to the piece outline */
   block?: boolean;
+  /**
+   * made from the style (src/data/construction.ts builtinDetails): the buttons, buttonholes, rivets, belt loops and
+   * pockets every garment of the style has. The UI labels them "from the style"; they move, edit and delete like any
+   * other attachment.
+   */
+  builtin?: boolean;
+  /**
+   * kind === 'hardware', hardware.type === 'button': these are buttonholes (cut and stitched into the host), not buttons
+   * sewn on. Buttonholes add no weight and are not bought trims. In the simulation each buttonhole is buttoned to the
+   * nearest button on another piece (or the other copy of a piece cut twice), so a front that buttons is held closed only
+   * at its buttons; Edits.closure 'open' leaves them unbuttoned.
+   */
+  buttonhole?: boolean;
 }
 
 /** A run along a piece outline between two outline points (ids), taking the shorter way round. */
@@ -223,6 +236,13 @@ export interface Edits {
   /** fabric on the inside face of a piece (under collar, placket facing, lining look); key = piece id */
   bands?: Band[];
   insideFabric?: Record<string, { id: string; color: number; hex?: string; pattern?: import('./fabrics').FabricPattern }>;
+  /** a front that buttons: worn buttoned (default) or open (buttonholes left unbuttoned, the fronts hang free) */
+  closure?: 'buttoned' | 'open';
+  /**
+   * version of the style details made as attachments (builtin: true). Set when they were made, so a project whose user
+   * deleted them does not get them back on load; projects from before have none and get them once (withBuiltins).
+   */
+  builtin?: number;
 }
 
 /**

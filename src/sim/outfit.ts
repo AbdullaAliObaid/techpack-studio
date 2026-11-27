@@ -189,6 +189,8 @@ export function assembleOutfit(items: OutfitInput[], body: Body, collider?: Clot
   }));
   const O: Outfit3D = {
     sim, panels, limits, seamLinks, body: col, contact, panelSign: Int8Array.from(panelSign), collar: built[0].G.collar,
+    // the outfit as a whole: the first garment's style; every garment's buttoned pairs (ids are unique per project)
+    style: built[0].G.style, edits: built[0].G.edits, buttoned: built.flatMap(({ G }) => G.buttoned ?? []),
     foldLayers: nAttachLayers, ...(layerNear.length ? { layerNear } : {}), garments, pairs, rebind: () => {},
   };
   const binder = contactBinder(O, bodyFrame(body));

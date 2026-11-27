@@ -7,7 +7,7 @@
 // Every style in src/data/catalog.ts is drafted from one of the family blocks below. Points carry
 // stable keys (`role.index`) so a regrade (new body or new fit) keeps the user's edits as offsets.
 
-import { outlineLength, type PPoint } from '../lib/geometry';
+import { bezAt, outlineLength, toBeziers, type PPoint } from '../lib/geometry';
 import { bodyFrame, limbGirths, type Body, type BodyFrame } from '../three/body';
 import { migrateGarment, styleById, type Family, type StyleId } from './catalog';
 
@@ -34,9 +34,11 @@ const TEE: Ease = {
 };
 const JEANS: Ease = { waist: 2, hip: 6, thigh: 0, knee: 12, legOpening: 16, waistband: 4 };
 
+// buttonExt: how far each front runs past centre front (cm). The two fronts overlap by twice that when buttoned; the
+// overlap is not ease: chest and waist are measured centre front to side on each front (the extension is left out).
 export const EASE: Record<StyleId, Ease> = {
-  jacket: { chest: 10, waist: 14, hem: 8, neck: 4, armhole: 6, bicep: 12, cuff: 14, sleeve: 3, length: 3, shoulder: 1, capEase: 2.5 },
-  'button-up': { chest: 10, waist: 12, hem: 6, neck: 2, armhole: 4, bicep: 9, cuff: 8, sleeve: 1, length: 5, shoulder: 0, capEase: 1, pleat: 6 },
+  jacket: { chest: 10, waist: 14, hem: 8, neck: 4, armhole: 6, bicep: 12, cuff: 14, sleeve: 3, length: 3, shoulder: 1, capEase: 2.5, buttonExt: 2.75, facing: 7 },
+  'button-up': { chest: 10, waist: 12, hem: 6, neck: 2, armhole: 4, bicep: 9, cuff: 8, sleeve: 1, length: 5, shoulder: 0, capEase: 1, pleat: 6, buttonExt: 1.75, facing: 4 },
   'basic-tee': TEE,
   // boxy: much wider, cropped, the shoulder seam drops 5 cm down the arm, flatter cap, heavier neckband
   'boxy-tee': { ...TEE, chest: 32, waist: 46, hem: 30, neck: 7, armhole: 7, bicep: 16, opening: 12, sleeveRatio: 0.3, length: 1, drop: 5, band: 2.8 },
@@ -141,11 +143,40 @@ export const neckBase = (b: Body) => bodyFrame(b).neckRing(bodyFrame(b).neckH).C
 /** Index offset of the front outline: the polo front starts with its placket opening (2 extra points). */
 export const frontOffset = (style: StyleId) => (style === 'polo' ? 2 : 0);
 
+/**
+ * Styles that button down the front (shirt and jacket families) are drafted with split fronts: one front piece cut
+ * twice (copy 0 the wearer's left, copy 1 the mirrored right), each running past centre front by the button extension.
+ */
+export const splitFrontStyle = (style: StyleId) => { const f = styleById(migrateGarment(style)).family; return f === 'shirt' || f === 'jacket'; };
+/** A front piece drafted split (its own front edge past centre front, keys front.ext0 / front.ext1). Old saves have one closed front. */
+export const isSplitFront = (p: { role: string; points: { key?: string }[] }) => p.role === 'front' && p.points.some((q) => q.key === 'front.ext1');
+
+/** x where the outline, walked forward from point index i0, first crosses height y (sampled beziers); NaN if it never does. */
+export function xAtY(points: PPoint[], i0: number, y: number, maxSegs = 4): number {
+  const bz = toBeziers(points);
+  for (let s = 0; s < maxSegs; s++) {
+    const b = bz[(i0 + s) % bz.length];
+    let prev = bezAt(b, 0);
+    for (let k = 1; k <= 48; k++) {
+      const q = bezAt(b, k / 48);
+      if ((prev.y - y) * (q.y - y) <= 0 && q.y !== prev.y) return prev.x + ((y - prev.y) / (q.y - prev.y)) * (q.x - prev.x);
+      prev = q;
+    }
+  }
+  return NaN;
+}
+/** y where the outline, walked forward from point index i0, first crosses x; NaN if it never does. */
+export function yAtX(points: PPoint[], i0: number, x: number, maxSegs = 4): number {
+  const sw = points.map((q) => ({ ...q, x: q.y, y: q.x }));
+  return xAtY(sw, i0, x, maxSegs);
+}
+
 function tops(style: StyleId, b: Body, f: BodyFrame, fit: Fit): DraftPiece[] {
   const fam = styleById(style).family;
   const woven = fam === 'jacket' || fam === 'shirt';
   const shirt = fam === 'shirt';
   const polo = style === 'polo';
+  const split = splitFrontStyle(style);
   const fo = frontOffset(style);
   const E = easeFor(style, fit);
   const g = derivedGirths(b);
@@ -180,10 +211,27 @@ function tops(style: StyleId, b: Body, f: BodyFrame, fit: Fit): DraftPiece[] {
         ? [[0, plB, false, 'placket'], [pw2, plB], [pw2, yN0], [xN * 0.62, fND * 0.78, true], [xN, 0, false, 'hps']]
         : [[0, fND, true], [xN * 0.62, fND * 0.78, true], [xN, 0, false, 'hps']];
 
-    const front = half('front', [
+    const fpts: P[] = [
       ...neckF, [xS, slope, false, 'shoulder'],
       [xS - inF, midY, true], [xC, uaY, false, 'underarm'], [xW, waistY, true, 'waist'], [xH, len, false, 'hem'], ...tail,
-    ]);
+    ];
+    let front: PPoint[];
+    if (split) {
+      // one front (the wearer's left as drafted, +x), centre front at x = 0, the button extension past it to -buttonExt.
+      // The centre front neck is a corner: the extension's top edge runs straight out from it.
+      fpts[0] = [0, fND, false, 'cfNeck'];
+      const last = fpts.length - 1;
+      fpts[last] = [fpts[last][0], fpts[last][1], fpts[last][2], 'cfHem'];
+      front = free('front', fpts);
+      // the neck is squared at centre front (as on a closed front, where it runs straight across): a short level run
+      // before the curve, so the two fronts meet without a notch
+      front.splice(1, 0, { id: nid(), key: 'front.0a', x: Math.min(1.2, xN * 0.2), y: fND, smooth: true, mirror: null });
+      const yHem = fpts[last][1], e = E.buttonExt;
+      front.push(
+        { id: nid(), key: 'front.ext0', x: -e, y: yHem, smooth: false, mirror: null, tag: 'edgeHem' },
+        { id: nid(), key: 'front.ext1', x: -e, y: fND, smooth: false, mirror: null, tag: 'edgeNeck' },
+      );
+    } else front = half('front', fpts);
     const back = half('back', [
       [0, bND, true], [xN * 0.55, bND * 0.8, true], [xN, 0, false, 'hps'], [xS, slope, false, 'shoulder'],
       [xS - inB, midY, true], [xC, uaY, false, 'underarm'], [xW, waistY, true, 'waist'], [xH, len, false, 'hem'], ...tailB,
@@ -252,8 +300,46 @@ function tops(style: StyleId, b: Body, f: BodyFrame, fit: Fit): DraftPiece[] {
   if (shirt) {
     out.push({ role: 'cuff', points: half('cuff', [[0, 0], [cuffLen / 2, 0, false, 'c'], [cuffLen / 2, 6], [0, 6]]) });
   }
+  if (split) out.push({ role: 'facing', points: facingOf(front, E.buttonExt, E.facing) });
   return out;
 }
+
+/**
+ * Front facing of a split front, in the front's own coords: the strip behind the front edge, `width` from the edge,
+ * following the neckline and the hem of the front. Its front edge is the front's edge exactly (the seam walks).
+ */
+function facingOf(front: PPoint[], ext: number, width: number): PPoint[] {
+  const k = (key: string) => front.findIndex((q) => q.key === key);
+  const cfN = front[k('front.0')], cfH = front.find((q) => q.tag === 'cfHem')!, iH = front.indexOf(cfH);
+  const xi = width - ext;
+  // neckline from centre front to the facing's inner edge (two straight runs over the drafted curve), the hem back
+  const yN = (x: number) => { const y = yAtX(front, 0, x, 3); return Number.isFinite(y) ? y : cfN.y; };
+  const yH = (x: number) => { const y = yAtX(front, iH - 2, x, 2); return Number.isFinite(y) ? y : cfH.y; };
+  return free('facing', [
+    [-ext, cfN.y, false, 'edgeNeck'], [0, cfN.y], [xi / 2, yN(xi / 2)], [xi, yN(xi), false, 'inner'],
+    [xi, yH(xi)], [0, cfH.y], [-ext, cfH.y, false, 'edgeHem'],
+  ]);
+}
+
+/** Jeans and chinos close with a zip fly; jeans also have front pockets cut behind a scooped opening. */
+export const flyStyle = (style: StyleId) => { const s = styleById(migrateGarment(style)); return s.family === 'pants' && !s.details.drawcord; };
+export const frontPocketStyle = (style: StyleId) => !!styleById(migrateGarment(style)).details.rivets;
+
+/**
+ * Front pocket opening on a front leg (front coords): from the waist, POCKET.mouth cm in from the side, curving down to
+ * the side seam POCKET.depth cm below the waist. Returns the three points of the quadratic curve (waist end, control, side end).
+ */
+export const POCKET = { mouth: 7.5, depth: 13.5, facing: 10, facingDepth: 18 };
+export function pocketOpening(front: PPoint[]): { A: { x: number; y: number }; C: { x: number; y: number }; B: { x: number; y: number } } | null {
+  const ws = front.findIndex((q) => q.key === 'front.1');
+  if (ws < 0) return null;
+  const w = front[ws];
+  const sx = xAtY(front, ws, w.y + POCKET.depth);
+  if (!Number.isFinite(sx)) return null;
+  const A = { x: w.x - POCKET.mouth, y: w.y }, B = { x: sx, y: w.y + POCKET.depth };
+  return { A, C: { x: B.x - 6.5, y: w.y + 10.7 }, B };
+}
+
 
 function pants(style: StyleId, b: Body, f: BodyFrame, fit: Fit): DraftPiece[] {
   const E = easeFor(style, fit);
@@ -327,6 +413,28 @@ function pants(style: StyleId, b: Body, f: BodyFrame, fit: Fit): DraftPiece[] {
   if (cuffH) {
     const c = RIB.cuff * hemTot;
     out.push({ role: 'cuff', points: half('cuff', [[0, 0], [c / 2, 0, false, 'c'], [c / 2, cuffH], [0, cuffH]]) });
+  }
+  if (frontPocketStyle(style)) {
+    // pocket facing (self fabric, seen through the opening) and pocket bag (pocketing), in front leg coords with the
+    // waist side point at x = 0: the facing's waist and side edges are the leg's own (they are sewn into the waistband
+    // and the outseam with it)
+    const ws = front.findIndex((q) => q.key === 'front.1'), w = front[ws];
+    const sx = (y: number) => xAtY(front, ws, w.y + y) - w.x;
+    const fd = POCKET.facingDepth;
+    out.push({ role: 'pocketFacing', points: free('pocketFacing', [
+      [-POCKET.facing, 0, false, 'pfWaist'], [0, 0, false, 'pfSide'], [sx(fd / 3), fd / 3, true], [sx((2 * fd) / 3), (2 * fd) / 3, true], [sx(fd), fd, false, 'pfBottom'], [-POCKET.facing, fd],
+    ]) });
+    out.push({ role: 'pocketBag', points: free('pocketBag', [
+      [-POCKET.facing - 1.5, 0, false, 'bagMouth'], [0, 0, false, 'bagSide'], [sx(fd / 3), fd / 3, true], [sx((2 * fd) / 3), (2 * fd) / 3, true], [sx(fd), fd, false, 'bagSideEnd'],
+      [sx(18) - 2, 25, true], [-7, 28.5, true, 'bagBottom'], [-POCKET.facing - 3, 24, true], [-POCKET.facing - 2.5, 10, true],
+    ]) });
+  }
+  if (flyStyle(style)) {
+    // zip fly: the fly facing is sewn to the front edge of the overlapping front, the fly shield (cut folded) behind the
+    // other one; both run the straight front edge from the waist down (front.0 to front.11)
+    const L = edge(front, 'front.0', 'front.11');
+    out.push({ role: 'flyFacing', points: free('flyFacing', [[0, 0, false, 'fly'], [3.8, 0], [3.8, L - 3.5, true], [2.2, L - 0.6, true], [0, L, false, 'flyEnd']]) });
+    out.push({ role: 'flyShield', points: free('flyShield', [[0, 0, false, 'fly'], [9, 0], [9, L - 3, true], [6, L, true], [0, L, false, 'flyEnd']]) });
   }
   return out;
 }

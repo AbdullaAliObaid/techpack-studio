@@ -95,7 +95,10 @@ async function main() {
   ok('every item has measured placement', td.every((t) => t.refs.length >= 2 && t.refs.every((r) => Number.isFinite(r.value) && r.value >= 0)));
   const patch = td.find((t) => t.id === 'a-patch')!, rivet = td.find((t) => t.id === 'a-rivet')!, tag = td.find((t) => t.id === 'a-tag')!;
   ok('patch: from centre front 9.0 cm, layers listed', patch.refs.find((r) => /centre front/i.test(r.label))?.value === 9 && patch.layers.length === 3 && patch.thread.includes('#c9933a'));
-  ok('rivets: quantity 2, copper, points drawn', rivet.qty === 2 * 1 && rivet.points.length === 2 && /copper/i.test(rivet.colour));
+  // 2 rivets per copy of the host: a front cut twice (split fronts) with the rivets on both sides counts both copies
+  const rivAtt = p.edits!.attachments.find((a) => a.id === 'a-rivet')!;
+  const copies = rivAtt.instance === undefined ? p.pieces.find((q) => q.id === rivAtt.pieceId)?.cut ?? 1 : 1;
+  ok('rivets: quantity per copy, copper, points drawn', rivet.qty === 2 * copies && rivet.points.length === 2 && /copper/i.test(rivet.colour));
   ok('tag is inside and says so', tag.face === 'inside' && tag.faceName !== 'Outside' && /woven/i.test(tag.item));
   ok('trimsReport and details agree on hardware count', trimsReport(p.pieces, p.edits, p.garment).filter((t) => t.kind === 'hardware').reduce((s, t) => s + t.qty, 0) === rivet.qty);
   const cr = constructionReport(p.garment, p.pieces, p.edits);

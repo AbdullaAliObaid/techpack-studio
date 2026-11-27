@@ -14,11 +14,11 @@
   "constraints": 13392
  },
  "polo": {
-  "n": 205,
-  "sew": 3616261968,
-  "pos": 2210200417,
-  "particles": 2362,
-  "constraints": 13012
+  "n": 208,
+  "sew": 3139321866,
+  "pos": 4287423465,
+  "particles": 2380,
+  "constraints": 13117
  },
  "collared-tee": {
   "n": 169,
@@ -29,17 +29,17 @@
  },
  "button-up": {
   "n": 231,
-  "sew": 1622738630,
-  "pos": 2078657211,
-  "particles": 2921,
-  "constraints": 16203
+  "sew": 1177550831,
+  "pos": 1637576574,
+  "particles": 3000,
+  "constraints": 16680
  },
  "jacket": {
   "n": 197,
-  "sew": 3658400696,
-  "pos": 966493952,
-  "particles": 2892,
-  "constraints": 16169
+  "sew": 2768318902,
+  "pos": 3630146052,
+  "particles": 2981,
+  "constraints": 16817
  },
  "sweatpants": {
   "n": 304,

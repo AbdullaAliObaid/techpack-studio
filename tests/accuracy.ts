@@ -2,9 +2,15 @@
 import { bodyFrame, perimeter, tapePerimeter, DEFAULT_BODY, FEMALE_BODY, MALE_BODY, type Body } from '../src/three/body';
 import { NBONES } from '../src/sim/pose';
 import { makePreset } from '../src/data/presets';
-import { draft, regradePoints, EASE, crownArc, derivedGirths, FITS, RIB, neckBase } from '../src/data/draft';
+import { draft, regradePoints, EASE, crownArc, derivedGirths, FITS, RIB, neckBase, isSplitFront } from '../src/data/draft';
 import { CATALOG, migrateGarment, styleById } from '../src/data/catalog';
-import { freshProject, useStore } from '../src/store';
+import { freshProject, migrateProject, useStore } from '../src/store';
+import { BUILTIN_VERSION, stitchLines } from '../src/data/construction';
+import { buildHardware } from '../src/sim/detailsHardware';
+import { buildDetails } from '../src/sim/details';
+import { INSIDE_ROLES } from '../src/data/presets';
+import { computeSpec } from '../src/lib/specs';
+import { pointInPoly } from '../src/lib/geometry';
 import { fitTable, seamReport } from '../src/lib/specs';
 import { calibratedField } from '../src/three/bodyField';
 import { meshField } from '../src/three/mesher';
@@ -109,7 +115,7 @@ for (const [name, b] of Object.entries(bodies)) {
   let top = 0; for (let i = 1; i < mesh.positions.length; i += 3) top = Math.max(top, mesh.positions[i]);
   check('rendered mesh height', top, b.height, 0.25);
 
-  const ROLES = new Set(['front', 'back', 'sleeve', 'neckband', 'collar', 'placket', 'cuff', 'waistband', 'crown', 'brim']);
+  const ROLES = new Set(['front', 'back', 'sleeve', 'neckband', 'collar', 'placket', 'cuff', 'waistband', 'crown', 'brim', 'facing', 'pocketFacing', 'pocketBag', 'flyFacing', 'flyShield']);
   for (const style of CATALOG) {
     const g = style.id, fam = style.family;
     const pieces = makePreset(g, b);
@@ -160,12 +166,14 @@ for (const [name, b] of Object.entries(bodies)) {
     const front = pieces.find((p) => p.role === 'front')!, back = pieces.find((p) => p.role === 'back')!;
     const fp = samplePoly(front.points), bp = samplePoly(back.points);
     const w = (poly: typeof fp, y: number) => { const s = sliceSpan(poly, y); return s ? s.x2 - s.x1 : 0; };
+    // a split front (cut twice) goes round the body as twice centre front to side; the overlap is not ease
+    const wf = (y: number) => { const s = sliceSpan(fp, y); return !s ? 0 : isSplitFront(front) ? 2 * Math.max(0, s.x2) : s.x2 - s.x1; };
     if (fam !== 'pants') {
       const ua = findTag(front, 'underarm')!.y - findTag(front, 'hps')!.y;
       const h = f.neckH - ua;
       const torso = res.parts.find((p) => p.key === 'torso')!;
       const ring = torso.rings.reduce((a, r) => (Math.abs(r.y - h) < Math.abs(a.y - h) ? r : a));
-      check(`${g} 3D chest ring = pattern chest`, perimeter(ring.a, ring.b, ring.shape, 720), w(fp, findTag(front, 'underarm')!.y) + w(bp, findTag(back, 'underarm')!.y), 0.3);
+      check(`${g} 3D chest ring = pattern chest`, perimeter(ring.a, ring.b, ring.shape, 720), wf(findTag(front, 'underarm')!.y) + w(bp, findTag(back, 'underarm')!.y), 0.3);
       const top = res.parts.find((p) => p.key === 'torso')!.rings.reduce((m, r) => Math.max(m, r.y), 0);
       check(`${g} 3D garment top at body HPS`, top + 0.8, f.neckH, 0.6);
     } else {
@@ -248,7 +256,7 @@ for (const st of CATALOG) {
   // the same ids whatever the body or fit: they are stored in a project's detached seams
   const stable = JSON.stringify(builtinSeams(st.id, makePreset(st.id, bodies.big, 'relaxed')).map((q) => q.id)) === JSON.stringify(ids);
   let want = SEAM_IDS[st.family] ?? [];
-  if (st.family === 'polo') want = SEAM_IDS.jacket.slice(0, 10).concat(pieces.some((q) => q.role === 'placket') ? ['placket-r', 'placket-l', 'placket-base'] : [], ['collar']);
+  if (st.family === 'polo') want = SEAM_IDS.jacket.slice(0, 10).concat(pieces.some((q) => q.role === 'placket') ? ['placket-r', 'placket-l', 'placket-base', 'placket-base-l'] : [], ['collar']);
   if (st.family === 'pants' && pieces.some((q) => q.role === 'cuff')) want = [...want.slice(0, 7), 'cuff-join-r', 'cuff-join-l', 'waistband', 'cuff-r', 'cuff-l'];
   const expected = JSON.stringify(ids) === JSON.stringify(want);
   pass(unique && stable && expected, `${st.id} built-in seams: ${ids.length} unique, stable ids${expected ? '' : ` (got ${ids.join(',')})`}`);
@@ -558,6 +566,127 @@ console.log('\n== collar, faces, labels, trims ==');
     const rows = cutList(pieces, E2({ insideFabric: { [collar.id]: { id: 'denim', color: 0 } } }), 'button-up');
     const r = rows.find((q) => q.name === collar.name)!;
     pass(r.note === 'Inside: Denim, Indigo (under collar)', `cut list: ${r.name} "${r.note}"`);
+  }
+}
+
+// ---- construction on the pattern: split fronts, buttons and buttonholes, style details as attachments ----
+console.log('\n== construction on the pattern ==');
+{
+  const count = (as: Attachment[], f: (a: Attachment) => boolean) => as.filter(f).reduce((n, a) => n + (a.hardware?.count ?? 1), 0);
+  for (const s2 of CATALOG) {
+    const p = freshProject(s2.id);
+    const as = p.edits?.attachments ?? [];
+    const btn = count(as, (a) => a.hardware?.type === 'button' && !a.buttonhole), holes = count(as, (a) => !!a.buttonhole);
+    const want = s2.details.buttons ?? 0;
+    const holesWant = s2.family === 'cap' ? 0 : want;
+    const loops = as.filter((a) => a.kind === 'strap').length, rivets = count(as, (a) => a.hardware?.type === 'rivet');
+    const ok = p.edits?.builtin === BUILTIN_VERSION && as.every((a) => a.builtin) && btn === want && holes === holesWant
+      && loops === (s2.details.beltLoops ?? 0) && rivets === (s2.details.rivets ? 4 : 0);
+    pass(ok, `${s2.id}: style details on the pattern: ${btn} buttons, ${holes} buttonholes, ${loops} belt loops, ${rivets} rivets, ${as.length} in all`);
+  }
+  {
+    // jacket and shirt: split fronts, buttons on the front that goes under, buttonholes on the one that laps over
+    for (const [sex, over] of [['male', 1], ['female', 0]] as const) {
+      const body = sex === 'female' ? FEMALE_BODY : MALE_BODY;
+      const p = freshProject('jacket', undefined, body);
+      const fr = p.pieces.find((q) => q.role === 'front')!;
+      const b = p.edits!.attachments.find((a) => a.name === 'Front buttons')!, h = p.edits!.attachments.find((a) => a.buttonhole)!;
+      pass(isSplitFront(fr) && fr.cut === 2 && b.instance === 1 - over && h.instance === over && b.x === 0 && h.x === 0 && b.pieceId === fr.id,
+        `${sex} jacket: fronts split (cut 2), buttons on the ${instanceLabel('jacket', fr, b.instance).toLowerCase()}, buttonholes on the ${instanceLabel('jacket', fr, h.instance).toLowerCase()} (laps over)`);
+    }
+    const pieces = makePreset('jacket', DEFAULT_BODY);
+    const fr = pieces.find((q) => q.role === 'front')!, bk = pieces.find((q) => q.role === 'back')!;
+    const span = sliceSpan(samplePoly(fr.points), findTag(fr, 'underarm')!.y)!;
+    check('jacket front runs past centre front by the extension', -span.x1, EASE.jacket.buttonExt, 0.01);
+    const chest = fitTable('jacket', pieces, DEFAULT_BODY).find((r) => r.label === 'Chest')!.garment;
+    check('jacket chest = 2 x (centre front to side) + back, overlap left out', chest, 2 * span.x2 + (sliceSpan(samplePoly(bk.points), findTag(bk, 'underarm')!.y)!.x2 - sliceSpan(samplePoly(bk.points), findTag(bk, 'underarm')!.y)!.x1), 0.05);
+    check('button-up extension (each front past centre front)', computeSpec(makePreset('button-up', DEFAULT_BODY)[0], { label: 'x', kind: 'dist', tags: ['cfNeck', 'edgeNeck'] })!.value, EASE['button-up'].buttonExt, 0.01);
+    const fc = pieces.find((q) => q.role === 'facing')!;
+    pass(!!fc && fc.cut === 2 && seamReport('jacket', pieces).some((r) => /Front facing/.test(r.label) && Math.abs(r.a - r.b) < 0.01), 'jacket front facing is cut 2 and walks to the front edge');
+  }
+  {
+    // the sim: the fronts are held only by their buttons; worn open nothing buttons
+    const p = freshProject('jacket');
+    const G = build('jacket', p.pieces, p.edits!);
+    const fasten = Object.entries(G.seamLinks).filter(([k]) => k.startsWith('fasten:'));
+    const links = fasten.reduce((n, [, l]) => n + l.length, 0);
+    const fronts = G.panels.filter((q) => q.piece.role === 'front' && !q.attach);
+    const frontSew = Object.entries(G.seamLinks).filter(([k]) => !k.startsWith('fasten:')).some(([, l]) => l.some(([i, j]) => fronts.every((F) => [i, j].some((v) => v >= F.offset && v < F.offset + F.mesh.uv.length))));
+    pass(fronts.length === 2 && links === 5 && G.buttoned.length === 5 && !frontSew, `jacket: 2 fronts, joined only by ${links} buttons through their buttonholes, no seam between them`);
+    const Go = build('jacket', p.pieces, { ...p.edits!, closure: 'open' });
+    pass(!Object.keys(Go.seamLinks).some((k) => k.startsWith('fasten:')) && Go.buttoned.length === 0, 'jacket worn open: nothing buttons');
+    const hm = buildHardware(G, p.edits!.attachments, Array.from(G.panelSign));
+    const O = fronts.find((F) => F.instance === 1)!;
+    const onOver = Array.from({ length: hm.count }, (_, i) => hm.tri[i * 3]).filter((v) => v >= O.offset && v < O.offset + O.mesh.uv.length).length;
+    pass(hm.count === 5 && onOver === 5, `buttoned: the ${hm.count} buttons draw on the front that laps over (${onOver}), the holes under them do not draw twice`);
+    const hmo = buildHardware(Go, p.edits!.attachments, Array.from(Go.panelSign));
+    pass(hmo.count === 5 && Array.from({ length: hmo.count }, (_, i) => hmo.tri[i * 3]).every((v) => !(v >= O.offset && v < O.offset + O.mesh.uv.length)), 'worn open: the buttons draw on the front they are sewn to');
+    const det = buildDetails(G, styleById('jacket').details);
+    pass(det.anchorCount === 0, `3D details add no buttons, rivets or loops of their own (${det.anchorCount} anchors)`);
+    const t = trimsReport(p.pieces, p.edits, 'jacket');
+    const tb = t.find((r) => r.item === 'Button'), th = t.find((r) => r.item === 'Buttonhole');
+    pass(tb?.qty === 5 && th?.qty === 5 && th.kind === 'buttonhole' && tb.placement === 'Left front' && th.placement === 'Right front', `trims: ${tb?.qty} x Button (${tb?.placement}), ${th?.qty} x Buttonhole (${th?.placement}, ${th?.detail})`);
+    const massB = (q: typeof G) => { let m = 0; for (let i = 0; i < q.sim.n; i++) m += 1 / q.sim.invMass[i]; return m; };
+    const noHoles = build('jacket', p.pieces, { ...p.edits!, attachments: p.edits!.attachments.filter((a) => !a.buttonhole) });
+    check('buttonholes add no weight', massB(G), massB(noHoles), 1e-3);
+  }
+  {
+    // polo: two placket strips that button; jeans: pocket and fly pieces in the cut list, details on the pattern
+    const polo = freshProject('polo');
+    const G = build('polo', polo.pieces, polo.edits!);
+    pass(G.panels.filter((q) => q.piece.role === 'placket').length === 2 && G.buttoned.length === 2, `polo: 2 placket strips, ${G.buttoned.length} buttons buttoned`);
+    const jeans = freshProject('jeans');
+    const cl = cutList(jeans.pieces, jeans.edits, 'jeans').map((r) => r.name);
+    pass(['Pocket facing', 'Pocket bag', 'Fly facing', 'Fly shield', 'Back pocket', 'Coin pocket', 'Belt loop'].every((n) => cl.includes(n)), `jeans cut list: ${cl.join(', ')}`);
+    const lines = stitchLines('jeans', jeans.pieces, jeans.edits);
+    const kinds = new Set(lines.map((l) => l.kind));
+    pass(['topstitch', 'hem', 'opening', 'pocket', 'fly'].every((k) => kinds.has(k as never)), `jeans stitch lines: ${[...kinds].join(', ')}`);
+    // every stitch row lies on its piece
+    let bad = 0, all = 0;
+    for (const s2 of CATALOG) {
+      const pcs = makePreset(s2.id, DEFAULT_BODY);
+      for (const l of stitchLines(s2.id, pcs)) {
+        const pc = pcs.find((q) => q.id === l.pieceId)!, poly = samplePoly(pc.points, 12);
+        all++;
+        if (l.points.filter((q) => pointInPoly(poly, q)).length < 0.8 * l.points.length) bad++;
+      }
+    }
+    pass(bad === 0 && all > 50, `every stitch row of every style lies on its piece (${all} rows, ${bad} off)`);
+    const hidden = build('jeans', jeans.pieces, jeans.edits!);
+    pass(!hidden.panels.some((q) => INSIDE_ROLES.has(q.piece.role)), 'inside pieces (facings, pocket bags, fly pieces) are not simulated');
+  }
+  {
+    // old saves: a closed jacket front becomes split fronts; its edits on the right half move to the right front
+    const p = freshProject('jacket');
+    const fr = p.pieces.find((q) => q.role === 'front')!;
+    const base = fr.points.filter((q) => !q.key?.startsWith('front.ext')).map((q) => ({ ...q }));
+    const right = base.slice(1, -1).reverse().map((q) => ({ ...q, id: q.id + 'm', key: q.key + 'm', x: -q.x }));
+    const old = { ...fr, cut: 1, points: [...base, ...right] };
+    const k = (key: string) => old.points.find((q) => q.key === key)!.id;
+    const legacy = { ...p, pieces: p.pieces.filter((q) => q.role !== 'facing').map((q) => (q.id === fr.id ? old : q)), edits: {
+      ...EMPTY_EDITS, attachments: [{ id: 'pk', kind: 'pocket' as const, name: 'Pocket', pieceId: fr.id, x: -12, y: 45, rotation: 0, w: 14, h: 15, outline: 'rect' as const, layers: [] }],
+      customSeams: [{ id: 'cs', a: { pieceId: fr.id, fromId: k('front.5m'), toId: k('front.7m') }, b: { pieceId: fr.id, fromId: k('front.5'), toId: k('front.7') } }],
+    } };
+    const m = migrateProject(legacy as never);
+    const nf = m.pieces.find((q) => q.role === 'front')!;
+    const pk = m.edits!.attachments.find((a) => a.id === 'pk')!, cs = m.edits!.customSeams[0];
+    pass(isSplitFront(nf) && nf.id === fr.id && pk.instance === 1 && pk.x === 12 && cs?.a.instance === 1 && cs.a.fromId === k('front.5') && m.pieces.some((q) => q.role === 'facing') && m.edits!.builtin === BUILTIN_VERSION,
+      'old closed front opens as split fronts: pocket and seam on its right half move to the right front, facing and style details added');
+    const kept = migrateProject({ ...p, edits: { ...p.edits!, attachments: [] } });
+    pass(kept.edits!.attachments.length === 0, 'a project whose style details were deleted does not get them back');
+  }
+  {
+    // regrade: the style details follow the pattern; a change of body type moves the lap to the other side
+    const st = useStore.getState();
+    st.newProject('jacket');
+    const p0 = useStore.getState().project;
+    useStore.getState().setBody('chest', p0.body.chest + 12);
+    const p1 = useStore.getState().project;
+    const b0 = p0.edits!.attachments.find((a) => a.name === 'Front buttons')!, b1 = p1.edits!.attachments.find((a) => a.name === 'Front buttons')!;
+    pass(b1.x === 0 && b1.instance === b0.instance, `regrade: front buttons stay on centre front (${b0.y.toFixed(1)} -> ${b1.y.toFixed(1)} cm down)`);
+    useStore.getState().setBodyPreset('female');
+    const b2 = useStore.getState().project.edits!.attachments.find((a) => a.name === 'Front buttons')!;
+    pass(b2.instance === 1 - b0.instance!, 'female body: buttons move to the other front (left over right)');
   }
 }
 

@@ -14,6 +14,7 @@ import { fitTable, garmentSpecs, pieceSpecs } from './lib/specs';
 import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorkspaceMap, defaultBand } from './components/designDoc';
 import type { Band } from './data/edits';
 import { deleteOutfit as removeSavedOutfit, listOutfits, listProjects, saveOutfit, saveProject } from './lib/projects';
+import { regradeBuiltins, styleEdits, upgradeFront, withBuiltins } from './data/construction';
 
 /** undo history entry: pattern pieces plus garment edits */
 export interface Snapshot { pieces: Piece[]; edits?: Edits; notes?: Note[] }
@@ -290,6 +291,8 @@ export interface State {
   addAttachment: (a: Omit<Attachment, 'id'>) => string;
   duplicateAttachment: (id: string) => string | null;
   setCollar: (c: 'down' | 'up') => void;
+  /** a front that buttons: worn buttoned or open */
+  setClosure: (c: 'buttoned' | 'open') => void;
   /** fabric on the inside face of a piece; null = same as the outside */
   setInsideFabric: (pieceId: string, fabric: { id: string; color: number } | null) => void;
   /** the same inside fabric on every piece; null = every piece uses its outside fabric */
@@ -365,10 +368,18 @@ function withCollar(p: Project): Project {
   return { ...p, edits: { ...(p.edits ?? EMPTY_EDITS), collar: 'down' } };
 }
 
-/** A new project for any catalog style, drafted on the given body in the style's default fabric. */
+/** A new project for any catalog style, drafted on the given body in the style's default fabric, with the style's
+ *  buttons, buttonholes, rivets, belt loops and pockets as editable attachments (src/data/construction.ts). */
 export function freshProject(id: StyleId, name?: string, body: Body = DEFAULT_BODY): Project {
   const g = migrateGarment(id);
-  return withCollar({ id: uid(), name: name ?? `Untitled ${GARMENT_LABEL[g].toLowerCase()}`, garment: g, pieces: makePreset(g, body), body: { ...body }, linkPattern: true, fit: 'regular', updatedAt: Date.now() });
+  const pieces = makePreset(g, body);
+  return withCollar({ id: uid(), name: name ?? `Untitled ${GARMENT_LABEL[g].toLowerCase()}`, garment: g, pieces, body: { ...body }, linkPattern: true, fit: 'regular', edits: styleEdits(g, pieces, body), updatedAt: Date.now() });
+}
+
+/** A saved project as this version opens it: split fronts for a front that buttons, the inside pieces of the newer draft,
+ *  the style details as attachments once, the collar position stored. */
+export function migrateProject(p: Project): Project {
+  return withCollar(withBuiltins(upgradeFront({ ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true })));
 }
 
 /** Regrade every piece from one body to another, keeping the user's edits as offsets. */
@@ -379,6 +390,13 @@ function regrade(p: Project, from: Body, to: Body, fitFrom: Fit = p.fit ?? 'regu
     if (!da || !db) return pc;
     return { ...pc, points: regradePoints(pc.points, da.points, db.points), ...(db.elastic !== undefined ? { elastic: db.elastic } : {}) };
   });
+}
+
+/** Regrade the pieces and move the style's own attachments with them (buttons stay on centre front, loops on the band). */
+function regradeAll(p: Project, from: Body, to: Body, fitFrom: Fit = p.fit ?? 'regular', fitTo: Fit = p.fit ?? 'regular'): Pick<Project, 'pieces' | 'edits'> {
+  const pieces = regrade(p, from, to, fitFrom, fitTo);
+  const edits = regradeBuiltins(p.edits, p.pieces, draft(p.garment, from, fitFrom), draft(p.garment, to, fitTo), (from.sex ?? 'male') !== (to.sex ?? 'male'));
+  return { pieces, ...(edits ? { edits } : {}) };
 }
 
 const mapPiece = (pieces: Piece[], id: string, fn: (p: Piece) => Piece) => pieces.map((p) => (p.id === id ? fn(p) : p));
@@ -689,21 +707,21 @@ export const useStore = create<State>((set, get) => {
       set((s) => {
         const body = { ...s.project.body, [key]: v } as Body;
         if (v === undefined) delete (body as unknown as Record<string, unknown>)[key];
-        const pieces = s.project.linkPattern ? regrade(s.project, s.project.body, body) : s.project.pieces;
-        return { project: { ...s.project, body, pieces, updatedAt: Date.now() } };
+        const r = s.project.linkPattern ? regradeAll(s.project, s.project.body, body) : {};
+        return { project: { ...s.project, body, ...r, updatedAt: Date.now() } };
       }),
     resetBody: () =>
       set((s) => {
         const body = { ...DEFAULT_BODY };
-        const pieces = s.project.linkPattern ? regrade(s.project, s.project.body, body) : s.project.pieces;
-        return { project: { ...s.project, body, pieces, updatedAt: Date.now() } };
+        const r = s.project.linkPattern ? regradeAll(s.project, s.project.body, body) : {};
+        return { project: { ...s.project, body, ...r, updatedAt: Date.now() } };
       }),
     setLink: (on) => set((s) => ({ project: { ...s.project, linkPattern: on, updatedAt: Date.now() } })),
     setFit: (fit) =>
       set((s) => {
         get().commit();
-        const pieces = regrade(s.project, s.project.body, s.project.body, s.project.fit ?? 'regular', fit);
-        return { project: { ...s.project, fit, pieces, updatedAt: Date.now() } };
+        const r = regradeAll(s.project, s.project.body, s.project.body, s.project.fit ?? 'regular', fit);
+        return { project: { ...s.project, fit, ...r, updatedAt: Date.now() } };
       }),
 
     screen: typeof location !== 'undefined' && new URLSearchParams(location.search).get('screen') === 'editor' ? 'editor' : 'home',
@@ -714,7 +732,7 @@ export const useStore = create<State>((set, get) => {
       set((s) => {
         const body = { ...(given ?? (sex === 'female' ? FEMALE_BODY : MALE_BODY)) };
         let project = freshProject(style, name.trim() || undefined, body);
-        if (fit !== 'regular') project = { ...project, fit, pieces: regrade(project, body, body, 'regular', fit) };
+        if (fit !== 'regular') project = { ...project, fit, ...regradeAll(project, body, body, 'regular', fit) };
         return { project, past: [], future: [], selPiece: null, selPoint: null, selAttachment: null, fitToken: s.fitToken + 1, tool: 'select', sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' };
       }),
     restyle: (id) =>
@@ -722,12 +740,12 @@ export const useStore = create<State>((set, get) => {
         const old = s.project;
         const fit = old.fit ?? 'regular';
         let project = { ...freshProject(id, old.name, old.body), id: old.id };
-        if (fit !== 'regular') project = { ...project, fit, pieces: regrade(project, old.body, old.body, 'regular', fit) };
+        if (fit !== 'regular') project = { ...project, fit, ...regradeAll(project, old.body, old.body, 'regular', fit) };
         return { project, past: [], future: [], selPiece: null, selPoint: null, selAttachment: null, fitToken: s.fitToken + 1, tool: 'select' };
       }),
     newProject: (id) => set((s) => ({ project: freshProject(id, undefined, s.project.body), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1, sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' })),
     // older saves stored 'jacket' | 'shirt' | 'pants'; map them onto catalog styles
-    loadProject: (p) => set((s) => ({ project: withCollar({ ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1, sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' })),
+    loadProject: (p) => set((s) => ({ project: migrateProject(p), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1, sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' })),
     rename: (name) => set((s) => ({ project: { ...s.project, name, updatedAt: Date.now() } })),
 
     probe: null,
@@ -843,6 +861,7 @@ export const useStore = create<State>((set, get) => {
       return nid;
     },
     setCollar: (c) => { get().commit(); setEdits((e) => ({ ...e, collar: c })); },
+    setClosure: (c) => { get().commit(); setEdits((e) => ({ ...e, closure: c })); },
     setInsideFabric: (pieceId, fabric) => {
       get().commit();
       setEdits((e) => {
@@ -930,8 +949,8 @@ export const useStore = create<State>((set, get) => {
     setBodyPreset: (sex) =>
       set((s) => {
         const body = { ...(sex === 'female' ? FEMALE_BODY : MALE_BODY) };
-        const pieces = s.project.linkPattern ? regrade(s.project, s.project.body, body) : s.project.pieces;
-        return { project: { ...s.project, body, pieces, updatedAt: Date.now() } };
+        const r = s.project.linkPattern ? regradeAll(s.project, s.project.body, body) : {};
+        return { project: { ...s.project, body, ...r, updatedAt: Date.now() } };
       }),
     customPose: ZERO_POSE,
     setPoseAngle: (side, key, value) =>

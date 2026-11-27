@@ -16,10 +16,11 @@ const collider = new GridCollider(meshField(FF).grid, [FF.f.ankleH + 6, FF.f.cro
 let fail = 0;
 const check = (ok: boolean, msg: string) => { if (!ok) { fail++; console.log('FAIL', msg); } };
 
+// buttons, belt loops and rivets are attachments on the pattern now (src/data/construction.ts): the stitching pass adds none
 const expect: Record<string, { dashes: [number, number]; loops?: [number, number]; rivets?: [number, number]; buttons?: [number, number] }> = {
-  jacket: { dashes: [300, 40000], buttons: [5, 5] },
-  shirt: { dashes: [200, 40000], buttons: [7, 7] },
-  pants: { dashes: [500, 40000], loops: [5, 5], rivets: [4, 20] },
+  jacket: { dashes: [300, 40000] },
+  shirt: { dashes: [200, 40000] },
+  pants: { dashes: [500, 40000] },
 };
 for (const g of ['jacket', 'shirt', 'pants'] as GarmentType[]) {
   const G = assemble(g, makePreset(g, DEFAULT_BODY), DEFAULT_BODY, 1.8, collider)!;
