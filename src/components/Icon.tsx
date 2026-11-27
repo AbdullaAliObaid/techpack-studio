@@ -75,6 +75,8 @@ const P: Record<string, ReactNode> = {
   collar: <><path d="M4 8l8 3 8-3" /><path d="M4 8l3 9 5-3 5 3 3-9" /></>,
   draw: <><path d="M4 20c3 0 4-2 5-4s2-3 4-3" /><path d="M14 5l5 5-7 7-5-5z" /></>,
   zipper: <><path d="M12 2v20" /><path d="M9 5h3M12 8h3M9 11h3M12 14h3" /><rect x="9.5" y="16" width="5" height="5" rx="1.5" /></>,
+  note: <><path d="M5 4.5h14v11H12l-4.5 4v-4H5z" /><path d="M9 9h6M9 12h3" /></>,
+  noteshow: <><path d="M5 4.5h14v11H12l-4.5 4v-4H5z" /><circle cx="12" cy="10" r="2" /></>,
   target: <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3.5" /></>,
 };
 

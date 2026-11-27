@@ -15,6 +15,10 @@ import Splash from './components/Splash';
 import Home from './components/Home';
 import NewFlow from './components/NewFlow';
 import { nudgePatch } from './components/editHelpers';
+import { OutfitBar } from './components/Outfits';
+import { installOutfitFallback } from './components/uiData';
+
+installOutfitFallback();
 
 let lastNudge = 0;
 
@@ -72,6 +76,7 @@ export default function App() {
         else if (k === 'm') st.set({ showMeasure: !st.showMeasure });
         else if (k === 'j') st.set({ tool: 'seams', inspectorTab: 'construction', seamDraft: EMPTY_SEAM_DRAFT });
         else if (k === 'l') st.set({ tool: 'pleat', inspectorTab: 'construction' });
+        else if (k === 'n') st.set({ tool: 'note', showNotes: true });
         else if (k === 'd') st.set({ tool: 'pen', inspectorTab: 'construction', penDraft: [] });
         else if (k === 'f') window.dispatchEvent(new Event('tps-fit'));
         else if (k === 'enter' && st.tool === 'pen' && st.penDraft.length >= 3) openPieceFlow(st.penDraft);
@@ -96,7 +101,8 @@ export default function App() {
           const step = e.shiftKey ? 1 : 0.1;
           window.dispatchEvent(new CustomEvent('tps-nudge', { detail: { dx: k === 'arrowright' ? step : k === 'arrowleft' ? -step : 0, dy: k === 'arrowdown' ? step : k === 'arrowup' ? -step : 0 } }));
         } else if (k === 'delete' || k === 'backspace') {
-          if (st.selAttachment) st.removeAttachment(st.selAttachment);
+          if (st.tool === 'note' && st.selNote) st.removeNote(st.selNote);
+          else if (st.selAttachment) st.removeAttachment(st.selAttachment);
           else if (st.selPleat) st.removePleat(st.selPleat);
           else if (st.selPiece && st.selPoint) st.deletePoint(st.selPiece, st.selPoint);
         } else if (k === 'escape') {
@@ -115,6 +121,7 @@ export default function App() {
       <Splash />
       <div className="editor-shell" {...inertIf(screen !== 'editor')} data-state={screen === 'editor' ? 'active' : 'hidden'}>
       <TopBar />
+      <OutfitBar />
       <main className="workspace">
         <div
           className="canvases"

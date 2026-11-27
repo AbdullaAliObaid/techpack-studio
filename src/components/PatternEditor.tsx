@@ -23,6 +23,7 @@ import { hitList, type Cand } from './chartHit';
 import { createPortal } from 'react-dom';
 import { allPointsOf, movesFromWorld, placeItems, pointsInRect, snapTargets, withLinked, itemId, type Placed } from './multi';
 import { GuideLayer, MarqueeLayer, SelectionChip, overlay } from './MultiOverlay';
+import NotesLayer, { NotesBar, useNoteTool } from './NotesLayer';
 import { angleSnap, boxOf, snapMove, type Target } from './snap';
 import type { MultiItem } from '../store';
 import Icon from './Icon';
@@ -244,6 +245,9 @@ export default function PatternEditor() {
     return { x: (cx - r.left - v.x) / v.k, y: (cy - r.top - v.y) / v.k };
   };
 
+  const noteTool = useNoteTool(toWorld, (w) => entryAt(w), entries);
+  const notesOn = tool === 'note';
+
   const snap = (w: Pt): Pt => (useStore.getState().penSnap ? { x: Math.round(w.x / GRID_SNAP) * GRID_SNAP, y: Math.round(w.y / GRID_SNAP) * GRID_SNAP } : w);
 
   const zoomAt = (cx: number, cy: number, factor: number) => {
@@ -380,9 +384,10 @@ export default function PatternEditor() {
   const onPointerDown = (e: React.PointerEvent) => {
     svgRef.current!.setPointerCapture(e.pointerId);
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.current.size === 2) return startPinch();
+    if (pointers.current.size === 2) { noteTool.cancel(); return startPinch(); }
     if (pointers.current.size > 2) return;
 
+    if (useStore.getState().tool === 'note' && e.button !== 1 && !spaceDown.current) { noteTool.down(e); return; }
     const st = useStore.getState();
     const w = toWorld(e.clientX, e.clientY);
     const chartPick = (st.tool === 'select' || st.tool === 'add') && !st.pieceFlow?.picking;
@@ -610,6 +615,7 @@ export default function PatternEditor() {
 
   const onPointerMove = (e: React.PointerEvent) => {
     const stNow = useStore.getState();
+    if (stNow.tool === 'note' && pointers.current.has(e.pointerId) && !drag.current) { pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); noteTool.move(e); return; }
     if (!drag.current && !pointers.current.size && (stNow.tool === 'select' || stNow.tool === 'add') && !stNow.pieceFlow?.picking && e.pointerType !== 'touch') {
       const cx = e.clientX, cy = e.clientY;
       cancelAnimationFrame(hoverRaf.current);
@@ -770,6 +776,7 @@ export default function PatternEditor() {
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
+    if (useStore.getState().tool === 'note' && !drag.current) { if (e.type === 'pointerup') noteTool.up(); else noteTool.cancel(); pointers.current.delete(e.pointerId); return; }
     const pc = pending.current;
     pending.current = null;
     if (pc && Math.hypot(e.clientX - pc.x, e.clientY - pc.y) < 4 && !(drag.current && 'committed' in drag.current && drag.current.committed)) pc.run();
@@ -928,6 +935,7 @@ export default function PatternEditor() {
             <g ref={setLabelsEl} />
             <g ref={setTopEl} />
             {multiBox && <SelectionChip box={multiBox.box} count={multiBox.count} k={k} />}
+            <NotesLayer k={k} entries={entries} tool={{ ...noteTool, active: notesOn }} />
             <GuideLayer k={k} />
             <MarqueeLayer k={k} />
             {hover && tool !== 'pen' && <HoverOverlay hover={hover} entries={entries} geos={geos} k={k} />}
@@ -935,6 +943,7 @@ export default function PatternEditor() {
           </g>
         </svg>
         {chartFace === 'inside' && <InsideLegend />}
+        <NotesBar />
       </div>
       <footer className="pane-foot" role="status">
         <span className="foot-zoom">
@@ -955,6 +964,7 @@ const HUD: Record<string, string> = {
   pan: 'Drag to pan the chart.',
   seams: 'Click a start point, then an end point, to pick a range to sew. Escape to stop.',
   pleat: 'Click an edge of a piece to place a pleat. Escape to stop.',
+  note: 'Draw, add arrows or text notes on the chart. Notes print on the tech pack. Two fingers pan and zoom.',
   pen: 'Click to add corners. Drag for a curve. Click the first point to close. Backspace removes the last point. Escape cancels.',
 };
 

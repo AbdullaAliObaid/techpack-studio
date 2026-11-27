@@ -11,7 +11,7 @@ import { FEMALE_BODY, MALE_BODY } from './three/body';
 import { applyMoves, linkedMoves } from './data/symmetry';
 
 /** undo history entry: pattern pieces plus garment edits */
-export interface Snapshot { pieces: Piece[]; edits?: Edits }
+export interface Snapshot { pieces: Piece[]; edits?: Edits; notes?: Note[] }
 
 export interface Project {
   id: string;
@@ -77,7 +77,8 @@ export interface OutfitItem {
 }
 export interface Outfit { id: string; name: string; body: Body; items: OutfitItem[]; updatedAt: number }
 
-export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen';
+export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen' | 'note';
+export type NoteKind = Note['kind'];
 export type Screen = 'home' | 'new' | 'editor';
 export interface NewFlow { mode: 'create' | 'change'; from: 'home' | 'editor' }
 export type ThemePref = 'system' | 'light' | 'dark';
@@ -155,6 +156,17 @@ export interface State {
   linkedHot: { pieceId: string; pointId: string }[];
   showMeasure: boolean;
   showStitch: boolean;
+  /** notes layer: draw, arrow and text callouts on the chart */
+  showNotes: boolean;
+  selNote: string | null;
+  noteKind: NoteKind;
+  noteColor: string;
+  noteWidth: number;
+  addNote: (n: Omit<Note, 'id' | 'createdAt'>) => string;
+  updateNote: (id: string, patch: Partial<Note>) => void;
+  removeNote: (id: string) => void;
+  /** put a whole body on the open project (a saved body preset); regrades the pattern when it follows the body */
+  setWholeBody: (body: Body) => void;
   selPiece: string | null;
   selPoint: string | null;
   /** several points selected at once (marquee, shift-click); empty when zero or one point is selected */
@@ -248,7 +260,7 @@ export interface State {
   newFlow: NewFlow;
   openNew: (mode: NewFlow['mode'], from: NewFlow['from']) => void;
   /** a project from the new project flow: style, name, fit and body type chosen up front */
-  createProject: (o: { style: StyleId; name: string; fit: Fit; sex: 'male' | 'female' }) => void;
+  createProject: (o: { style: StyleId; name: string; fit: Fit; sex: 'male' | 'female'; body?: Body }) => void;
   /** keep the open project (name, body, fit) but redraft it as another style */
   restyle: (id: StyleId) => void;
   // --- edits (attachments, seams, pleats, user pieces) ---
@@ -307,8 +319,8 @@ function regrade(p: Project, from: Body, to: Body, fitFrom: Fit = p.fit ?? 'regu
 const mapPiece = (pieces: Piece[], id: string, fn: (p: Piece) => Piece) => pieces.map((p) => (p.id === id ? fn(p) : p));
 
 export const useStore = create<State>((set, get) => {
-  const snap = (p: Project): Snapshot => ({ pieces: p.pieces, edits: p.edits });
-  const restore = (h: Snapshot) => set((s) => ({ project: { ...s.project, pieces: h.pieces, edits: h.edits, updatedAt: Date.now() } }));
+  const snap = (p: Project): Snapshot => ({ pieces: p.pieces, edits: p.edits, notes: p.notes });
+  const restore = (h: Snapshot) => set((s) => ({ project: { ...s.project, pieces: h.pieces, edits: h.edits, notes: h.notes, updatedAt: Date.now() } }));
   /** slash and spread: move every point past the pleat (along its edge) outward by `amount` cm */
   const spreadPleat = (pl: Pick<Pleat, 'pieceId' | 'pointId' | 't'>, amount: number) => {
     if (!amount) return;
@@ -343,6 +355,28 @@ export const useStore = create<State>((set, get) => {
     linkedHot: [],
     showMeasure: false,
     showStitch: true,
+    showNotes: true,
+    selNote: null,
+    noteKind: 'ink',
+    noteColor: '#ff3b30',
+    noteWidth: 3,
+    addNote: (n) => {
+      const id = uid();
+      get().commit();
+      set((s) => ({ project: { ...s.project, notes: [...(s.project.notes ?? []), { ...n, id, createdAt: Date.now() }], updatedAt: Date.now() }, selNote: id }));
+      return id;
+    },
+    updateNote: (id, patch) => set((s) => ({ project: { ...s.project, notes: (s.project.notes ?? []).map((q) => (q.id === id ? { ...q, ...patch } : q)), updatedAt: Date.now() } })),
+    removeNote: (id) => {
+      get().commit();
+      set((s) => ({ project: { ...s.project, notes: (s.project.notes ?? []).filter((q) => q.id !== id), updatedAt: Date.now() }, selNote: s.selNote === id ? null : s.selNote }));
+    },
+    setWholeBody: (b) =>
+      set((s) => {
+        const body = { ...b } as Body;
+        const pieces = s.project.linkPattern ? regrade(s.project, s.project.body, body) : s.project.pieces;
+        return { project: { ...s.project, body, pieces, updatedAt: Date.now() } };
+      }),
     selPiece: null,
     selPoint: null,
     selMulti: [],
@@ -406,7 +440,7 @@ export const useStore = create<State>((set, get) => {
     penSheet: null,
     seamHint: null,
     symmetricPose: true,
-    cancelTools: () => set({ tool: 'select', seamDraft: EMPTY_SEAM_DRAFT, penDraft: [], penSheet: null, pieceFlow: null, seamHint: null, selLayer: null, selPleat: null, hoverSeam: null }),
+    cancelTools: () => set({ selNote: null, tool: 'select', seamDraft: EMPTY_SEAM_DRAFT, penDraft: [], penSheet: null, pieceFlow: null, seamHint: null, selLayer: null, selPleat: null, hoverSeam: null }),
     designOpen: false,
     designCollapsed: false,
     designTab: 'add',
@@ -570,9 +604,9 @@ export const useStore = create<State>((set, get) => {
     setScreen: (screen) => set({ screen }),
     newFlow: { mode: 'create', from: 'home' },
     openNew: (mode, from) => set({ newFlow: { mode, from }, screen: 'new' }),
-    createProject: ({ style, name, fit, sex }) =>
+    createProject: ({ style, name, fit, sex, body: given }) =>
       set((s) => {
-        const body = { ...(sex === 'female' ? FEMALE_BODY : MALE_BODY) };
+        const body = { ...(given ?? (sex === 'female' ? FEMALE_BODY : MALE_BODY)) };
         let project = freshProject(style, name.trim() || undefined, body);
         if (fit !== 'regular') project = { ...project, fit, pieces: regrade(project, body, body, 'regular', fit) };
         return { project, past: [], future: [], selPiece: null, selPoint: null, selAttachment: null, fitToken: s.fitToken + 1, tool: 'select', sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' };

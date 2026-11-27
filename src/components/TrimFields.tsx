@@ -13,8 +13,10 @@ import Icon from './Icon';
  * Fabric choice for a design, a tag or the inside of a piece: a summary line (swatch and name) and a section, closed
  * until opened, with the full fabric browser. Undefined = same as `host` (the piece it is on).
  */
-export function FabricPick({ value, onChange, host, id = 'fab-pick', sameLabel = 'Same as the piece' }: {
+export function FabricPick({ value, onChange, host, id = 'fab-pick', sameLabel = 'Same as the piece', canReset = true }: {
   value: PieceFabric | undefined; onChange: (f: PieceFabric | undefined) => void; host?: PieceFabric; id?: string; sameLabel?: string;
+  /** false for a face that always has its own fabric (the outside): no "same as" button */
+  canReset?: boolean;
 }) {
   const shown = value ?? host ?? { id: 'canvas', color: 0 };
   return (
@@ -22,7 +24,7 @@ export function FabricPick({ value, onChange, host, id = 'fab-pick', sameLabel =
       <div className="fabpick-sum">
         <FabricSwatch fabric={shown} size={40} label={fabricLabel(shown)} />
         <span className="fabpick-name"><b>{value ? fabricById(value.id).name : sameLabel}</b><small>{fabricLabel(shown)}</small></span>
-        {value && <button className="btn small" onClick={() => onChange(undefined)}>{sameLabel}</button>}
+        {value && canReset && <button className="btn small" onClick={() => onChange(undefined)}>{sameLabel}</button>}
       </div>
       <Disclosure id={`fabpick-${id}`} title="Browse fabrics" icon="grid">
         <FabricBrowser idKey={id} value={shown} onChange={onChange} />
