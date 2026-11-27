@@ -207,6 +207,8 @@ export class ClothSim {
       if (this.layerIdx) this.layers(pos, sewing ? Infinity : this.layerStep);
       for (let i = 0; i < n; i++) {
         const j = i * 3;
+        // a point held in place (invMass 0) carries no speed: it starts from rest when it is let go
+        if (!invMass[i]) { vel[j] = vel[j + 1] = vel[j + 2] = 0; continue; }
         let vx = (pos[j] - prev[j]) / h, vy = (pos[j + 1] - prev[j + 1]) / h, vz = (pos[j + 2] - prev[j + 2]) / h;
         if (carryD) { vx -= carryD[j] / h; vy -= carryD[j + 1] / h; vz -= carryD[j + 2] / h; }
         const v2 = vx * vx + vy * vy + vz * vz;
@@ -285,6 +287,7 @@ export class ClothSim {
             if (du * du + dv * dv < skip2) continue; // neighbours on the same piece
           }
           const d = Math.sqrt(d2), w = invMass[i] + invMass[j];
+          if (!w) continue; // both held in place (an outfit garment waiting to be dressed)
           const c = (r - d) / d / w;
           pos[i * 3] -= ex * c * invMass[i]; pos[i * 3 + 1] -= ey * c * invMass[i]; pos[i * 3 + 2] -= ez * c * invMass[i];
           pos[j * 3] += ex * c * invMass[j]; pos[j * 3 + 1] += ey * c * invMass[j]; pos[j * 3 + 2] += ez * c * invMass[j];

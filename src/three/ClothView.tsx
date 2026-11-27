@@ -182,8 +182,9 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
     const rest = items.filter((i) => i.project.id !== live.id).map((i) => i.project.edits);
     others.current = { attachments: rest.flatMap((e) => e?.attachments ?? []), insideFabric: Object.assign({}, ...rest.map((e) => e?.insideFabric ?? {})) };
     if (!items.length) { setTopo((old) => { old?.geo.dispose(); return null; }); lastOutfit.current = null; return; }
-    // the same garments with one of them edited warm start from the drape; a new body or a garment added or removed drapes again
-    const shape = JSON.stringify({ b: outfit.body, ids: items.map((i) => i.project.id) });
+    // the same garments with one of them edited warm start from the drape; a new body, a garment added, removed,
+    // moved to another layer or tucked the other way drapes again (the garments must pass each other)
+    const shape = JSON.stringify({ b: outfit.body, ids: items.map((i) => [i.project.id, i.layer, i.tuck]) });
     const warm = lastOutfit.current === shape;
     const first = lastOutfit.current === null;
     const t = setTimeout(() => {

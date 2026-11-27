@@ -116,6 +116,14 @@ function wake() {
 }
 
 function loop(myGen: number) {
+  try { loopFrame(myGen); } catch (err) {
+    // a frame that throws must not stop the drape silently: say so, and stop this simulation
+    console.warn('simulation frame failed', err);
+    (self as unknown as Worker).postMessage({ type: 'status', text: `Simulation stopped: ${String((err as Error)?.message ?? err)}` });
+  }
+}
+
+function loopFrame(myGen: number) {
   if (!G || myGen !== gen) return;
   const t0 = performance.now();
   const poseT = simTime - modeStart;
