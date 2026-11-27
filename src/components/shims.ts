@@ -65,6 +65,7 @@ export interface PatternInfo { id: PatternId; name: string; colors: string[]; sc
 
 const PATTERN_DEFAULTS: Record<PatternId, { name: string; colors: string[]; scale: number }> = {
   solid: { name: 'Solid', colors: ['#ffffff'], scale: 4 },
+  custom: { name: 'Your motif', colors: ['#f4f2ee'], scale: 6 },
   stripe: { name: 'Stripe', colors: ['#f4f4f1', '#2a3550'], scale: 2 },
   pinstripe: { name: 'Pinstripe', colors: ['#2a3550', '#d9d9de'], scale: 1 },
   breton: { name: 'Breton', colors: ['#f4f4f1', '#2a3550'], scale: 2 },

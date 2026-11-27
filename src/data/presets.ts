@@ -25,6 +25,8 @@ export interface PieceFabric {
   hex?: string;
   /** pattern on this piece (src/data/fabrics.ts) */
   pattern?: FabricPattern;
+  /** surface finish of the cloth (and of a printed pattern on it) */
+  sheen?: 'matte' | 'satin' | 'glossy' | 'metallic';
 }
 
 export interface Piece {

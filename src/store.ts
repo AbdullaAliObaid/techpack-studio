@@ -25,8 +25,57 @@ export interface Project {
   fit?: Fit;
   /** attachments, seam edits and pleats on top of the pattern (src/data/edits.ts) */
   edits?: Edits;
+  /** notes drawn or typed on the pattern chart (and pinned to pieces) for the maker */
+  notes?: Note[];
+  /** set when the project came from someone else's shared file */
+  imported?: { from?: string; at: number; fileName?: string };
   updatedAt: number;
 }
+
+/**
+ * A note on the chart: freehand ink, an arrow, or a text callout. Anchored to a piece (local cm, moves with it)
+ * or to the chart (world cm). Notes print on the tech pack pattern pages.
+ */
+export interface Note {
+  id: string;
+  kind: 'ink' | 'arrow' | 'text';
+  /** ink: the stroke; arrow: [tail, head]; text: [anchor] */
+  points: { x: number; y: number }[];
+  pieceId?: string;
+  instance?: number;
+  text?: string;
+  color: string;
+  /** stroke width in screen points */
+  width: number;
+  createdAt: number;
+}
+
+/** File format for sharing (.techit, JSON). Pictures stay embedded as data URLs. */
+export interface ShareFile {
+  format: 'tech-it';
+  version: 1;
+  exportedAt: number;
+  app: string;
+  projects: Project[];
+  outfits?: Outfit[];
+  bodies?: BodyPreset[];
+}
+
+/** A saved set of body measurements the user can reuse (e.g. "Me", "Fit model size M", "Client A"). */
+export interface BodyPreset { id: string; name: string; body: Body; updatedAt: number }
+
+/**
+ * An outfit: several garment projects worn together on one body (e.g. a shirt over jeans). Each item points at a
+ * saved garment project; the outfit owns the body. Layer order: lower numbers are closer to the skin.
+ */
+export interface OutfitItem {
+  projectId: string;
+  layer: number;
+  /** tops: tucked into the bottoms or worn out */
+  tuck?: 'in' | 'out';
+  hidden?: boolean;
+}
+export interface Outfit { id: string; name: string; body: Body; items: OutfitItem[]; updatedAt: number }
 
 export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen';
 export type Screen = 'home' | 'new' | 'editor';

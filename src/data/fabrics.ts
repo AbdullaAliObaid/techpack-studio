@@ -24,7 +24,23 @@ export const WEAVE_BASE: Record<Weave, 'canvas' | 'twill' | 'poplin' | 'linen' |
 export type PatternId =
   | 'solid' | 'stripe' | 'pinstripe' | 'breton' | 'awning' | 'gingham' | 'check' | 'plaid' | 'tartan' | 'windowpane'
   | 'houndstooth' | 'herringbone' | 'chevron' | 'polka' | 'pindot' | 'grid' | 'camo' | 'floral' | 'paisley'
-  | 'animal' | 'geo' | 'tie-dye' | 'heather' | 'jacquard';
+  | 'animal' | 'geo' | 'tie-dye' | 'heather' | 'jacquard'
+  /** the user's own motif repeated by FabricPattern.motif / layout (e.g. a fleur de lis they drew or uploaded) */
+  | 'custom';
+
+/** How a custom motif repeats, like a print designer's repeat types. */
+export type RepeatLayout = 'block' | 'half-drop' | 'brick' | 'mirror' | 'turn' | 'scatter';
+
+export interface PatternMotif {
+  /** the motif as a picture (data URL, transparent background, at most 1024 px) */
+  image?: string;
+  /** or as traced vector shapes, one per colour, SVG path in the unit box -0.5..0.5 (evenodd) */
+  paths?: { color: string; path: string }[];
+  /** motif width / height ratio */
+  aspect: number;
+  /** when the upload was already a repeating pattern: the detected repeat tile in source pixels */
+  detectedTile?: { w: number; h: number };
+}
 
 export interface FabricPattern {
   id: PatternId;
@@ -36,6 +52,13 @@ export interface FabricPattern {
   rotation: number;
   /** printed on top of the cloth, or woven / knitted into it (woven patterns also show on the inside) */
   method?: 'printed' | 'woven';
+  /** id 'custom': the motif and how it repeats */
+  motif?: PatternMotif;
+  layout?: RepeatLayout;
+  /** motif size as a share of the repeat cell (0.2 to 1) */
+  motifScale?: number;
+  /** recolour vector motifs: colours replace motif.paths colours in order */
+  recolor?: string[];
 }
 
 export type FabricCategory = 'shirting' | 'denim' | 'knits' | 'outerwear' | 'special';

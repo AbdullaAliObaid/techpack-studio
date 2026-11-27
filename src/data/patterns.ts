@@ -48,6 +48,7 @@ export const PATTERNS: Record<PatternId, PatternDef> = {
   geo: def('geo', 'Geometric', 'Diamond lattice with inner diamonds.', ['#efe9dc', '#2f6f73', '#c39a3c'], 4, 'printed'),
   'tie-dye': def('tie-dye', 'Tie dye', 'Wobbly concentric rings, hand dyed look.', ['#f2efe8', '#5b6fb5', '#c86aa5'], 30, 'printed'),
   heather: def('heather', 'Heather', 'Fine flecks of mixed yarn colours, marl knit look.', ['#a3a5a8', '#7f8185', '#d0d2d4'], 2, 'woven'),
+  custom: def('custom', 'Your motif', 'Your own drawing or picture, repeated across the fabric.', ['#f4f2ee'], 6, 'printed'),
   jacquard: def('jacquard', 'Jacquard', 'Tone on tone woven medallion and small diamonds.', ['#2b3651', '#3a4766', '#56648a'], 4, 'woven'),
 };
 
@@ -212,6 +213,7 @@ export function patternTile(pIn: FabricPattern): { size: [number, number]; svg: 
   t.rect(0, 0, S, H, c[0]); // ground
   switch (p.id) {
     case 'solid': break;
+    case 'custom': break; // motif repeat: filled in by the pattern agent
     case 'stripe': t.rect(0.3 * S, 0, 0.4 * S, H, c[1]); break;
     case 'pinstripe': { const w = Math.max(0.03 * S, 0.04); t.rect(0.5 * S - w / 2, 0, w, H, c[1]); break; }
     case 'breton': t.rect(0, 0.325 * S, S, 0.35 * S, c[1]); break;

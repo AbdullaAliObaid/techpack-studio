@@ -83,9 +83,9 @@ const colourAt = (shapes: Shape[], x: number, y: number) => {
 const differ = (a: number[], b: number[]) => a.some((v, i) => Math.abs(v - b[i]) > 6);
 
 {
-  pass(PATTERN_IDS.length === 24 && PATTERN_IDS.every((id) => PATTERNS[id].defaults.id === id && PATTERNS[id].defaults.colors.length === PATTERNS[id].colorsCount), `${PATTERN_IDS.length} patterns, defaults match their colour counts`);
+  pass(PATTERN_IDS.length === 25 && PATTERN_IDS.every((id) => PATTERNS[id].defaults.id === id && PATTERNS[id].defaults.colors.length === PATTERNS[id].colorsCount), `${PATTERN_IDS.length} patterns, defaults match their colour counts`);
   const SVG_RE = /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="[\d.]+" height="[\d.]+" viewBox="0 0 [\d.]+ [\d.]+">(<(rect|circle|ellipse|path) [^<>]*\/>)+<\/svg>$/;
-  for (const id of PATTERN_IDS) {
+  for (const id of PATTERN_IDS.filter((x) => x !== 'custom')) { // custom motifs are tested with the motif repeat code
     for (const variant of ['default', 'big custom'] as const) {
       const p = variant === 'default' ? PATTERNS[id].defaults : { ...PATTERNS[id].defaults, scale: 7.5, colors: ['#ffffff', '#000000', '#ff0000', '#00ff00'].slice(0, PATTERNS[id].colorsCount) };
       const t = patternTile(p);
