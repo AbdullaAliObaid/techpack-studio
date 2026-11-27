@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 const THREE_COLOR = THREE.Color;
 import { useStore } from '../store';
 import type { Attachment, ShapeLayer } from '../data/edits';
-import { fabricById } from '../data/fabrics';
-import { SHAPES, outlinePolygon } from '../lib/shapes';
+import { outlinePolygon } from '../lib/shapes';
 import { attachmentRings } from '../lib/trims';
 import { registerHitCloth, type ClothHit } from './hitCloth';
 import { NONE, type VertexPattern } from './printsAdapter';
+import { fabricHex as hexOf } from './fabricAdapter';
+import { patternFill, isPlain } from './detailsPattern';
+import { artVersion, drawLayer, fillRuleOf, hasPictures, subscribeArt, unitPath } from './detailsArt';
 import { applyLook, cottonTile, grainTile, labelLook, sheenLook, weaveTile, type LabelLook } from './detailsLook';
 
 // Attachment artwork on the draped cloth, plus picking and dragging in 3D.
@@ -31,6 +33,8 @@ import { applyLook, cottonTile, grainTile, labelLook, sheenLook, weaveTile, type
 
 export const ATTACH_MIME = 'application/x-techit-attachment';
 const MAX_PX = 1536;
+const PICTURE_PX_CM = 24;
+const PICTURE_PX_MAX = 2048;
 const PX_PER_CM = 10;
 const THREAD_PX_MAX = 2048;
 const THREAD_PX_CM = 22;
@@ -42,8 +46,16 @@ interface Bounds { x0: number; y0: number; w: number; h: number }
 
 function fabricHex(f: Attachment['fabric']) {
   if (!f) return null;
-  const fb = fabricById(f.id);
-  return (fb.colors[f.color] ?? fb.colors[0]).hex;
+  return f.pattern && !isPlain(f.pattern) ? f.pattern.colors[0] ?? hexOf(f) : hexOf(f);
+}
+
+/** fill of a cloth outline painted on the host: the pattern in cm space (rotated), else the colour */
+function clothFill(ctx: CanvasRenderingContext2D, f: NonNullable<Attachment['fabric']>): string | CanvasPattern {
+  if (f.pattern && !isPlain(f.pattern)) {
+    const p = patternFill(ctx, f.pattern);
+    if (p) return p;
+  }
+  return fabricHex(f) ?? '#ffffff';
 }
 
 function outlinePath(a: Attachment) {
@@ -73,7 +85,7 @@ function drawInk(ctx: CanvasRenderingContext2D, a: Attachment, local: boolean, o
   if (flip) ctx.scale(-1, 1);
   const fill = fabricHex(a.fabric);
   if ((a.kind === 'print' || onHost) && fill && a.kind !== 'embroidery' && a.kind !== 'hardware' && a.kind !== 'label') {
-    ctx.fillStyle = fill;
+    ctx.fillStyle = clothFill(ctx, a.fabric!);
     ctx.fill(outlinePath(a));
   } else if (onHost && a.kind !== 'print' && a.kind !== 'embroidery' && a.kind !== 'hardware' && a.kind !== 'label') {
     // no cloth of its own yet: a faint edge so the shape still reads
@@ -82,26 +94,7 @@ function drawInk(ctx: CanvasRenderingContext2D, a: Attachment, local: boolean, o
     ctx.stroke(outlinePath(a));
   }
   if (a.kind !== 'embroidery' && a.kind !== 'label') {
-    for (const l of a.layers) {
-      ctx.save();
-      ctx.translate(l.x, l.y);
-      ctx.rotate(rad(l.rotation));
-      if (l.flipX) ctx.scale(-1, 1);
-      ctx.globalAlpha = l.opacity ?? 1;
-      ctx.fillStyle = l.color;
-      if (l.shape === 'text') {
-        if (l.text) {
-          ctx.font = `700 ${Math.max(0.5, l.h)}px system-ui, sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(l.text, 0, 0, Math.max(0.5, l.w));
-        }
-      } else {
-        ctx.scale(l.w, l.h);
-        ctx.fill(new Path2D(SHAPES[l.shape].d));
-      }
-      ctx.restore();
-    }
+    for (const l of a.layers) drawLayer(ctx, l, l.color);
   }
   if (accent) {
     ctx.globalAlpha = 0.9;
@@ -125,6 +118,8 @@ const mkCanvas = (w: number, h: number) => {
  * canvas in the layer's own frame, then stamped into the thread colour and height canvases.
  */
 function stitchLayer(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2D, l: ShapeLayer, k: number, outline: string | undefined, seed: number) {
+  // thread follows outlines: pictures are traced into paths by the UI first, a raw picture has no stitches
+  if (l.shape === 'image' || (l.shape !== 'text' && !unitPath(l))) return;
   const w = Math.max(0.4, l.w), h = Math.max(0.4, l.h), pad = 0.3;
   const W = (w + 2 * pad) * k, H = (h + 2 * pad) * k;
   const sc = mkCanvas(W, H), sh = mkCanvas(W, H);
@@ -170,7 +165,7 @@ function stitchLayer(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2
       x.textBaseline = 'middle';
       x.fillText(l.text ?? '', 0, 0, w);
     } else {
-      x.save(); x.scale(l.w, l.h); x.fill(new Path2D(SHAPES[l.shape].d)); x.restore();
+      x.save(); x.scale(l.w, l.h); x.fill(unitPath(l)!, fillRuleOf(l)); x.restore();
     }
     x.globalCompositeOperation = 'source-over';
   };
@@ -184,7 +179,7 @@ function stitchLayer(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2
     x.setLineDash([0.16, 0.045]);
     x.lineCap = 'round';
     if (l.shape === 'text') { x.font = `700 ${Math.max(0.5, l.h)}px system-ui, sans-serif`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.strokeText(l.text ?? '', 0, 0, w); }
-    else { x.scale(l.w, l.h); x.lineWidth = 0.075 / Math.max(l.w, l.h); x.setLineDash([0.16 / Math.max(l.w, l.h), 0.045 / Math.max(l.w, l.h)]); x.stroke(new Path2D(SHAPES[l.shape].d)); }
+    else { x.scale(l.w, l.h); x.lineWidth = 0.075 / Math.max(l.w, l.h); x.setLineDash([0.16 / Math.max(l.w, l.h), 0.045 / Math.max(l.w, l.h)]); x.stroke(unitPath(l)!); }
     x.restore();
   };
   stroke(c, o);
@@ -218,27 +213,8 @@ function drawThread(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2D
 }
 
 
-/** one layer path in the current (cm) transform */
-function fillLayer(ctx: CanvasRenderingContext2D, l: ShapeLayer, fill: string | CanvasPattern) {
-  ctx.save();
-  ctx.translate(l.x, l.y);
-  ctx.rotate(rad(l.rotation));
-  if (l.flipX) ctx.scale(-1, 1);
-  ctx.globalAlpha *= l.opacity ?? 1;
-  ctx.fillStyle = fill;
-  if (l.shape === 'text') {
-    if (l.text) {
-      ctx.font = `700 ${Math.max(0.5, l.h)}px system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(l.text, 0, 0, Math.max(0.5, l.w));
-    }
-  } else {
-    ctx.scale(l.w, l.h);
-    ctx.fill(new Path2D(SHAPES[l.shape].d));
-  }
-  ctx.restore();
-}
+/** one layer in the current (cm) transform; pictures only in the colour pass */
+const fillLayer = (ctx: CanvasRenderingContext2D, l: ShapeLayer, fill: string | CanvasPattern, pass: 'color' | 'height' = 'color') => drawLayer(ctx, l, fill, pass);
 
 const tintCache = new Map<string, HTMLCanvasElement>();
 /** a tile multiplied into a colour, for thread of that colour woven in */
@@ -304,9 +280,9 @@ function drawLabel(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2D,
     else fillLayer(col, l, l.color);
     col.restore();
     hgt.save();
-    if (look.art === 'raised') { hgt.shadowColor = '#fff'; hgt.shadowBlur = 4; fillLayer(hgt, l, '#fff'); }
-    else if (look.art === 'debossed') fillLayer(hgt, l, '#000');
-    else if (look.art === 'woven' && tile) fillLayer(hgt, l, tilePattern(hgt, tile, look.tilesPerCm * 1.6));
+    if (look.art === 'raised') { hgt.shadowColor = '#fff'; hgt.shadowBlur = 4; fillLayer(hgt, l, '#fff', 'height'); }
+    else if (look.art === 'debossed') fillLayer(hgt, l, '#000', 'height');
+    else if (look.art === 'woven' && tile) fillLayer(hgt, l, tilePattern(hgt, tile, look.tilesPerCm * 1.6), 'height');
     hgt.restore();
   });
   col.restore();
@@ -352,6 +328,8 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
   const attachments = useStore((s) => s.project.edits?.attachments);
   const sel = useStore((s) => s.selAttachment);
   const list = useMemo(() => attachments ?? [], [attachments]);
+  // pictures and pattern tiles decode asynchronously: repaint the artwork that uses them when they have
+  const artTick = useSyncExternalStore(subscribeArt, artVersion);
   const listRef = useRef(list);
   listRef.current = list;
 
@@ -486,15 +464,24 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
       const inkMat = rig.inkMats[e], threadMat = rig.threadMats[e];
 
       /* ink */
-      const sig = JSON.stringify([inkArt, sel, accent, flip, own]);
+      const asyncInk = inkArt.some((a) => hasPictures(a.layers) || (a.fabric?.pattern && !isPlain(a.fabric.pattern)));
+      const sig = JSON.stringify([inkArt, sel, accent, flip, own, asyncInk ? artTick : 0]);
       let slot = rig.ink.get(slotKey);
       if (inkArt.length || slot) {
+        // pictures need more pixels than flat ink: up to 24 px per cm, never more than 2048 px a side
+        const pics = inkArt.some((a) => hasPictures(a.layers));
+        const kWant = Math.min(pics ? PICTURE_PX_CM : PX_PER_CM, (pics ? PICTURE_PX_MAX : MAX_PX) / Math.max(b.w, b.h));
+        if (slot && Math.abs(slot.canvas.width - Math.max(2, Math.ceil(b.w * kWant))) > 1) {
+          // size changed (a picture was added or removed): textures cannot be resized in place
+          slot.tex.dispose(); slot.hgtTex?.dispose();
+          rig.ink.delete(slotKey);
+          slot = undefined;
+        }
         // gloss follows the last print that names a sheen; a glossy print also puffs up a little
         const sh = [...inkArt].reverse().find((a) => a.kind === 'print' && a.sheen)?.sheen;
         const puff = sh === 'glossy';
         if (!slot) {
-          const k = Math.min(PX_PER_CM, MAX_PX / Math.max(b.w, b.h));
-          const canvas = mkCanvas(b.w * k, b.h * k);
+          const canvas = mkCanvas(b.w * kWant, b.h * kWant);
           const tex = new THREE.CanvasTexture(canvas);
           tex.flipY = false;
           tex.colorSpace = THREE.SRGBColorSpace;
@@ -531,7 +518,7 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
       }
 
       /* thread */
-      const tsig = JSON.stringify([threadArt, flip, own]);
+      const tsig = JSON.stringify([threadArt, flip, own, threadArt.some((a) => hasPictures(a.layers)) ? artTick : 0]);
       let ts = rig.thread.get(slotKey);
       if (threadArt.length || ts) {
         const k = Math.min(THREAD_PX_CM, THREAD_PX_MAX / Math.max(b.w, b.h));
@@ -575,7 +562,7 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
         }
       }
     });
-  }, [rig, pat, bounds, list, sel]);
+  }, [rig, pat, bounds, list, sel, artTick]);
 
   /* ---- picking ---- */
   const hit = useMemo(() => {

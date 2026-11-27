@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ShapeLayer } from '../data/edits';
 import type { Pt } from '../lib/geometry';
-import { SHAPES } from '../lib/shapes';
+import { drawLayer, getImage, hasPictures, subscribeArt } from './detailsArt';
 import { holeOffsets, outlineExtent } from '../lib/trims';
 
 // Geometry for designed trims: a drawn outline turned into a button / snap / stud / rivet / puller body (bevelled edge,
@@ -152,25 +152,10 @@ function shadeCss(css: string, f: number) {
   return `rgb(${Math.round(Math.min(1, c.r * f) * 255)},${Math.round(Math.min(1, c.g * f) * 255)},${Math.round(Math.min(1, c.b * f) * 255)})`;
 }
 
-function paintLayer(ctx: CanvasRenderingContext2D, l: ShapeLayer, ext: number, fill: string) {
-  ctx.save();
-  // layer coords are in the pattern frame, cm centred on the trim; the canvas is in the same frame, normalised
-  ctx.translate(l.x / ext, l.y / ext);
-  ctx.rotate(rad(l.rotation));
-  if (l.flipX) ctx.scale(-1, 1);
-  ctx.fillStyle = fill;
-  if (l.shape === 'text') {
-    if (l.text) {
-      ctx.font = `700 ${Math.max(0.02, l.h / ext)}px system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(l.text, 0, 0, Math.max(0.02, l.w / ext));
-    }
-  } else {
-    ctx.scale(l.w / ext, l.h / ext);
-    ctx.fill(new Path2D(SHAPES[l.shape].d));
-  }
-  ctx.restore();
+function paintLayer(ctx: CanvasRenderingContext2D, l: ShapeLayer, ext: number, fill: string, pass: 'color' | 'height' = 'color') {
+  // layer coords are in the pattern frame, cm centred on the trim; the canvas is in the same frame, normalised.
+  // The shared painter works in that scale: layer sizes and positions are divided by ext first.
+  drawLayer(ctx, { ...l, x: l.x / ext, y: l.y / ext, w: l.w / ext, h: l.h / ext }, fill, pass);
 }
 
 export interface FaceTextures { map: THREE.CanvasTexture; bump: THREE.CanvasTexture }
@@ -185,22 +170,29 @@ export function faceTextures(shell: Shell, layers: ShapeLayer[], metal: boolean,
   const mk = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
   const cm = mk(), cb = mk();
   const m = cm.getContext('2d')!, b = cb.getContext('2d')!;
-  m.fillStyle = '#ffffff'; m.fillRect(0, 0, W, H);
-  b.fillStyle = metal ? '#d0d0d0' : '#808080'; b.fillRect(0, 0, W, H);
-  for (const x of [m, b]) x.setTransform(W / shell.box.w, 0, 0, H / shell.box.h, (-shell.box.x0 * W) / shell.box.w, (-shell.box.y0 * H) / shell.box.h);
-  for (const l of layers) {
-    m.globalAlpha = b.globalAlpha = l.opacity ?? 1;
-    if (metal) {
-      // recessed: a dark tone of the metal, tinted a little by the layer colour
-      const tint = new THREE.Color(l.color);
-      const lum = 0.2126 * tint.r + 0.7152 * tint.g + 0.0722 * tint.b;
-      paintLayer(m, l, shell.ext, shadeCss('#ffffff', 0.32 + 0.3 * lum));
-      paintLayer(b, l, shell.ext, 'rgb(40,40,40)');
-    } else {
-      paintLayer(m, l, shell.ext, l.color);
-      paintLayer(b, l, shell.ext, 'rgb(190,190,190)');
+  const paint = () => {
+    for (const x of [m, b]) { x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; }
+    m.fillStyle = '#ffffff'; m.fillRect(0, 0, W, H);
+    b.fillStyle = metal ? '#d0d0d0' : '#808080'; b.fillRect(0, 0, W, H);
+    for (const x of [m, b]) x.setTransform(W / shell.box.w, 0, 0, H / shell.box.h, (-shell.box.x0 * W) / shell.box.w, (-shell.box.y0 * H) / shell.box.h);
+    for (const l of layers) {
+      m.globalAlpha = b.globalAlpha = 1; // the layer opacity is applied by drawLayer
+      if (l.shape === 'image') {
+        // a picture on a trim face: printed in its own colours, on metal as well (no relief)
+        paintLayer(m, l, shell.ext, '#fff');
+      } else if (metal) {
+        // recessed: a dark tone of the metal, tinted a little by the layer colour
+        const tint = new THREE.Color(l.color);
+        const lum = 0.2126 * tint.r + 0.7152 * tint.g + 0.0722 * tint.b;
+        paintLayer(m, l, shell.ext, shadeCss('#ffffff', 0.32 + 0.3 * lum));
+        paintLayer(b, l, shell.ext, 'rgb(40,40,40)', 'height');
+      } else {
+        paintLayer(m, l, shell.ext, l.color);
+        paintLayer(b, l, shell.ext, 'rgb(190,190,190)', 'height');
+      }
     }
-  }
+  };
+  paint();
   const tex = (c: HTMLCanvasElement, srgb: boolean) => {
     const t = new THREE.CanvasTexture(c);
     t.flipY = false;
@@ -208,7 +200,18 @@ export function faceTextures(shell: Shell, layers: ShapeLayer[], metal: boolean,
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;
     return t;
   };
-  return { map: tex(cm, true), bump: tex(cb, false) };
+  const out = { map: tex(cm, true), bump: tex(cb, false) };
+  // pictures decode asynchronously: repaint the face once they have, then stop listening
+  if (hasPictures(layers) && layers.some((l) => l.shape === 'image' && !getImage(l.image))) {
+    const off = subscribeArt(() => {
+      if (layers.every((l) => l.shape !== 'image' || getImage(l.image))) {
+        off();
+        paint();
+        out.map.needsUpdate = true; out.bump.needsUpdate = true;
+      }
+    });
+  }
+  return out;
 }
 
 /* ---------- zipper parts, modelled for the zipper frame: x lateral, y along (down), z out; cm ---------- */
