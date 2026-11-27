@@ -46,3 +46,4 @@ components use `usePick(...)` selectors, keep that), `npx tsc --noEmit`, `npm ru
 - Open: no UI for Attachment.lining; no visible thick edge in 3D (Garment3D.panelThickness ready).
 - Fly-away fix and soft skin merged and pushed (Body panel switch "Soft skin", tests in tests/worker.ts).
 - In flight: agent/hats (wt-hats: beanie, visor, five panel, HAT_DESIGNS, star stitch, user buttonholes) and agent/designs (wt-designs: designs library, src/data/designs.ts). Collar button pushed.
+- TODO collar fly-away: cold build with collar down after an up drape gives top 152.2 vs 155.6 fresh (worker state leaks across builds, maybe soft skin dents); node shows no fly-away, app path differs. Needs garment-engineer.
