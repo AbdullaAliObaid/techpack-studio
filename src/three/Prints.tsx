@@ -710,6 +710,8 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
 
     const down = (e: PointerEvent) => {
       if (!visible || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      // Camera mode: a drag only moves the view, nothing on the garment is picked up
+      if (useStore.getState().view3dMode === 'camera') { tap = { x: e.clientX, y: e.clientY }; return; }
       const h = hit(e.clientX, e.clientY, false);
       const a = h ? attachmentAt(listRef.current, h.pieceId, h.instance, h.x, h.y) : null;
       if (!h || !a) { tap = { x: e.clientX, y: e.clientY }; return; }

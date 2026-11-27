@@ -1,12 +1,12 @@
 // Editor for the selected design: face, placement, size, material and sheen, trim and tag options, artwork layers.
 import { useState } from 'react';
 import { useStore, usePick } from '../store';
-import type { Attachment, Hardware, LabelType } from '../data/edits';
+import type { Attachment, Hardware, HardwareType, LabelType } from '../data/edits';
 import { shapePolygon } from '../lib/shapes';
 import { ArtworkGroup, outlineD } from './Artwork';
 import { ColorField, Disclosure, LenInput, NumInput, Row, Seg } from './controls';
 import { canHostDesigns, faceName, KIND_ICON, KIND_LABEL, LABEL_TYPES, normaliseOutline, OUTLINE_LIST, rootPiece, scaleAttachment, scaleOutline, SEWN_LABEL } from './editHelpers';
-import { drawnHardware, type DrawDraft } from './designLibrary';
+import { drawnHardware, hardwareAttachment, HARDWARE, hwDefaults, type DrawDraft } from './designLibrary';
 import { clean, textWidth } from './designLibrary';
 import { FabricPick, FinishPick, SheenPick, ZipperFields } from './TrimFields';
 import { DEFAULT_ZIPPER } from './Artwork';
@@ -63,6 +63,30 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
     const size = o?.length ? Math.max(...o.map((p) => Math.max(Math.abs(p.x), Math.abs(p.y)))) * 2 : 2;
     return { type: 'puller', unit: o?.length ? normaliseOutline(o) : normaliseOutline(shapePolygon('rounded', 1, 1)[0]), size, holes: 0, finish: z.pullerFinish ?? hw!.finish, sheen: hw!.sheen ?? 'metallic', layers: z.pullerLayers ?? [] };
   };
+  /** another kind of trim in the same place, keeping the finish, colour and the row */
+  const changeType = (type: HardwareType) => {
+    if (!hw || type === hw.type) return;
+    const def = HARDWARE.find((d) => d.type === type)!;
+    const t = hardwareAttachment(type, { ...hwDefaults(def, hw.finish), count: hw.count ?? 1, spacing: hw.spacing ?? def.spacing, sheen: hw.sheen ?? 'metallic' });
+    patch({ name: t.name, w: t.w, h: t.h, outline: t.outline, hardware: { ...t.hardware!, ...(hw.color ? { color: hw.color } : {}) } });
+  };
+  /** a row of trims becomes one trim each, in the same places, so every one can be edited on its own */
+  const splitRow = () => {
+    if (!hw || (hw.count ?? 1) < 2) return;
+    const st = useStore.getState();
+    const n = hw.count ?? 1, gap = hw.spacing ?? hw.size * 2, r = (att.rotation * Math.PI) / 180;
+    st.commit();
+    const ids: string[] = [];
+    const { id: _id, ...base } = att;
+    void _id;
+    for (let i = 0; i < n; i++) {
+      const off = (i - (n - 1) / 2) * gap;
+      ids.push(st.addAttachment({ ...base, name: `${att.name.replace(/ \d+$/, '')} ${i + 1}`, x: att.x + off * Math.cos(r), y: att.y + off * Math.sin(r), w: hw.size, h: hw.size, outline: hw.outline ? att.outline : 'circle', hardware: { ...hw, count: 1, spacing: undefined } }));
+    }
+    st.removeAttachment(att.id);
+    set({ selAttachment: ids[0] });
+  };
+
   const applyDraw = (d: DrawDraft) => {
     if (drawing === 'puller' && hw) {
       const z = hw.zipper ?? DEFAULT_ZIPPER;
@@ -138,6 +162,21 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
         </div>
         <p className="group-note">Drag it on the chart to move it. Use the corner handle to resize and the top handle to turn it. Arrow keys nudge it, Shift for 1 cm.</p>
       </Disclosure>
+
+      <span id="att-focus" />
+      {hw && hw.type !== 'zipper' && (
+        <div className="frow stack">
+          <span className="lbl">Type</span>
+          <Seg label="Kind of trim" value={hw.type} onChange={(type) => changeType(type as HardwareType)}
+            options={HARDWARE.filter((d) => d.type !== 'zipper').map((d) => ({ id: d.type, label: d.label }))} />
+        </div>
+      )}
+      {hw && hw.type !== 'zipper' && (hw.count ?? 1) > 1 && (
+        <div className="frow stack">
+          <span className="group-note" style={{ padding: 0 }}>These {hw.count} {hw.type}s are one row, so changes here apply to all of them.</span>
+          <button className="btn small" onClick={splitRow}><Icon name="copy" size={14} /> Edit each one separately</button>
+        </div>
+      )}
 
       <Disclosure id="att-size" title="Size" icon="stretch">
         {hw ? (

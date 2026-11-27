@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { ContactShadows, OrbitControls } from '@react-three/drei';
 import { useStore, usePick } from '../store';
@@ -12,6 +12,7 @@ import StudioLight from '../three/StudioLight';
 import BodyCard from './BodyPanel';
 import MeasureOverlay from '../three/MeasureOverlay';
 import { useCssVars } from './theme';
+import { attachmentAt, inspectAttachment, inspectPiece } from './inspect';
 import GarmentLoading from './GarmentLoading';
 import Icon from './Icon';
 import { PaneTitle } from './controls';
@@ -25,8 +26,20 @@ const Tgl = ({ on, icon, label, onChange }: { on: boolean; icon: string; label: 
 );
 
 export default function Viewport3D() {
-  const { setCollar, project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode, pullMode } = usePick('setCollar', 'project', 'view3d', 'showBody', 'skin', 'showJoints', 'showGarment', 'showTape', 'units', 'set', 'draping', 'drapePeak', 'redrapeToken', 'simStatus', 'mode', 'pullMode');
+  const { setCollar, project, view3d, showBody, skin, showJoints, showGarment, showTape, units, set, draping, drapePeak, redrapeToken, simStatus, mode, pullMode, view3dMode } = usePick('setCollar', 'project', 'view3d', 'showBody', 'skin', 'showJoints', 'showGarment', 'showTape', 'units', 'set', 'draping', 'drapePeak', 'redrapeToken', 'simStatus', 'mode', 'pullMode', 'view3dMode');
   const { body, pieces, garment } = project;
+  // C = camera, E = edit (not while typing)
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (e.metaKey || e.ctrlKey || e.altKey || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || useStore.getState().screen !== 'editor') return;
+      const k = e.key.toLowerCase();
+      if (k === 'c') useStore.setState({ view3dMode: 'camera', pullMode: false });
+      else if (k === 'e') useStore.setState({ view3dMode: 'edit' });
+    };
+    window.addEventListener('keydown', on);
+    return () => window.removeEventListener('keydown', on);
+  }, []);
   const downAt = useRef<{ x: number; y: number; b: number } | null>(null);
   const tv = useCssVars(['--viewport', '--floor', '--hemi-ground', '--shadow-opacity'] as const);
   const stretch = view3d === 'stretch';
@@ -55,6 +68,14 @@ export default function Viewport3D() {
         const h = hitCloth(e.clientX, e.clientY);
         useStore.setState({ probe: h ? { pieceId: h.pieceId, instance: h.instance ?? 0, x: h.x, y: h.y, at: Date.now() } : null });
       }}
+      onDoubleClick={(e) => {
+        // double click the garment: the piece under the pointer, or the trim on it, opens its inspector
+        if (useStore.getState().pullMode || useStore.getState().view3dMode !== 'edit' || (e.target as HTMLElement).closest('.vp-top, .vp-bottom, .body-card')) return;
+        const h = hitCloth(e.clientX, e.clientY);
+        if (!h) return;
+        const a = attachmentAt(h.pieceId, h.instance ?? 0, h.x, h.y);
+        if (a) inspectAttachment(a.id); else inspectPiece(h.pieceId, h.instance ?? 0);
+      }}
       onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }}
       onDrop={(e) => { const f = imageFileOf(e.dataTransfer.files); if (f) { e.preventDefault(); openPhoto(f); } }}
     >
@@ -79,13 +100,18 @@ export default function Viewport3D() {
 
       <GarmentLoading />
 
+      <div className="vp-mode material" role="radiogroup" aria-label="What dragging does in the 3D view">
+        <button role="radio" aria-checked={view3dMode === 'camera'} className={view3dMode === 'camera' ? 'on' : ''} title="Camera (C): drag to orbit, pan and zoom. Nothing on the garment moves." onClick={() => set({ view3dMode: 'camera', pullMode: false })}><Icon name="eye" size={16} /><span>Camera</span></button>
+        <button role="radio" aria-checked={view3dMode === 'edit'} className={view3dMode === 'edit' ? 'on' : ''} title="Edit (E): drag a design to move it, double click to edit it. Dragging empty space still orbits." onClick={() => set({ view3dMode: 'edit' })}><Icon name="select" size={16} /><span>Edit</span></button>
+      </div>
+
       <div className="vp-top">
         <div className="vp-toolbar material" role="toolbar" aria-label="Show in 3D view">
           <Tgl on={showBody} icon="body" label="Body" onChange={(v) => set({ showBody: v })} />
           <Tgl on={showGarment} icon="garment" label="Garment" onChange={(v) => set({ showGarment: v })} />
           <Tgl on={showJoints} icon="joints" label="Joints" onChange={(v) => set({ showJoints: v })} />
           <Tgl on={showTape} icon="tape" label="Tape" onChange={(v) => set({ showTape: v })} />
-          <button className={`tgl ${pullMode ? 'on' : ''}`} aria-pressed={pullMode} title={pullMode ? 'Stop pulling the cloth' : 'Pull the cloth by hand. Shift-click pins a point'} onClick={() => set({ pullMode: !pullMode })}>
+          <button className={`tgl ${pullMode ? 'on' : ''}`} aria-pressed={pullMode} title={pullMode ? 'Stop pulling the cloth' : 'Pull the cloth by hand. Shift-click pins a point'} onClick={() => set(pullMode ? { pullMode: false } : { pullMode: true, view3dMode: 'edit' })}>
             <Icon name="pan" size={16} /><span>Pull</span>
           </button>
         </div>
