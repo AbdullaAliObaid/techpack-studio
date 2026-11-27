@@ -103,7 +103,7 @@ export function attachmentPatch(doc: DesignDoc): Pick<Attachment, 'kind' | 'name
 /** A design from an attachment already on the garment (outline layers stay as layers of their own). */
 export function docFromAttachment(a: Attachment): DesignDoc {
   const kind = a.kind === 'patch' || a.kind === 'applique' || a.kind === 'embroidery' || a.kind === 'print' ? a.kind : 'patch';
-  return { ...newDesign(), name: a.name, makeAs: kind, w: a.w, h: a.h, outline: a.outline === 'custom' || a.outline === 'shape' ? 'rounded' : a.outline, cloth: a.fabric?.hex ?? '#1d3b6e', thread: a.thread ?? '#e9e2cf', sheen: a.sheen ?? 'matte', layers: a.layers.map((l) => ({ ...l })), placedId: a.id, pieceId: a.pieceId, instance: a.instance ?? 0 };
+  return { ...newDesign(), name: a.name, makeAs: kind, w: a.w, h: a.h, outline: a.outline === 'custom' || a.outline === 'shape' ? 'rounded' : a.outline, cloth: a.fabric?.hex ?? '#1d3b6e', thread: a.thread ?? '#e9e2cf', sheen: a.sheen ?? 'matte', layers: a.layers.map((l) => ({ ...l }) as DLayer), placedId: a.id, pieceId: a.pieceId, instance: a.instance ?? 0 };
 }
 
 export const newLayer = (shape: ShapeLayer['shape'], over: Partial<DLayer> = {}): DLayer => ({ id: uid(), shape, x: 0, y: 0, w: 3, h: 3, rotation: 0, color: '#f2c94c', opacity: 1, ...over });
