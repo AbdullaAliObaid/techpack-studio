@@ -1,42 +1,19 @@
 /* ---------- start screen (tech-it front door): a calm sheet of fabric ---------- */
 :root {
   --fabric: oklch(0.935 0.006 85);
-  --fabric-thread: oklch(0.4 0.01 85 / 0.045);
   --fabric-shade: oklch(0.2 0.01 85);
   --splash-hair: oklch(0 0 0 / 0.1);
 }
 :root[data-theme='dark'] {
   /* depth in dark mode comes from a lighter surface, not a shadow */
   --fabric: oklch(0.3 0.004 270);
-  --fabric-thread: oklch(1 0 0 / 0.035);
   --fabric-shade: oklch(0.1 0 0);
   --splash-hair: oklch(1 0 0 / 0.12);
 }
 
 .splash { position: fixed; inset: 0; height: 100vh; height: 100dvh; z-index: 1000; color: var(--label); font-family: var(--font); overflow: hidden; }
 
-.fab { position: absolute; inset: 0; }
-.fab-half { position: absolute; left: 0; right: 0; height: 50%; }
-.fab-top { top: 0; }
-.fab-bot { bottom: 0; }
-.fab-strip {
-  position: absolute; top: 0; bottom: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; will-change: transform;
-  background-color: var(--fabric);
-  background-image: repeating-linear-gradient(90deg, var(--fabric-thread) 0 1px, transparent 1px 4px);
-}
-.fab-top .fab-strip { transform-origin: 50% 0; }
-.fab-bot .fab-strip { transform-origin: 50% 100%; }
-/* a strip dims a little as it turns away */
-.fab-strip i { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
-.fab-top .fab-strip i { background: linear-gradient(in oklch to bottom, transparent, var(--fabric-shade)); }
-.fab-bot .fab-strip i { background: linear-gradient(in oklch to top, transparent, var(--fabric-shade)); }
-
-/* the hairline opening that trails the crossing point, fading out behind it */
-.fab-slit {
-  position: absolute; left: 0; top: 50%; width: 200px; height: 2px; margin-top: -1px; pointer-events: none;
-  background: linear-gradient(in oklch to left, oklch(0 0 0 / 0.4), transparent);
-}
-.splash.idle .fab-slit { opacity: 0; }
+.fab { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
 
 .splash-head {
   position: absolute; left: 0; right: 0; bottom: calc(50% + 88px); text-align: center; padding: 0 24px;
@@ -70,8 +47,8 @@ button.splash-start:focus-visible { outline: 3px solid var(--accent); outline-of
 
 /* the scissors: the crossing point is the element origin, which sits exactly on the dotted line (top 50%) */
 .splash-scissors { position: absolute; top: 50%; width: 0; height: 0; will-change: transform; color: var(--label); pointer-events: none; }
-.splash-scissors.over { filter: drop-shadow(0 1px 1px oklch(0 0 0 / 0.22)); }
-:root[data-theme='dark'] .splash-scissors.over { filter: none; }
+.splash-scissors { filter: drop-shadow(0 1px 1px oklch(0 0 0 / 0.2)); }
+:root[data-theme='dark'] .splash-scissors { filter: none; }
 
 /* reduced motion: a short crossfade instead of the cut */
 .splash.rm.cutting { animation: splash-fade 240ms ease forwards !important; pointer-events: none; }
