@@ -3,6 +3,24 @@
 
 export type Weave = 'canvas' | 'twill' | 'poplin' | 'linen' | 'wool' | 'poly' | 'jersey' | 'leather' | 'spandex';
 
+/** Generic woven / printed fabric patterns (no trademarked designs). Drawn procedurally in 2D and 3D, sized in cm. */
+export type PatternId =
+  | 'solid' | 'stripe' | 'pinstripe' | 'breton' | 'awning' | 'gingham' | 'check' | 'plaid' | 'tartan' | 'windowpane'
+  | 'houndstooth' | 'herringbone' | 'chevron' | 'polka' | 'pindot' | 'grid' | 'camo' | 'floral' | 'paisley'
+  | 'animal' | 'geo' | 'tie-dye' | 'heather' | 'jacquard';
+
+export interface FabricPattern {
+  id: PatternId;
+  /** colours used by the pattern, first = ground (CSS hex) */
+  colors: string[];
+  /** repeat size in cm */
+  scale: number;
+  /** degrees, relative to the grainline */
+  rotation: number;
+  /** printed on top of the cloth, or woven / knitted into it (woven patterns also show on the inside) */
+  method?: 'printed' | 'woven';
+}
+
 export interface Fabric {
   id: string;
   name: string;

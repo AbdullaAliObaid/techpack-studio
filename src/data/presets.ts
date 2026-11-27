@@ -1,3 +1,4 @@
+import type { FabricPattern } from './fabrics';
 import type { Placement } from './edits';
 import { bbox, type PPoint, type Pt } from '../lib/geometry';
 import { uid } from '../lib/units';
@@ -18,7 +19,12 @@ export type SpecDef =
 
 export interface PieceFabric {
   id: string;
+  /** index into the fabric's colours */
   color: number;
+  /** any custom colour (CSS hex); overrides `color` when set */
+  hex?: string;
+  /** pattern on this piece (src/data/fabrics.ts) */
+  pattern?: FabricPattern;
 }
 
 export interface Piece {

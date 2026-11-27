@@ -7,7 +7,11 @@ import type { Pt } from '../lib/geometry';
 /** Emblem / print shape library (BO2 emblem editor style layers). */
 export type ShapeId =
   | 'rect' | 'rounded' | 'circle' | 'triangle' | 'star' | 'star4' | 'heart' | 'hexagon' | 'shield'
-  | 'chevron' | 'stripe' | 'bolt' | 'cross' | 'diamond' | 'ring' | 'text';
+  | 'chevron' | 'stripe' | 'bolt' | 'cross' | 'diamond' | 'ring' | 'text'
+  /** a photo or picture the user inserted (ShapeLayer.image) */
+  | 'image'
+  /** a traced / free vector shape (ShapeLayer.path, SVG path in the unit box -0.5..0.5) */
+  | 'path';
 
 export interface ShapeLayer {
   id: string;
@@ -22,6 +26,10 @@ export interface ShapeLayer {
   opacity?: number;
   flipX?: boolean;
   text?: string; // for shape 'text'
+  /** shape 'image': picture as a data URL (downscaled to at most 1024 px, PNG or JPEG) */
+  image?: string;
+  /** shape 'path': SVG path data in the unit box -0.5..0.5 (fill rule evenodd) */
+  path?: string;
 }
 
 /**
@@ -113,7 +121,7 @@ export interface Attachment {
   /** emblem / print artwork, drawn on top of the attachment's fabric */
   layers: ShapeLayer[];
   /** fabric for cloth attachments; defaults to the host piece fabric */
-  fabric?: { id: string; color: number };
+  fabric?: { id: string; color: number; hex?: string; pattern?: import('./fabrics').FabricPattern };
   /** outline === 'shape': the shape to cut (applique) and its text for 'text' */
   shape?: ShapeId;
   text?: string;
@@ -205,7 +213,7 @@ export interface Edits {
   /** collar worn folded down (default) or popped up */
   collar?: 'down' | 'up';
   /** fabric on the inside face of a piece (under collar, placket facing, lining look); key = piece id */
-  insideFabric?: Record<string, { id: string; color: number }>;
+  insideFabric?: Record<string, { id: string; color: number; hex?: string; pattern?: import('./fabrics').FabricPattern }>;
 }
 
 export const EMPTY_EDITS: Edits = { attachments: [], customSeams: [], detachedSeams: [], pleats: [] };

@@ -28,6 +28,8 @@ function ngon(n: number, rot = 0) {
 }
 const circle = 'M0.5 0A0.5 0.5 0 1 1 -0.5 0A0.5 0.5 0 1 1 0.5 0Z';
 
+const SQUARE_D = 'M-0.5 -0.5L0.5 -0.5L0.5 0.5L-0.5 0.5Z';
+
 export const SHAPES: Record<ShapeId, { name: string; d: string }> = {
   rect: { name: 'Square', d: poly([[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]) },
   rounded: { name: 'Rounded', d: 'M-0.35 -0.5H0.35Q0.5 -0.5 0.5 -0.35V0.35Q0.5 0.5 0.35 0.5H-0.35Q-0.5 0.5 -0.5 0.35V-0.35Q-0.5 -0.5 -0.35 -0.5Z' },
@@ -45,6 +47,8 @@ export const SHAPES: Record<ShapeId, { name: string; d: string }> = {
   diamond: { name: 'Diamond', d: poly([[0, -0.5], [0.5, 0], [0, 0.5], [-0.5, 0]]) },
   ring: { name: 'Ring', d: circle + 'M0.32 0A0.32 0.32 0 1 0 -0.32 0A0.32 0.32 0 1 0 0.32 0Z' },
   text: { name: 'Text', d: '' },
+  image: { name: 'Picture', d: SQUARE_D },
+  path: { name: 'Traced shape', d: '' },
 };
 
 export const OUTLINES: Record<Exclude<Outline, 'custom' | 'shape'>, string> = {
