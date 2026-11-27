@@ -8,6 +8,7 @@
 // 3. Strain = body perimeter / garment perimeter - 1, compared with the fabric's safe stretch.
 // Where the garment is smaller than the body it is drawn hugging the body (it is being stretched).
 
+import { isSplitFront } from '../data/draft';
 import type { Piece, GarmentType } from '../data/presets';
 import { fabricById } from '../data/fabrics';
 import { migrateGarment, styleById } from '../data/catalog';
@@ -48,6 +49,13 @@ const TAU = Math.PI * 2;
 function widthAt(poly: Pt[], y: number, nearX?: number): number {
   const s = sliceSpan(poly, y, nearX);
   return s ? s.x2 - s.x1 : 0;
+}
+
+/** width round the body of a front at y: a split front (cut twice) is twice centre front to side */
+function frontWidthAt(front: Piece, poly: Pt[], y: number): number {
+  if (!isSplitFront(front)) return widthAt(poly, y);
+  const s = sliceSpan(poly, y);
+  return s ? 2 * Math.max(0, s.x2) : 0;
 }
 
 function limitOf(...pieces: (Piece | undefined)[]) {
@@ -114,7 +122,7 @@ export function buildGarment(type: GarmentType, pieces: Piece[], body: Body): Ga
     const rings: Ring[] = [];
     const strains: number[] = [];
 
-    const chestC = widthAt(fp, fTop + ua) + widthAt(bp, bTop + ua);
+    const chestC = frontWidthAt(front, fp, fTop + ua) + widthAt(bp, bTop + ua);
     const chestBody = f.torsoRing(hps - ua).C;
     const ease = Math.max(2, chestC - chestBody);
 
@@ -131,7 +139,7 @@ export function buildGarment(type: GarmentType, pieces: Piece[], body: Body): Ga
     const fWaist = (findTag(front, 'waist')?.y ?? 44) - fTop;
     for (const y of samples(ua, len, [fWaist, len])) {
       const h = hps - y;
-      const C = widthAt(fp, fTop + y) + widthAt(bp, bTop + y);
+      const C = frontWidthAt(front, fp, fTop + y) + widthAt(bp, bTop + y);
       const { body: br, cloth } = torsoBody(f, h);
       const r = clothRing(br, C > 1 ? C : null, cloth, h);
       const ratio = r.strain / limit;

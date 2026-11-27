@@ -6,7 +6,7 @@ import { builtinSeams, faceLabel, faceOf, instanceLabel } from '../sim/seams';
 import { labelMaterial, labelSewing, labelSize } from '../data/labels';
 import { FABRIC_CATEGORIES, FABRICS, colorName, fabricById, fabricHex, patternLabel, withPatternDefaults, type FabricRef } from '../data/fabrics';
 import type { StyleId } from '../data/catalog';
-import { derivedGirths, EASE, RIB, frontOffset, neckBase } from '../data/draft';
+import { derivedGirths, EASE, RIB, frontOffset, isSplitFront, neckBase, POCKET } from '../data/draft';
 import { migrateGarment, styleById } from '../data/catalog';
 import { bodyFrame, type Body } from '../three/body';
 
@@ -31,9 +31,10 @@ export function computeSpec(p: Piece, s: SpecDef, poly = samplePoly(p.points)): 
       const t = findTag(p, s.tag);
       if (!t) return null;
       const y = t.y + (s.dy ?? 0);
-      const span = s.full ? sliceSpan(poly, y) : sliceSpan(poly, y, t.x);
+      const span = s.full || s.cf ? sliceSpan(poly, y) : sliceSpan(poly, y, t.x);
       if (!span) return null;
-      return { label: s.label, value: span.x2 - span.x1, a: { x: span.x1, y }, b: { x: span.x2, y } };
+      const x1 = s.cf ? Math.max(0, span.x1) : span.x1; // a split front: from centre front, the extension left out
+      return { label: s.label, value: span.x2 - x1, a: { x: x1, y }, b: { x: span.x2, y } };
     }
     case 'mirror': {
       const t = findTag(p, s.tag);
@@ -189,10 +190,13 @@ export function garmentSpecs(type: GarmentType, pieces: Piece[]): { label: strin
     ];
   }
   const short = fam === 'tee' || fam === 'polo';
+  // a split front is one front cut twice, each measured centre front to side: the overlap is not ease
+  const fr = pieces.find((p) => p.role === 'front');
+  const nf = fr && isSplitFront(fr) ? 2 : 1;
   const rows = [
-    { label: 'Chest circumference', value: get('front', 'Chest') + get('back', 'Chest') },
-    { label: 'Waist circumference', value: get('front', 'Waist') + get('back', 'Waist') },
-    { label: 'Hem circumference', value: get('front', 'Hem') + get('back', 'Hem') },
+    { label: 'Chest circumference', value: nf * get('front', 'Chest') + get('back', 'Chest') },
+    { label: 'Waist circumference', value: nf * get('front', 'Waist') + get('back', 'Waist') },
+    { label: 'Hem circumference', value: nf * get('front', 'Hem') + get('back', 'Hem') },
     { label: 'Shoulder width', value: get('back', 'Shoulder') },
     { label: 'Body length (CB)', value: get('back', 'Length') },
     { label: 'Sleeve length', value: get('sleeve', 'Length') },
@@ -201,6 +205,7 @@ export function garmentSpecs(type: GarmentType, pieces: Piece[]): { label: strin
   ];
   if (fam === 'tee') rows.push({ label: 'Neck opening', value: necklineLen(type, pieces) }, { label: 'Neckband length', value: get('neckband', 'Neckband length') });
   if (pieces.some((p) => p.role === 'placket')) rows.push({ label: 'Placket length', value: get('placket', 'Length') });
+  if (nf === 2) rows.push({ label: 'Button extension', value: get('front', 'Button extension') });
   return rows;
 }
 
@@ -419,7 +424,7 @@ export function attachmentReport(pieces: Piece[], edits?: Edits, style?: StyleId
       : a.kind === 'patch' ? ['all round', P]
       : a.kind === 'applique' ? ['satin stitch all round', P]
       : a.kind === 'embroidery' ? ['embroidered into the piece', 0]
-      : a.kind === 'hardware' ? [a.hardware?.type === 'zipper' ? 'zip sewn in' : 'set through the fabric', a.hardware?.type === 'zipper' ? 2 * a.h : 0]
+      : a.kind === 'hardware' ? [a.hardware?.type === 'zipper' ? 'zip sewn in' : a.buttonhole ? 'buttonhole cut and stitched' : a.hardware?.type === 'button' ? 'sewn on' : 'set through the fabric', a.hardware?.type === 'zipper' ? 2 * a.h : 0]
       : ['printed', 0];
     const cloth = a.kind === 'pocket' || a.kind === 'patch' || a.kind === 'applique' || a.kind === 'strap' || (a.kind === 'label' && !labelMaterial(a).purchased);
     rows.push({
@@ -554,6 +559,9 @@ export function trimsReport(pieces: Piece[], edits?: Edits, style?: StyleId): Tr
       const where = faceOf(a) === 'inside' && host && style ? `${placement}, ${faceLabel(style, host, 'inside').toLowerCase()}` : placement;
       if (h.type === 'zipper') {
         push({ kind: 'hardware', item: 'Zip', detail: hardwareDetail(h, a), placement: where, qty: copies });
+      } else if (a.buttonhole) {
+        // a buttonhole is a sewing operation, not a bought trim: as long as the button is wide, plus 3 mm
+        push({ kind: 'buttonhole', item: 'Buttonhole', detail: `${round1(h.size * 10 + 3)} mm, stitched${a.thread ? `, thread ${a.thread}` : ', thread matched'}`, placement: where, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
       } else {
         push({ kind: 'hardware', item: HW_NAME[h.type] ?? cap(h.type), detail: hardwareDetail(h, a), placement: where, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
       }
@@ -689,6 +697,16 @@ function baseSeamRows(type: GarmentType, pieces: Piece[]): SeamRow[] {
       rows.push({ label: 'Ankle cuff / leg opening (rib stretched on)', a: L(cuff, 'cuff.1', 'cuff.1m'), b: open, ease: (RIB.cuff - 1) * open, seams: ['cuff-r', 'cuff-l'] });
       rows.push({ label: 'Ankle cuff join', a: L(cuff, 'cuff.1', 'cuff.2'), b: L(cuff, 'cuff.1m', 'cuff.2m'), seams: ['cuff-join-r', 'cuff-join-l'] });
     }
+    // inside pieces (not simulated): walked to the edges they are sewn to
+    const fly = L(f, 'front.0', 'front.11');
+    const ff = P('flyFacing'), fs = P('flyShield');
+    if (ff) rows.push({ label: 'Fly facing / fly opening', a: L(ff, 'flyFacing.4', 'flyFacing.0'), b: fly });
+    if (fs) rows.push({ label: 'Fly shield / fly opening', a: L(fs, 'flyShield.4', 'flyShield.0'), b: fly });
+    const pf = P('pocketFacing'), pb = P('pocketBag');
+    if (pf && pb) {
+      rows.push({ label: 'Pocket facing / front waist (side corner)', a: L(pf, 'pocketFacing.0', 'pocketFacing.1'), b: POCKET.facing });
+      rows.push({ label: 'Pocket facing / pocket bag (side seam)', a: L(pf, 'pocketFacing.1', 'pocketFacing.4'), b: L(pb, 'pocketBag.1', 'pocketBag.4') });
+    }
     return rows;
   }
   if (isHat(type)) {
@@ -705,11 +723,14 @@ function baseSeamRows(type: GarmentType, pieces: Piece[]): SeamRow[] {
   }
   const fo = frontOffset(style);
   const F = (i: number, m = '') => `front.${i + fo}${m}`;
+  // a split front: the right front is the second copy of the same piece (same keys); a closed front has "m" keys
+  const split = !!f && isSplitFront(f);
+  const FM = (i: number) => (split ? F(i) : F(i, 'm'));
   const rows: SeamRow[] = [
     { label: 'Shoulder R (front / back)', a: L(f, F(2), F(3)), b: L(bk, 'back.2m', 'back.3m'), seams: ['shoulder-r'] },
-    { label: 'Shoulder L (front / back)', a: L(f, F(2, 'm'), F(3, 'm')), b: L(bk, 'back.2', 'back.3'), seams: ['shoulder-l'] },
+    { label: 'Shoulder L (front / back)', a: L(f, FM(2), FM(3)), b: L(bk, 'back.2', 'back.3'), seams: ['shoulder-l'] },
     { label: 'Side seam R (front / back)', a: L(f, F(5), F(7)), b: L(bk, 'back.5m', 'back.7m'), seams: ['side-r'] },
-    { label: 'Side seam L (front / back)', a: L(f, F(5, 'm'), F(7, 'm')), b: L(bk, 'back.5', 'back.7'), seams: ['side-l'] },
+    { label: 'Side seam L (front / back)', a: L(f, FM(5), FM(7)), b: L(bk, 'back.5', 'back.7'), seams: ['side-l'] },
     { label: 'Sleeve seam (underarm)', a: L(sl, 'sleeve.3', 'sleeve.4'), b: L(sl, 'sleeve.3m', 'sleeve.4m'), seams: ['underarm-r', 'underarm-l'] },
     {
       label: 'Sleeve cap / armhole', a: L(sl, 'sleeve.0', 'sleeve.3') + L(sl, 'sleeve.0', 'sleeve.3m'),
@@ -728,8 +749,13 @@ function baseSeamRows(type: GarmentType, pieces: Piece[]): SeamRow[] {
   const pl = P('placket');
   if (pl) {
     rows.push({ label: 'Placket R / front opening', a: L(pl, 'placket.1', 'placket.2'), b: L(f, 'front.1', 'front.2'), seams: ['placket-r'] });
-    rows.push({ label: 'Placket L / front opening', a: L(pl, 'placket.1m', 'placket.2m'), b: L(f, 'front.1m', 'front.2m'), seams: ['placket-l'] });
-    rows.push({ label: 'Placket base / opening base', a: L(pl, 'placket.2', 'placket.2m'), b: L(f, 'front.1', 'front.1m'), seams: ['placket-base'] });
+    rows.push({ label: 'Placket L / front opening', a: L(pl, 'placket.1', 'placket.2'), b: L(f, 'front.1m', 'front.2m'), seams: ['placket-l'] });
+    rows.push({ label: 'Placket base / opening base (both strips)', a: L(pl, 'placket.2', 'placket.2m'), b: L(f, 'front.1', 'front.1m'), seams: ['placket-base', 'placket-base-l'] });
+  }
+  const fc = P('facing');
+  if (fc && split) {
+    // inside pieces: walked to the front edge, sewn with it (not simulated, they do not show)
+    rows.push({ label: 'Front facing / front edge (each front)', a: L(fc, 'facing.6', 'facing.0'), b: L(f, 'front.ext0', 'front.ext1') });
   }
   const cuff = P('cuff');
   if (cuff && sl) {
@@ -755,15 +781,15 @@ export function attachmentOutlines(a: Attachment): Pt[][] {
  * Hardware placement marks on a host piece (host local coords, cm): a point per trim (rivets, buttons ...)
  * and a line for a zip.
  */
-export function hardwareMarks(p: Piece, edits?: Edits): { name: string; type: string; points: { at: Pt; r: number }[]; line?: [Pt, Pt] }[] {
-  const out: { name: string; type: string; points: { at: Pt; r: number }[]; line?: [Pt, Pt] }[] = [];
+export function hardwareMarks(p: Piece, edits?: Edits): { name: string; /** hardware type, or 'buttonhole' */ type: string; points: { at: Pt; r: number }[]; line?: [Pt, Pt]; builtin?: boolean }[] {
+  const out: ReturnType<typeof hardwareMarks> = [];
   for (const a of edits?.attachments ?? []) {
     if (a.pieceId !== p.id || a.kind !== 'hardware' || !a.hardware) continue;
     const h = a.hardware, c = Math.cos((a.rotation * Math.PI) / 180), s = Math.sin((a.rotation * Math.PI) / 180);
     const T = (q: Pt): Pt => ({ x: a.x + q.x * c - q.y * s, y: a.y + q.x * s + q.y * c });
     if (h.type === 'zipper') { out.push({ name: a.name, type: h.type, points: [], line: [T({ x: 0, y: -a.h / 2 }), T({ x: 0, y: a.h / 2 })] }); continue; }
     const n = Math.max(1, Math.round(h.count ?? 1)), sp = h.spacing ?? Math.max(1.5, h.size * 2);
-    out.push({ name: a.name, type: h.type, points: Array.from({ length: n }, (_, k) => ({ at: T({ x: (k - (n - 1) / 2) * sp, y: 0 }), r: Math.max(0.1, h.size / 2) })) });
+    out.push({ name: a.name, type: a.buttonhole ? 'buttonhole' : h.type, points: Array.from({ length: n }, (_, k) => ({ at: T({ x: (k - (n - 1) / 2) * sp, y: 0 }), r: Math.max(0.1, h.size / 2) })), ...(a.builtin ? { builtin: true } : {}) });
   }
   return out;
 }

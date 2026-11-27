@@ -11,6 +11,7 @@ import type { Piece } from '../src/data/presets';
 import type { StyleId } from '../src/data/catalog';
 import { calibratedField } from '../src/three/bodyField';
 import { meshField, GridCollider } from '../src/three/mesher';
+import { styleEdits } from '../src/data/construction';
 
 const DEFAULT_BODY = process.env.BODY === 'female' ? FEMALE_BODY : MALE;
 const FF = calibratedField(DEFAULT_BODY);
@@ -288,6 +289,66 @@ if (!only || only === 'collar') {
     // popped up, the points are far from the front buttons: nothing buttons
     const Gu = assemble('button-up', pieces, DEFAULT_BODY, SP, collider, E({ collar: 'up', attachments: all }))!;
     verdict(!Object.keys(Gu.seamLinks).some((k) => k.startsWith('fasten:')), 'collar up: the collar point buttons do not reach the front buttons');
+  }
+}
+
+// ---- fronts that button: split fronts held closed only at the buttons, an open jacket, every style with its details ----
+/** world position of a pattern point on a placed copy of a piece */
+const at3 = (G: Garment3D, P: Garment3D['panels'][number], x: number, y: number) => {
+  const L = locate(P.mesh, { x, y });
+  return [0, 1, 2].map((k) => L.v.reduce((s2, v, n) => s2 + G.sim.pos[(P.offset + v) * 3 + k] * L.w[n], 0));
+};
+/** gap between the two fronts (or placket strips) along centre front, halfway between each pair of buttons (cm) */
+export function frontGaps(G: Garment3D, role: string, holes: Attachment) {
+  const O = G.panels.find((p) => !p.attach && p.piece.role === role && p.instance === holes.instance)!;
+  const U = G.panels.find((p) => !p.attach && p.piece.role === role && p.instance !== holes.instance)!;
+  const n = holes.hardware!.count ?? 1, sp = holes.hardware!.spacing ?? 0, y0 = holes.y - ((n - 1) / 2) * sp;
+  const gaps: number[] = [];
+  for (let k = 0; k + 1 < n; k++) {
+    const y = y0 + (k + 0.5) * sp, a = at3(G, O, 0, y), b = at3(G, U, 0, y);
+    gaps.push(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]));
+  }
+  return gaps;
+}
+if (!only || only === 'closure') {
+  console.log('\n== fronts that button ==');
+  for (const st of ['button-up', 'jacket', 'polo'] as StyleId[]) {
+    for (const bodyName of ['male', 'female'] as const) {
+      if (bodyName === 'female' && DEFAULT_BODY.sex !== 'female' && st !== 'jacket') continue;
+      const pieces = makePreset(st, DEFAULT_BODY);
+      const edits = styleEdits(st, pieces, DEFAULT_BODY, E({ collar: 'down' }));
+      const holes = edits.attachments.find((a) => a.buttonhole)!;
+      const role = st === 'polo' ? 'placket' : 'front';
+      const { ok, G } = drape(st, pieces, edits, `${st} buttoned`);
+      const gaps = frontGaps(G, role, holes);
+      const n = holes.hardware!.count!;
+      verdict(ok && G.buttoned.length === n && Math.max(...gaps) < 0.5, `${st}: ${G.buttoned.length} of ${n} buttons buttoned, fronts between buttons ${gaps.map((g) => g.toFixed(2)).join(' / ')} cm apart`);
+      break;
+    }
+  }
+  {
+    // worn open: nothing buttons, the fronts hang apart at centre front
+    const pieces = makePreset('jacket', DEFAULT_BODY);
+    const edits = styleEdits('jacket', pieces, DEFAULT_BODY, E({ collar: 'down', closure: 'open' }));
+    const { ok, G } = drape('jacket', pieces, edits, 'jacket open');
+    const L = G.panels.find((p) => !p.attach && p.piece.role === 'front' && p.instance === 0)!, R = G.panels.find((p) => !p.attach && p.piece.role === 'front' && p.instance === 1)!;
+    const ext = -Math.min(...L.piece.points.map((q) => q.x));
+    const ys = [30, 45, 60];
+    // the front edges: the left front's edge is at +x of the right front's edge when they overlap; open, they part
+    const parts = ys.map((y) => at3(G, L, -ext, y)[0] - at3(G, R, -ext, y)[0]);
+    const fastened = Object.keys(G.seamLinks).filter((k) => k.startsWith('fasten:')).length;
+    verdict(ok && fastened === 0 && G.buttoned.length === 0 && parts.every((d) => d > 0.5), `open jacket: ${fastened} buttons fastened, front edges ${parts.map((d) => d.toFixed(1)).join(' / ')} cm apart at ${ys.join(', ')} cm down`);
+  }
+}
+if (!only || only === 'details') {
+  console.log('\n== every style with its details ==');
+  for (const style of CATALOG) {
+    const pieces = makePreset(style.id, DEFAULT_BODY);
+    const edits = styleEdits(style.id, pieces, DEFAULT_BODY, E(pieces.some((p) => p.role === 'collar') ? { collar: 'down' } : {}));
+    const { ok, G } = drape(style.id, pieces, edits, `${style.id}+det`);
+    const cloth = edits.attachments.filter((a) => a.kind === 'pocket' || a.kind === 'strap');
+    const worst = Math.max(0, ...cloth.map((a) => staysOn(G, a.id).worst));
+    verdict(ok && worst < 3, `${style.id} with its ${edits.attachments.length} style details drapes, cloth details stay on (worst ${worst.toFixed(2)} cm)`);
   }
 }
 

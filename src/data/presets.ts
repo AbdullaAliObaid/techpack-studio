@@ -2,16 +2,22 @@ import type { FabricPattern } from './fabrics';
 import type { Placement } from './edits';
 import { bbox, type PPoint, type Pt } from '../lib/geometry';
 import { uid } from '../lib/units';
-import { draft, type Fit } from './draft';
+import { draft, flyStyle, frontPocketStyle, type Fit } from './draft';
 import { CATALOG, migrateGarment, styleById, type StyleId } from './catalog';
 import { DEFAULT_BODY, type Body } from '../three/body';
 
 /** Kept for older imports: a garment is now any catalog style. */
 export type GarmentType = StyleId;
-export type Role = 'front' | 'back' | 'sleeve' | 'collar' | 'cuff' | 'waistband' | 'neckband' | 'placket' | 'crown' | 'brim' | 'custom';
+export type Role = 'front' | 'back' | 'sleeve' | 'collar' | 'cuff' | 'waistband' | 'neckband' | 'placket' | 'crown' | 'brim' | 'custom'
+  /** inside pieces: on the pattern and in the cut list, sewn inside the garment, not simulated (they do not show) */
+  | 'facing' | 'pocketFacing' | 'pocketBag' | 'flyFacing' | 'flyShield';
+
+/** Pieces sewn inside the garment: cut and sewn like any other, but hidden, so the simulation leaves them out. */
+export const INSIDE_ROLES = new Set<string>(['facing', 'pocketFacing', 'pocketBag', 'flyFacing', 'flyShield']);
 
 export type SpecDef =
-  | { label: string; kind: 'slice'; tag: string; dy?: number; /** measure straight across openings (a buttoned placket) */ full?: boolean }
+  | { label: string; kind: 'slice'; tag: string; dy?: number; /** measure straight across openings (a buttoned placket) */ full?: boolean;
+    /** a split front: measure from centre front (x = 0) to the side, leaving the button extension out */ cf?: boolean }
   | { label: string; kind: 'mirror'; tag: string; off?: number }
   | { label: string; kind: 'dist'; tags: [string, string]; off?: number }
   | { label: string; kind: 'vdist'; tags: [string, string] }
@@ -53,6 +59,15 @@ const TOP_SPECS: SpecDef[] = [
   { label: 'Length', kind: 'length' },
 ];
 
+/** one front of a split front (cut twice): centre front to side; the button extension past centre front is not ease */
+const SPLIT_FRONT_SPECS: SpecDef[] = [
+  { label: 'Chest', kind: 'slice', tag: 'underarm', cf: true },
+  { label: 'Waist', kind: 'slice', tag: 'waist', cf: true },
+  { label: 'Hem', kind: 'slice', tag: 'hem', dy: -0.01, cf: true },
+  { label: 'Button extension', kind: 'dist', tags: ['cfNeck', 'edgeNeck'], off: -2 },
+  { label: 'Length', kind: 'length' },
+];
+
 const SLEEVE_SPECS: SpecDef[] = [
   { label: 'Bicep', kind: 'mirror', tag: 'underarm', off: 0 },
   { label: 'Cuff', kind: 'mirror', tag: 'cuff', off: 3.5 },
@@ -86,18 +101,32 @@ const CROWN: SpecDef[] = [{ label: 'Panel base', kind: 'mirror', tag: 'band', of
 
 interface Meta { role: Role; name: string; cut: number; specs: SpecDef[] }
 
+const LEN: SpecDef[] = [{ label: 'Length', kind: 'length' }];
+const FACING: Meta = { role: 'facing', name: 'Front facing', cut: 2, specs: [{ label: 'Facing width', kind: 'dist', tags: ['edgeNeck', 'inner'] }, ...LEN] };
+
 function metaFor(style: StyleId): Meta[] {
   const fam = styleById(style).family;
+  const split = fam === 'jacket' || fam === 'shirt';
   const body = (sleeve: SpecDef[]): Meta[] => [
-    { role: 'front', name: 'Front', cut: 1, specs: TOP_SPECS },
+    split ? { role: 'front', name: 'Front', cut: 2, specs: SPLIT_FRONT_SPECS } : { role: 'front', name: 'Front', cut: 1, specs: TOP_SPECS },
     { role: 'back', name: 'Back', cut: 1, specs: TOP_SPECS },
     { role: 'sleeve', name: 'Sleeve', cut: 2, specs: sleeve },
   ];
+  const pantsInside: Meta[] = [
+    ...(frontPocketStyle(style) ? [
+      { role: 'pocketFacing' as Role, name: 'Pocket facing', cut: 2, specs: LEN },
+      { role: 'pocketBag' as Role, name: 'Pocket bag', cut: 2, specs: LEN },
+    ] : []),
+    ...(flyStyle(style) ? [
+      { role: 'flyFacing' as Role, name: 'Fly facing', cut: 1, specs: LEN },
+      { role: 'flyShield' as Role, name: 'Fly shield', cut: 1, specs: LEN },
+    ] : []),
+  ];
   switch (fam) {
     case 'jacket':
-      return [...body(SLEEVE_SPECS), { role: 'collar', name: 'Collar', cut: 2, specs: COLLAR }];
+      return [...body(SLEEVE_SPECS), { role: 'collar', name: 'Collar', cut: 2, specs: COLLAR }, FACING];
     case 'shirt':
-      return [...body(SLEEVE_SPECS), { role: 'collar', name: 'Collar', cut: 2, specs: COLLAR }, { role: 'cuff', name: 'Cuff', cut: 2, specs: CUFF }];
+      return [...body(SLEEVE_SPECS), { role: 'collar', name: 'Collar', cut: 2, specs: COLLAR }, { role: 'cuff', name: 'Cuff', cut: 2, specs: CUFF }, FACING];
     case 'tee':
       return [...body(SHORT_SLEEVE_SPECS), { role: 'neckband', name: 'Neckband', cut: 1, specs: NECKBAND }];
     case 'polo':
@@ -112,6 +141,7 @@ function metaFor(style: StyleId): Meta[] {
         { role: 'back', name: 'Back leg', cut: 2, specs: style === 'shorts' ? SHORTS_SPECS : LEG_SPECS },
         { role: 'waistband', name: style === 'sweatpants' ? 'Elastic waistband' : 'Waistband', cut: 1, specs: WAISTBAND },
         ...(style === 'sweatpants' ? [{ role: 'cuff' as Role, name: 'Ankle cuff', cut: 2, specs: CUFF }] : []),
+        ...pantsInside,
       ];
     case 'bucket':
       return [
@@ -130,6 +160,7 @@ function metaFor(style: StyleId): Meta[] {
 function fabricFor(style: StyleId, role: Role) {
   const s = styleById(style);
   const rib = s.details.rib && (role === 'neckband' || role === 'cuff' || (role === 'collar' && s.family === 'polo'));
+  if (role === 'pocketBag') return 'poplin'; // cotton pocketing
   return rib ? 'rib' : s.defaultFabric;
 }
 
@@ -153,7 +184,7 @@ export function makePreset(type: StyleId, body: Body = DEFAULT_BODY, fit: Fit = 
   const pieces: Piece[] = metaFor(style).map((m) => {
     const d = drafted.find((q) => q.role === m.role)!;
     return {
-      id: uid(), name: m.name, role: m.role, cut: m.cut, offset: { x: 0, y: 0 }, symmetric: true,
+      id: uid(), name: m.name, role: m.role, cut: m.cut, offset: { x: 0, y: 0 }, symmetric: d.points.some((q) => q.mirror),
       fabric: { id: fabricFor(style, m.role), color: 0 }, specs: m.specs, points: d.points,
       ...(d.elastic !== undefined ? { elastic: d.elastic } : {}),
     };
