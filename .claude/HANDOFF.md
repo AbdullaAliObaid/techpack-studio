@@ -50,3 +50,4 @@ components use `usePick(...)` selectors, keep that), `npx tsc --noEmit`, `npm ru
 - In flight: agent/insert (wt-insert): design snap, Insert section, merged artwork picker (print/embroidery/applique), scissor loading overlay, bands only editable in Paint, double click to edit piece/trim.
 - Queued after hats agent: collar fly-away (above), left/right placket edited separately, pocket and inserted shape outlines editable by dragging points, edge paint on both faces plus "contrast thread / binding" edge option, photo blend with fabric (leather gloss, weave showing through).
 - Queued round 2 also: Finish workspace (wash, fade, bleach, stone wash, distressing) was never built; tab exists only. Added Camera/Edit 3D toggle to agent/insert.
+- Done: leather wash sequence production check (Review > Production checks, prints in construction). In flight: agent/shots (wt-shots) point of interest close up pages in tech pack.
