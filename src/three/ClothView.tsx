@@ -14,6 +14,7 @@ import { clothMaterials } from './detailsCloth';
 import Hardware from './Hardware';
 import type { HardwareMsg } from '../sim/detailsHardware';
 import { vertexPattern, type VertexPattern } from './printsAdapter';
+import { useSnapshotRegistration } from './snapshots';
 import { boneMatrices, jointPoints, poseAt, NBONES, JOINT_COUNT, type Mode } from '../sim/pose';
 import { EMPTY_EDITS, type CustomPose, type Edits } from '../data/edits';
 
@@ -235,6 +236,10 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
     if (stretch && topo && lastStrain.current) paint(topo.geo, lastStrain.current);
   }, [stretch, topo]);
 
+  // the tech pack export takes close-up pictures of this scene (src/three/snapshots.ts)
+  const rootRef = useRef<THREE.Group>(null);
+  useSnapshotRegistration(rootRef, topo);
+  const sceneRef = useThree((s) => s.scene);
   const insideFabric = useStore((s) => s.project.edits?.insideFabric);
   const labelKey = JSON.stringify((attachments ?? []).filter((a) => a.kind === 'label').map((a) => [a.id, a.label, a.sheen]));
   const cloth = useMemo(
@@ -242,8 +247,14 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [topo, insideFabric, labelKey],
   );
+  // satin, glossy and metallic finishes reflect the studio environment a little stronger than plain cloth
+  useEffect(() => {
+    if (!cloth) return;
+    for (const m of [...cloth.outside, ...cloth.inside]) if (m.userData.finishEnv) { (m as THREE.MeshStandardMaterial).envMap = sceneRef.environment; m.needsUpdate = true; }
+    invalidate();
+  }, [cloth, sceneRef, invalidate]);
   return (
-    <group>
+    <group ref={rootRef}>
       {showBody && skinned && <primitive object={skinned} material={skinMat} />}
       {showJoints && Array.from({ length: JOINT_COUNT }, (_, i) => (
         <mesh key={i} ref={(el) => { if (el) jointRefs.current[i] = el; }} geometry={jointGeo} material={jointMat} renderOrder={10} />

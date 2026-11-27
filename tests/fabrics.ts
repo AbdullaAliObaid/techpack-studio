@@ -1,7 +1,11 @@
 // Run: npx tsx tests/fabrics.ts
 // Fabric library, procedural patterns (valid, seamless, small), photo tracing and total symmetry.
 import { FABRICS, FABRIC_CATEGORIES, WEAVE_BASE, fabricById, fabricHex, colorName, type Weave } from '../src/data/fabrics';
-import { PATTERNS, PATTERN_IDS, patternTile } from '../src/data/patterns';
+import { PATTERNS, PATTERN_IDS, patternTile, withPatternDefaults, motifPlacements, REPEAT_LAYOUTS } from '../src/data/patterns';
+import { detectRepeat, extractMotif, suggestLayout, encodePng } from '../src/lib/repeat';
+import { FLEUR_PATHS } from './fixtures/fleur';
+import { inflateSync } from 'node:zlib';
+import type { FabricPattern, RepeatLayout } from '../src/data/fabrics';
 import { pathRings } from '../src/lib/shapes';
 import { prepareImage, removeBackground, posterize, traceToPaths, toLayers, traceGuidance, photoToLayers, type ImageLike } from '../src/lib/trace';
 import { linkedMoves, applyMoves } from '../src/data/symmetry';
@@ -161,6 +165,165 @@ const pathArea = (d: string) => {
   const many = img(300, 40, (x) => { const k = Math.floor(x / 20); return [(k * 53) % 256, (k * 97) % 256, (k * 31 + 60) % 256]; });
   const pl = photoToLayers(many, { size: 10, kind: 'embroidery', colors: 20, removeBg: false });
   pass(pl.layers.length <= 12 && pl.palette.length <= 12, `photoToLayers caps embroidery at 12 colours (${pl.layers.length} layers)`);
+}
+
+// ---------------------------------------------------------------- custom motif repeats
+console.log('\n== custom motif repeats ==');
+const LSHAPE = [{ color: '#ff0000', path: 'M-0.4 -0.4L-0.1 -0.4L-0.1 0.1L0.4 0.1L0.4 0.4L-0.4 0.4Z' }, { color: '#0000ff', path: 'M0.1 -0.4L0.3 -0.4L0.3 -0.2L0.1 -0.2Z' }];
+const PNG1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const customP = (layout: RepeatLayout, extra: Partial<FabricPattern> = {}): FabricPattern =>
+  ({ id: 'custom', colors: ['#ffffff'], scale: 6, rotation: 0, method: 'printed', layout, motif: { paths: LSHAPE, aspect: 1 }, motifScale: 0.7, ...extra });
+/** colour of a custom tile at a point: ground, then every <use> in order, with translate / rotate / scale applied */
+function customColour(svg: string, x: number, y: number): number[] {
+  const ground = rgbOf(/<rect [^>]*fill="(#[0-9a-f]+)"/.exec(svg)![1]);
+  const defs = new Map<string, { hit: (x: number, y: number) => boolean; fill: number[] }[]>();
+  for (const g of svg.matchAll(/<g id="([^"]+)">(.*?)<\/g>/g)) {
+    defs.set(g[1], [...g[2].matchAll(/<path d="([^"]*)" fill="(#[0-9a-f]+)"/g)].map((q) => ({ hit: ringsHit(pathRings(q[1], 24)), fill: rgbOf(q[2]) })));
+  }
+  let c = ground;
+  for (const u of svg.matchAll(/<use href="#([^"]+)" transform="translate\(([-\d.]+) ([-\d.]+)\)(?: rotate\(([-\d.]+)\))? scale\(([-\d.]+) ([-\d.]+)\)"\/>/g)) {
+    const [tx, ty, rot, sx, sy] = [u[2], u[3], u[4] ?? '0', u[5], u[6]].map(Number);
+    const a = (rot * Math.PI) / 180, dx = x - tx, dy = y - ty;
+    const qx = (dx * Math.cos(a) + dy * Math.sin(a)) / sx, qy = (-dx * Math.sin(a) + dy * Math.cos(a)) / sy;
+    for (const s of defs.get(u[1]) ?? []) if (s.hit(qx, qy)) c = s.fill;
+  }
+  return c;
+}
+{
+  const S = 6;
+  const sizes: Record<RepeatLayout, [number, number]> = { block: [S, S], 'half-drop': [2 * S, S], brick: [S, 2 * S], mirror: [2 * S, S], turn: [2 * S, 2 * S], scatter: [3 * S, 3 * S] };
+  for (const layout of REPEAT_LAYOUTS) {
+    for (const ms of [0.7, 1]) {
+      const p = customP(layout, { motifScale: ms });
+      const t = patternTile(p), [W, H] = t.size;
+      const valid = /^<svg [^>]*viewBox="0 0 [\d.]+ [\d.]+">.*<\/svg>$/.test(t.svg) && !/NaN|Infinity|undefined|script/.test(t.svg) && t.svg === patternTile(p).svg && t.svg.length < 20000 && t.body === t.svg.replace(/^<svg[^>]*>|<\/svg>$/g, '');
+      const sizeOk = W === sizes[layout][0] && H === sizes[layout][1];
+      // seamless: the colour just inside one edge equals the colour just inside the opposite edge
+      const N = 300, e = 1e-4;
+      let miss = 0, ink = 0;
+      for (let k = 0; k < N; k++) {
+        const v = (k + 0.37) / N;
+        if (differ(customColour(t.svg, e, v * H), customColour(t.svg, W - e, v * H))) miss++;
+        if (differ(customColour(t.svg, v * W, e), customColour(t.svg, v * W, H - e))) miss++;
+      }
+      for (let i = 0; i < 40; i++) for (let j = 0; j < 40; j++) if (differ(customColour(t.svg, ((i + 0.5) / 40) * W, ((j + 0.5) / 40) * H), [255, 255, 255])) ink++;
+      pass(valid && sizeOk && miss / (2 * N) < 0.02 && ink > 40, `${layout.padEnd(9)} motifScale ${ms}: ${W} x ${H} cm, ${t.svg.length} bytes, valid, edge mismatch ${(100 * miss / (2 * N)).toFixed(1)}%, ${ink} ink samples`);
+    }
+  }
+  // each layout puts the neighbouring cells where it says (an L shape has no symmetry, so flips and turns show)
+  const rel = (layout: RepeatLayout, map: (x: number, y: number) => [number, number], from: [number, number]) => {
+    const t = patternTile(customP(layout));
+    let bad = 0, n = 0;
+    for (let i = 0; i < 30; i++) for (let j = 0; j < 30; j++) {
+      const x = from[0] * S + ((i + 0.31) / 30) * S, y = from[1] * S + ((j + 0.47) / 30) * S;
+      const [qx, qy] = map(x, y);
+      const a = customColour(t.svg, x, y), b = customColour(t.svg, ((qx % t.size[0]) + t.size[0]) % t.size[0], ((qy % t.size[1]) + t.size[1]) % t.size[1]);
+      n++; if (differ(a, b)) bad++;
+    }
+    return bad / n;
+  };
+  pass(rel('half-drop', (x, y) => [x + S, y + S / 2], [0, 0]) < 0.01 && rel('half-drop', (x, y) => [x + S, y - S / 2], [0, 0]) < 0.01, 'half-drop: the next column is dropped half a cell');
+  pass(rel('brick', (x, y) => [x + S / 2, y + S], [0, 0]) < 0.01, 'brick: the next row is shifted half a cell');
+  pass(rel('mirror', (x, y) => [4 * S / 2 - x, y], [0, 0]) < 0.01, 'mirror: the next column is the left to right mirror image');
+  pass(rel('turn', (x, y) => [2 * S - x, S - y], [0, 0]) < 0.01 && rel('turn', (x, y) => [x + S, y + S], [0, 0]) < 0.01, 'turn: neighbours are turned 180 degrees, diagonals are upright');
+  const mp = motifPlacements('scatter', S);
+  pass(mp.items.length === 9 && new Set(mp.items.map((i) => i.rot)).size >= 5 && JSON.stringify(motifPlacements('scatter', S)) === JSON.stringify(mp) && mp.items.every((i) => Math.abs(i.x / S - Math.round(i.x / S - 0.5) - 0.5) <= 0.26), 'scatter: 9 seeded placements, jittered, turned, the same every time');
+  const mp2 = motifPlacements('scatter', 20);
+  pass(mp2.items.every((i, k) => Math.abs(i.x / 20 - mp.items[k].x / S) < 1e-9 && i.rot === mp.items[k].rot), 'scatter layout is the same at every scale');
+
+  // image motif: embedded once, placed with <use>
+  const im = patternTile(customP('half-drop', { motif: { image: PNG1, aspect: 1.5 } }));
+  pass((im.svg.match(/data:image/g) ?? []).length === 1 && (im.svg.match(/<use /g) ?? []).length >= 2 && /<image [^>]*width="1" height="0.667"/.test(im.svg) && im.svg === patternTile(customP('half-drop', { motif: { image: PNG1, aspect: 1.5 } })).svg, `image motif: embedded once, ${(im.svg.match(/<use /g) ?? []).length} placements, aspect kept`);
+  // recolour and the choice between picture and vector
+  const rc = patternTile(customP('block', { recolor: ['#00ff00'] }));
+  pass(rc.svg.includes('#00ff00') && rc.svg.includes('#0000ff') && !rc.svg.includes('#ff0000'), 'recolor replaces vector motif colours in order');
+  const both = { image: PNG1, paths: LSHAPE, aspect: 1 };
+  pass(patternTile(customP('block', { motif: both })).svg.includes('<image') && !patternTile(customP('block', { motif: both, recolor: ['#123456'] })).svg.includes('<image'), 'picture is used unless the motif is recoloured, then the vector shapes');
+  // safety and defaults
+  const bad = patternTile(customP('block', { motif: { image: 'javascript:alert(1)', paths: [{ color: '"/><script>', path: 'M0 0L1 1Z' }, { color: '#ff0000', path: 'M0 0"/><script>' }], aspect: 1 } }));
+  pass(!/script|javascript|<image|<use/.test(bad.svg), 'unsafe image, colour and path data never reach the SVG');
+  const none = patternTile({ id: 'custom', colors: ['#ff8800'], scale: 6, rotation: 0 });
+  pass(none.size[0] === 6 && none.size[1] === 6 && !none.svg.includes('<use') && none.svg.includes('#ff8800'), 'no motif yet: a plain ground tile');
+  const wd = withPatternDefaults({ id: 'custom', layout: 'weird' as RepeatLayout, motifScale: 9, motif: { paths: LSHAPE, aspect: -3 } });
+  pass(wd.layout === 'block' && wd.motifScale === 1 && wd.motif?.aspect === 1 && !('motif' in withPatternDefaults({ id: 'stripe', motif: { paths: LSHAPE, aspect: 1 } })), 'withPatternDefaults keeps and cleans the motif fields (custom only)');
+  const fl = patternTile(customP('half-drop', { motif: { paths: FLEUR_PATHS, aspect: 1 }, colors: ['#f3ece0'], motifScale: 0.8 }));
+  pass(fl.svg.length < 8000, `fleur de lis half-drop tile: ${fl.svg.length} bytes`);
+}
+
+// ---------------------------------------------------------------- repeat detection and motif extraction
+console.log('\n== recognise and extract ==');
+{
+  const WHITE: [number, number, number] = [255, 255, 255], INK: [number, number, number] = [30, 40, 120];
+  /** a plus sign with a dot in one corner (not symmetric) centred at (cx, cy) */
+  const cross = (x: number, y: number, cx: number, cy: number) => {
+    const dx = x - cx, dy = y - cy;
+    return (Math.abs(dx) < 3 && Math.abs(dy) < 16) || (Math.abs(dy) < 3 && Math.abs(dx) < 16) || ((dx - 9) ** 2 + (dy + 9) ** 2 < 16);
+  };
+  const tiled = (W: number, H: number, pw: number, ph: number, shiftX = 0, shiftY = 0, motif = cross) => img(W, H, (x, y) => {
+    const col = Math.floor(x / pw), row = Math.floor(y / ph);
+    // odd columns dropped (shiftY) / odd rows shifted (shiftX)
+    const xx = x - (row % 2 ? shiftX : 0), yy = y - (col % 2 ? shiftY : 0);
+    const c = Math.floor(xx / pw), r = Math.floor(yy / ph);
+    return motif(xx, yy, (c + 0.5) * pw, (r + 0.5) * ph) ? INK : WHITE;
+  });
+  const near = (a: number, b: number, tol = 2) => Math.abs(a - b) <= tol;
+  const d1 = detectRepeat(tiled(300, 300, 47, 61));
+  pass(d1.found && near(d1.w, 47) && near(d1.h, 61) && d1.layout === 'block' && d1.confidence > 0.8, `tiled cross 47 x 61: found ${d1.w.toFixed(1)} x ${d1.h.toFixed(1)}, ${d1.layout}, confidence ${d1.confidence.toFixed(2)}`);
+  const d2 = detectRepeat(tiled(1200, 800, 100, 80));
+  pass(d2.found && near(d2.w, 100) && near(d2.h, 80), `large picture, cross 100 x 80: found ${d2.w.toFixed(1)} x ${d2.h.toFixed(1)}`);
+  const d3 = detectRepeat(tiled(400, 400, 60, 60, 0, 30));
+  pass(d3.found && d3.layout === 'half-drop' && near(d3.w, 60) && near(d3.h, 60) && near(d3.offset.y, 30) && d3.offset.x === 0, `half-drop crosses: ${d3.layout}, cell ${d3.w.toFixed(1)} x ${d3.h.toFixed(1)}, offset y ${d3.offset.y.toFixed(1)}`);
+  const d4 = detectRepeat(tiled(500, 400, 70, 50, 35, 0));
+  pass(d4.found && d4.layout === 'brick' && near(d4.w, 70) && near(d4.h, 50) && near(d4.offset.x, 35) && d4.offset.y === 0, `brick crosses: ${d4.layout}, cell ${d4.w.toFixed(1)} x ${d4.h.toFixed(1)}, offset x ${d4.offset.x.toFixed(1)}`);
+  const single = img(300, 300, (x, y) => (cross(x, y, 150, 140) ? INK : WHITE));
+  const d5 = detectRepeat(single);
+  pass(!d5.found, `one drawing is not a repeat (confidence ${d5.confidence.toFixed(2)})`);
+  pass(!detectRepeat(img(200, 200, () => [200, 200, 200])).found && !detectRepeat(img(8, 8, () => [0, 0, 0])).found, 'a flat picture and a tiny one are not repeats');
+  const stripes = detectRepeat(img(300, 200, (x) => (Math.floor(x / 25) % 2 ? INK : WHITE)));
+  pass(stripes.found && near(stripes.w, 50) && stripes.layout === 'block', `vertical stripes: period ${stripes.w.toFixed(1)}`);
+  const t0 = performance.now();
+  detectRepeat(tiled(1600, 1200, 90, 90));
+  pass(performance.now() - t0 < 2500, `detectRepeat on a 1600 x 1200 picture takes ${(performance.now() - t0).toFixed(0)} ms`);
+
+  // one drawing: background removed, cropped to the motif and its nearby part, a far speck is left out
+  const draw = img(400, 300, (x, y) => {
+    const ring = Math.hypot(x - 180, y - 140) <= 70 && Math.hypot(x - 180, y - 140) >= 40;
+    const dot = Math.hypot(x - 270, y - 140) <= 12; // 20 px from the ring: close, belongs to it
+    const speck = Math.hypot(x - 20, y - 20) <= 8; // far away
+    return ring || dot ? [180, 40, 60] : speck ? [0, 0, 0] : [248, 246, 240];
+  });
+  const em = await extractMotif(draw);
+  const b = em?.bounds;
+  pass(!!em && !!b && near(b.x, 110, 3) && near(b.y, 70, 3) && near(b.w, 172, 4) && near(b.h, 140, 4), `single drawing: bounds ${b && [b.x, b.y, b.w, b.h].map((v) => Math.round(v)).join(', ')} (want 110, 70, 172, 140)`);
+  pass(!!em && near(em.aspect, 172 / 140, 0.05) && em.background === '#f8f6f0' && em.pixels.data[3] === 0, `aspect ${em?.aspect.toFixed(2)}, background ${em?.background} removed, corner transparent`);
+  pass(!!em?.paths?.length && em.paths[0].color.startsWith('#') && em.flat, `traced ${em?.paths?.length} path(s), flat artwork`);
+  // the PNG is a real PNG: signature, chunk checks, pixels decode back
+  const png = Buffer.from(em!.image.split(',')[1], 'base64');
+  const w = png.readUInt32BE(16), h = png.readUInt32BE(20);
+  const idatAt = png.indexOf('IDAT'), idatLen = png.readUInt32BE(idatAt - 4);
+  const rawPx = inflateSync(png.subarray(idatAt + 4, idatAt + 4 + idatLen));
+  pass(em!.image.startsWith('data:image/png;base64,') && png.subarray(1, 4).toString() === 'PNG' && w === em!.width && h === em!.height && rawPx.length === (w * 4 + 1) * h && png.subarray(png.length - 8, png.length - 4).toString() === 'IEND', `PNG ${w} x ${h}, ${Math.round(png.length / 1024)} KB, decodes`);
+  // sub filter undone gives back the pixels
+  let okPx = true;
+  for (let y = 0; y < h && okPx; y += 17) { let prev = [0, 0, 0, 0]; for (let x = 0; x < w; x++) { const cur = [0, 1, 2, 3].map((c) => (rawPx[y * (w * 4 + 1) + 1 + x * 4 + c] + prev[c]) & 255); prev = cur; if (cur[3] !== em!.pixels.data[(y * w + x) * 4 + 3]) { okPx = false; break; } } }
+  pass(okPx, 'PNG alpha matches the extracted pixels');
+  const big = await extractMotif(img(2400, 2000, (x, y) => (Math.hypot(x - 1200, y - 1000) < 900 ? [20, 90, 40] : [255, 255, 255])), { trace: false });
+  pass(!!big && Math.max(big.width, big.height) === 1024, `large upload: motif capped at ${big?.width} x ${big?.height}`);
+  pass((await extractMotif(img(100, 100, () => [255, 255, 255]))) === null, 'a blank picture has no motif');
+  // a repeating upload: one whole cross from the middle
+  const tl = tiled(300, 300, 47, 61);
+  const er = await extractMotif(tl, { repeat: detectRepeat(tl), trace: false });
+  pass(!!er && near(er.bounds.w, 33, 3) && near(er.bounds.h, 33, 3) && er.detectedTile !== undefined && near(er.detectedTile.w, 47), `repeat upload: one whole motif ${er && Math.round(er.bounds.w)} x ${er && Math.round(er.bounds.h)} px (want 33), tile ${er?.detectedTile?.w.toFixed(1)} x ${er?.detectedTile?.h.toFixed(1)}`);
+
+  // layout suggestion
+  const sq = (f: (x: number, y: number) => boolean) => ({ width: 80, height: 80, data: (() => { const d = new Uint8ClampedArray(80 * 80 * 4); for (let y = 0; y < 80; y++) for (let x = 0; x < 80; x++) if (f(x, y)) d.set([0, 0, 0, 255], (y * 80 + x) * 4); return d; })() });
+  const fleurLike = sq((x, y) => Math.abs(x - 40) < 6 + (y < 40 ? (40 - y) * 0.05 : 0) || (y > 40 && y < 60 && Math.abs(x - 40) < 26 && Math.abs(x - 40) > 10));
+  const lshape = sq((x, y) => (x < 20 && y < 70) || (y > 55 && y < 70 && x < 60));
+  const fs = suggestLayout(fleurLike), ls = suggestLayout(lshape);
+  pass(fs.layout === 'half-drop' && fs.symmetry.lr > 0.9 && ls.layout === 'block' && ls.symmetry.lr < 0.5, `fleur de lis like -> ${fs.layout} (lr ${fs.symmetry.lr}), L shape -> ${ls.layout} (lr ${ls.symmetry.lr})`);
+  pass(suggestLayout(lshape, d3).layout === 'half-drop' && suggestLayout(lshape, d1).layout === 'block', 'a picture that already repeats keeps its own arrangement');
+  const png2 = await encodePng({ width: 2, height: 2, data: new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 0]) });
+  pass(png2.startsWith('data:image/png;base64,iVBORw0KGgo'), 'encodePng gives a PNG data URL');
 }
 
 // ---------------------------------------------------------------- total symmetry
