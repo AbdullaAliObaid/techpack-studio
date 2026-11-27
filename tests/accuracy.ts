@@ -332,7 +332,7 @@ for (const [g, id] of [['basic-tee', 'side-r'], ['button-up', 'cuff-l'], ['jeans
 console.log('\n== left / right, appliques, hardware ==');
 {
   const area = (r: { x: number; y: number }[]) => Math.abs(r.reduce((a, p, i) => { const q = r[(i + 1) % r.length]; return a + p.x * q.y - q.x * p.y; }, 0) / 2);
-  const rings = SHAPE_IDS.filter((s) => s !== 'text').map((s) => [s, shapePolygon(s, 10, 10)] as const);
+  const rings = SHAPE_IDS.filter((s) => s !== 'text' && s !== 'path').map((s) => [s, shapePolygon(s, 10, 10)] as const);
   pass(rings.every(([, r]) => r.length === 1 && r[0].length >= 3 && area(r[0]) > 10), `every shape cuts as one outer ring (${rings.map(([s, r]) => `${s} ${r[0]?.length}`).join(', ')})`);
   check('circle cut area (holes ignored, ring = circle)', area(shapePolygon('ring', 10, 10)[0]), Math.PI * 25, 1.5);
   const txt = shapePolygon('text', 30, 8, 'Hi 2!');

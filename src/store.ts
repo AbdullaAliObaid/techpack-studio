@@ -7,6 +7,7 @@ import { bezAt, toBeziers, type PPoint, type Pt } from './lib/geometry';
 import { uid, type Units } from './lib/units';
 import { pleatIntakeOf, EMPTY_EDITS, ZERO_POSE, type Face, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
 import { FEMALE_BODY, MALE_BODY } from './three/body';
+import { applyMoves, linkedMoves } from './data/symmetry';
 
 /** undo history entry: pattern pieces plus garment edits */
 export interface Snapshot { pieces: Piece[]; edits?: Edits }
@@ -97,6 +98,9 @@ interface State {
   units: Units;
   tool: Tool;
   symmetry: boolean;
+  /** total symmetry: a point edit also moves the matching points on mating pieces (front / back legs, body sides) and re-walks their seams (src/data/symmetry.ts) */
+  totalSymmetry: boolean;
+  setTotalSymmetry: (on: boolean) => void;
   showMeasure: boolean;
   showStitch: boolean;
   selPiece: string | null;
@@ -268,6 +272,8 @@ export const useStore = create<State>((set, get) => {
     units: 'cm',
     tool: 'select',
     symmetry: true,
+    totalSymmetry: false,
+    setTotalSymmetry: (on) => set(on ? { totalSymmetry: true, symmetry: true } : { totalSymmetry: false }),
     showMeasure: false,
     showStitch: true,
     selPiece: null,
@@ -339,7 +345,12 @@ export const useStore = create<State>((set, get) => {
     select: (piece, point = null) => set({ selPiece: piece, selPoint: point, ...(piece === null ? { selInstance: null } : {}) }),
 
     movePoint: (pieceId, pointId, x, y) => {
-      const { symmetry, project } = get();
+      const { symmetry, totalSymmetry, project } = get();
+      if (totalSymmetry) {
+        const pt = project.pieces.find((p) => p.id === pieceId)?.points.find((q) => q.id === pointId);
+        if (pt) setPieces(applyMoves(project.pieces, linkedMoves(project.garment, project.pieces, pieceId, pointId, x - pt.x, y - pt.y)));
+        return;
+      }
       setPieces(
         mapPiece(project.pieces, pieceId, (p) => {
           const pt = p.points.find((q) => q.id === pointId);

@@ -8,7 +8,7 @@ import { styleById, type StyleId } from '../data/catalog';
 import { fabricById } from '../data/fabrics';
 import { BODY_FIELDS, limbGirths } from '../three/body';
 import { bbox, centroid, offsetInward, samplePoly } from './geometry';
-import { attachmentReport, cutList, fitTable, garmentSpecs, hardwareMarks, labelReport, pieceSpecs, placementMarks, pleatReport, seamReport, trimsReport } from './specs';
+import { attachmentReport, cutList, fabricInfo, fabricKey, fitTable, garmentSpecs, hardwareMarks, labelReport, pieceSpecs, placementMarks, pleatReport, seamReport, trimsReport } from './specs';
 import { toUnit, type Units } from './units';
 
 const W = 297, H = 210, M = 12;
@@ -61,11 +61,19 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
   });
   let y = table(doc, M, 56, [{ title: 'Body / fit model', w: 55 }, { title: U, w: 25, align: 'right' }], bodyRows, 'Fit model measurements');
   // shell fabrics, plus any fabric used on an inside face (under collar, placket facing)
-  const fabrics = [...new Map([...p.pieces.map((pc) => pc.fabric), ...Object.values(p.edits?.insideFabric ?? {})].map((fb) => [fb.id + fb.color, fb])).values()];
-  table(doc, M + 90, 56, [{ title: 'Fabric', w: 40 }, { title: 'Colour', w: 30 }, { title: 'gsm', w: 15, align: 'right' }], fabrics.map((fb) => {
-    const f = fabricById(fb.id);
-    return [f.name, f.colors[fb.color]?.name ?? '', String(f.gsm)];
+  const fabrics = [...new Map([...p.pieces.map((pc) => pc.fabric), ...Object.values(p.edits?.insideFabric ?? {})].map((fb) => [fabricKey(fb), fb])).values()];
+  let ym = table(doc, M + 70, 56, [{ title: 'Fabric', w: 30 }, { title: 'Category', w: 24 }, { title: 'Colour', w: 24 }, { title: 'gsm', w: 12, align: 'right' }], fabrics.map((fb) => {
+    const i = fabricInfo(fb);
+    return [i.fabric, i.category, i.colour, String(i.gsm)];
   }), 'Materials');
+  // patterned fabrics: pattern, repeat and colourway under the table
+  doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(MUTED);
+  for (const fb of fabrics) {
+    const i = fabricInfo(fb);
+    if (!i.pattern) continue;
+    doc.text(doc.splitTextToSize(`${i.fabric}, ${i.colour}: ${i.pattern}; colourway ${i.colourway}`, 90), M + 70, ym);
+    ym += 7;
+  }
   void y;
 
   // ---- 2. pattern sheet ----
@@ -90,7 +98,7 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
     const c = centroid(sew), pb = bbox(sew);
     doc.setDrawColor(INK).setLineWidth(0.25).line(c.x, c.y - pb.h * 0.25, c.x, c.y + pb.h * 0.25);
     doc.setFont('helvetica', 'bold').setFontSize(8).setTextColor(INK).text(pc.name, c.x + 1.5, c.y - 1);
-    doc.setFont('helvetica', 'normal').setFontSize(6.5).setTextColor(MUTED).text(`Cut ${pc.cut}  ·  ${fabricById(pc.fabric.id).name}`, c.x + 1.5, c.y + 2.5);
+    doc.setFont('helvetica', 'normal').setFontSize(6.5).setTextColor(MUTED).text(`Cut ${pc.cut}  ·  ${fabricById(pc.fabric.id).name}, ${fabricInfo(pc.fabric).colour}${fabricInfo(pc.fabric).pattern ? `  ·  ${fabricInfo(pc.fabric).pattern}` : ''}`, c.x + 1.5, c.y + 2.5);
     // placement marks: attachment outlines with a centre cross, pleat fold lines and notches
     const P = (q: { x: number; y: number }) => ({ x: (q.x + pc.offset.x) * s + ox, y: (q.y + pc.offset.y) * s + oy });
     const marks = placementMarks(pc, p.pieces, p.edits);
@@ -144,7 +152,7 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
   }, 0);
   const metres = (area / 150 / 100) * 1.25; // 150 cm wide roll, 25% marker waste
   y = table(doc, M, 26, [{ title: 'Item', w: 60 }, { title: 'Detail', w: 70 }, { title: 'Qty', w: 30, align: 'right' }], [
-    ...fabrics.map((fb) => { const f = fabricById(fb.id); return [`Shell fabric: ${f.name}`, `${f.colors[fb.color]?.name ?? ''}, ${f.gsm} gsm, 150 cm wide`, `${metres.toFixed(2)} m`]; }),
+    ...fabrics.map((fb) => { const i = fabricInfo(fb); return [`Shell fabric: ${i.fabric}`, `${i.category}, ${i.colour} (${i.hex}), ${i.gsm} gsm, 150 cm wide${i.pattern ? `; ${i.pattern}, colourway ${i.colourway}` : ''}`, `${metres.toFixed(2)} m`]; }),
     ['Thread', 'Polyester core-spun, colour matched', '1 cone'],
     ...trims(p.garment),
     // trims the user added: hardware, embroidery, appliques, with where they go
@@ -159,7 +167,7 @@ export function exportTechPack(p: Project, units: Units, snapshot: string | null
   doc.addPage();
   frame(doc, p, 5, 'Cut list, attachments & pleats');
   let ya = table(doc, M, 26, [{ title: 'Piece', w: 50 }, { title: 'Fabric', w: 40 }, { title: 'Cut', w: 14, align: 'right' }, { title: 'Note', w: 90 }],
-    cutList(p.pieces, p.edits, p.garment).map((r) => [r.name, r.fabric, String(r.cut), r.note ?? '']), 'Cut list');
+    cutList(p.pieces, p.edits, p.garment).map((r) => [r.name, r.fabric, String(r.cut), [r.detail, r.note].filter(Boolean).join('. ')]), 'Cut list');
   if (atts.length) {
     ya = table(doc, M, ya + 4, [{ title: 'Name', w: 36 }, { title: 'Kind', w: 18 }, { title: 'Placement', w: 38 }, { title: `Size ${U}`, w: 24, align: 'right' }, { title: `Centre x / y ${U}`, w: 28, align: 'right' }, { title: 'Rotation', w: 16, align: 'right' }, { title: 'Sewn', w: 38 }, { title: 'Artwork layers', w: 24, align: 'right' }, { title: 'Qty', w: 12, align: 'right' }],
       atts.map((r) => [r.name, r.kind, r.side + (r.face ? ', inside' : ''), `${u(r.w)} x ${u(r.h)}`, `${u(r.x)} / ${u(r.y)}`, `${Math.round(r.rotation)}°`, r.stitched, String(r.layers), String(r.copies)]), 'Attachments');

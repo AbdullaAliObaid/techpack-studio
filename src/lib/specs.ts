@@ -4,7 +4,7 @@ import type { Attachment, Edits, Hardware, Pleat } from '../data/edits';
 import { attachmentPolygons, outlinePolygon, SHAPES } from './shapes';
 import { builtinSeams, faceLabel, faceOf, instanceLabel } from '../sim/seams';
 import { labelMaterial, labelSewing, labelSize } from '../data/labels';
-import { fabricById } from '../data/fabrics';
+import { FABRIC_CATEGORIES, FABRICS, colorName, fabricById, fabricHex, patternLabel, withPatternDefaults, type FabricRef } from '../data/fabrics';
 import type { StyleId } from '../data/catalog';
 import { derivedGirths, EASE, RIB, frontOffset, neckBase } from '../data/draft';
 import { migrateGarment, styleById } from '../data/catalog';
@@ -572,17 +572,65 @@ export function trimsReport(pieces: Piece[], edits?: Edits, style?: StyleId): Tr
 }
 const round1 = (v: number) => Math.round(v * 10) / 10;
 
-export interface CutRow { name: string; fabric: string; cut: number; note?: string }
+export interface FabricInfo {
+  fabric: string;
+  category: string;
+  /** card colour name, or 'Custom #rrggbb' */
+  colour: string;
+  /** ground colour as CSS hex (custom colour if set) */
+  hex: string;
+  gsm: number;
+  /** 'Gingham, 0.8 cm repeat, woven'; undefined for a plain piece */
+  pattern?: string;
+  /** pattern colours, named from the fabric cards where they match: 'White / Navy' */
+  colourway?: string;
+}
+
+const hexName = (hex: string, prefer?: string) => {
+  const h = hex.toLowerCase();
+  const own = prefer ? fabricById(prefer).colors.find((c) => c.hex.toLowerCase() === h) : undefined;
+  return own?.name ?? FABRICS.flatMap((f) => f.colors).find((c) => c.hex.toLowerCase() === h)?.name ?? h;
+};
+
+/** Everything a tech pack says about one piece fabric: fabric, category, colour (custom hex aware), pattern and colourway. */
+export function fabricInfo(pf: FabricRef): FabricInfo {
+  const f = fabricById(pf.id);
+  const info: FabricInfo = { fabric: f.name, category: FABRIC_CATEGORIES.find((c) => c.id === f.category)?.name ?? '', colour: colorName(pf), hex: fabricHex(pf), gsm: f.gsm };
+  if (pf.pattern && pf.pattern.id !== 'solid') {
+    const p = withPatternDefaults(pf.pattern);
+    info.pattern = patternLabel(p);
+    info.colourway = p.colors.map((c) => hexName(c, pf.id)).join(' / ');
+  }
+  return info;
+}
+
+/** One line: 'Denim (Denim), Indigo; Gingham, 0.8 cm repeat, woven, colourway White / Navy'. */
+export function fabricText(pf: FabricRef): string {
+  const i = fabricInfo(pf);
+  return `${i.fabric} (${i.category}), ${fabricDetail(pf)}`;
+}
+
+/** Colour and pattern only: 'Indigo; Gingham, 0.8 cm repeat, woven, colourway White / Navy'. */
+export function fabricDetail(pf: FabricRef): string {
+  const i = fabricInfo(pf);
+  return `${i.colour}${i.pattern ? `; ${i.pattern}, colourway ${i.colourway}` : ''}`;
+}
+
+/** Same fabric, colour and pattern: one row in a materials table. */
+export const fabricKey = (pf: FabricRef) => `${pf.id}|${pf.hex ? pf.hex.toLowerCase() : pf.color}|${pf.pattern ? JSON.stringify(withPatternDefaults(pf.pattern)) : ''}`;
+
+export interface CutRow { name: string; fabric: string; cut: number; note?: string; /** fabric with category, colour and pattern (fabricText) */ material?: string; /** colour and pattern (fabricDetail) */ detail?: string }
 
 /** Cut list: every pattern piece with its cut count, then the cloth attachments (pockets, patches, straps, appliques). */
 export function cutList(pieces: Piece[], edits?: Edits, style?: StyleId): CutRow[] {
   const rows: CutRow[] = pieces.filter((p) => !(p.role === 'custom' && p.placement?.mode === 'patch')).map((p) => {
     const inner = edits?.insideFabric?.[p.id];
-    if (!inner) return { name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut };
+    const material = fabricText(p.fabric), detail = fabricDetail(p.fabric);
+    if (!inner) return { name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut, material, detail };
     // the inside face in its own fabric (under collar, placket facing, lining look)
-    const f = fabricById(inner.id), col = f.colors[inner.color]?.name;
+    const f = fabricById(inner.id), col = colorName(inner), pat = fabricInfo(inner).pattern;
     const what = style ? faceLabel(style, p, 'inside') : 'Inside';
-    return { name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut, note: `Inside: ${f.name}${col ? `, ${col}` : ''}${what !== 'Inside' ? ` (${what.toLowerCase()})` : ''}` };
+    return { name: p.name, fabric: fabricById(p.fabric.id).name, cut: p.cut, material, detail, note: `Inside: ${f.name}${col ? `, ${col}` : ''}${pat ? `, ${pat}` : ''}${what !== 'Inside' ? ` (${what.toLowerCase()})` : ''}` };
   });
   const tags = labelReport(pieces, edits, style);
   for (const r of attachmentReport(pieces, edits, style)) {
@@ -591,8 +639,9 @@ export function cutList(pieces: Piece[], edits?: Edits, style?: StyleId): CutRow
     const tag = tags.find((t) => t.id === r.id);
     if (tag) { rows.push({ name: r.name, fabric: tag.material, cut: r.copies, note: `Label on ${tag.placement}, cut ${round1(tag.cutW)} x ${round1(tag.cutH)} cm` }); continue; }
     const up = pieces.find((p) => p.id === r.id);
-    const fab = fabricById((a?.fabric ?? up?.fabric ?? pieces.find((p) => p.name === r.host)?.fabric)?.id ?? 'cotton');
-    rows.push({ name: r.name, fabric: fab.name, cut: r.cutPieces * r.copies, note: `${cap(r.kind)} on ${r.side}${r.cutPieces > 1 ? `, ${r.cutPieces} letters each` : ''}` });
+    const ref = a?.fabric ?? up?.fabric ?? pieces.find((p) => p.name === r.host)?.fabric;
+    const fab = fabricById(ref?.id ?? 'cotton');
+    rows.push({ name: r.name, fabric: fab.name, cut: r.cutPieces * r.copies, ...(ref ? { material: fabricText(ref), detail: fabricDetail(ref) } : {}), note: `${cap(r.kind)} on ${r.side}${r.cutPieces > 1 ? `, ${r.cutPieces} letters each` : ''}` });
   }
   return rows;
 }
