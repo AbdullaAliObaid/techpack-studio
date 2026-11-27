@@ -24,6 +24,8 @@ export interface DetailRequest {
   target?: { pieceId: string; instance?: number; x?: number; y?: number; radiusCm?: number; face?: 'outside' | 'inside' };
   /** look from the front, back or the wearer's left side instead of along the cloth's own normal; overview shots default to front */
   view?: 'front' | 'back' | 'side';
+  /** overview with a target: ring the target on the picture (locator) */
+  marker?: boolean;
 }
 
 export interface DetailShot { id: string; dataUrl: string }
@@ -138,6 +140,8 @@ interface Shot {
   target: THREE.Vector3; dir: THREE.Vector3; dist: number; hideBody: boolean;
   /** cut away everything closer to the camera than this many cm in front of the target (inside views: the rest of the garment would be in the way) */
   clipCm?: number;
+  /** world point to ring on the picture (locator shots) */
+  mark?: THREE.Vector3;
 }
 
 function renderShot(h: Handle, shot: Shot, size: number, bg: string | null): string {
@@ -226,6 +230,12 @@ function renderShot(h: Handle, shot: Shot, size: number, bg: string | null): str
     }
   }
   ctx.putImageData(img, 0, 0);
+  if (shot.mark) {
+    const q = shot.mark.clone().project(cam);
+    const px = (q.x * 0.5 + 0.5) * size, py = (1 - (q.y * 0.5 + 0.5)) * size, rr = size * 0.045;
+    ctx.lineWidth = size * 0.016; ctx.strokeStyle = '#ffffff'; ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.stroke();
+    ctx.lineWidth = size * 0.009; ctx.strokeStyle = '#2563eb'; ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.stroke();
+  }
   return canvas.toDataURL('image/png');
 }
 
@@ -239,7 +249,8 @@ function plan(h: Handle, r: DetailRequest): Shot | null {
     const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
     const [dx, dy, dz] = VIEW_DIR[r.view ?? 'front'] as readonly number[];
     const half = Math.max(s.y, r.view === 'side' ? s.z : s.x) / 2;
-    return { target: c, dir: new THREE.Vector3(dx, dy, dz), dist: fitDist(half * 1.05), hideBody: false };
+    const spot0 = r.marker && r.target ? locate(h, r.target) : null;
+    return { target: c, dir: new THREE.Vector3(dx, dy, dz), dist: fitDist(half * 1.05), hideBody: false, ...(spot0 ? { mark: spot0.pos } : {}) };
   }
   const spot = locate(h, r.target);
   if (!spot) return null;

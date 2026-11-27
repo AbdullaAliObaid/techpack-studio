@@ -5,7 +5,13 @@
 
 export type ShotView = 'front' | 'back' | 'side';
 export interface ShotTarget { pieceId: string; instance?: number; x: number; y: number; radiusCm: number; face?: 'outside' | 'inside' }
-export interface ShotRequest { kind: 'attachment' | 'piece' | 'inside' | 'seam' | 'overview'; target?: ShotTarget; view?: ShotView }
+export interface ShotRequest {
+  kind: 'attachment' | 'piece' | 'inside' | 'seam' | 'overview';
+  target?: ShotTarget;
+  view?: ShotView;
+  /** overview shots with a target: draw a ring on the garment at the target (the locator picture) */
+  marker?: boolean;
+}
 /** One PNG data URL per request, in order; null where the shot could not be taken. */
 export type ShotProvider = (requests: ShotRequest[], size: number) => Promise<(string | null | undefined)[]>;
 
@@ -21,8 +27,10 @@ function discover(): Promise<ShotProvider | null> {
       try { mods = import.meta.glob('../three/snapshots.ts') as Record<string, () => Promise<unknown>>; } catch { /* not running under vite */ }
       for (const load of Object.values(mods)) {
         try {
-          const m = (await load()) as { captureDetails?: ShotProvider };
-          if (typeof m.captureDetails === 'function') return m.captureDetails;
+          const m = (await load()) as { captureDetails?: (r: (ShotRequest & { id: string })[], size?: number) => Promise<{ id: string; dataUrl: string }[]> };
+          // the 3D module takes ids and answers by id; the PDF wants one picture per request, in order
+          const cd = m.captureDetails;
+          if (typeof cd === 'function') return async (reqs, size) => { const got = await cd(reqs.map((r, i) => ({ ...r, id: String(i) })), size); return reqs.map((_, i) => got.find((g) => g.id === String(i))?.dataUrl ?? null); };
         } catch { /* module failed to load */ }
       }
       return null;
