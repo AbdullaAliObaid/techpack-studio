@@ -1,3 +1,4 @@
+import { allPointsOf } from './components/multi';
 import { useEffect, useRef, useState } from 'react';
 import TopBar from './components/TopBar';
 import PatternPane from './components/PatternPane';
@@ -57,6 +58,10 @@ export default function App() {
       } else if (mod && e.key.toLowerCase() === 'y') {
         e.preventDefault();
         st.redo();
+      } else if (mod && e.key.toLowerCase() === 'a' && st.tool === 'select' && st.selPiece) {
+        // select every point of the selected piece
+        const pc = st.project.pieces.find((q) => q.id === st.selPiece);
+        if (pc) { e.preventDefault(); st.setMulti(allPointsOf(pc, st.selInstance ?? 0)); }
       } else if (!mod) {
         const k = e.key.toLowerCase();
         if (k === 'v') st.set({ tool: 'select' });
@@ -85,6 +90,11 @@ export default function App() {
           if (now - lastNudge > 700) st.commit(); // one undo step per burst of key presses
           lastNudge = now;
           st.updateAttachment(a.id, nudgePatch(atts, a, dx, dy, mirrored));
+        } else if (k.startsWith('arrow') && st.tool === 'select' && !st.selAttachment && (st.selMulti.length > 0 || (st.selPiece && st.selPoint))) {
+          // nudge the selected points: 1 mm, or 1 cm with Shift (the chart does the move)
+          e.preventDefault();
+          const step = e.shiftKey ? 1 : 0.1;
+          window.dispatchEvent(new CustomEvent('tps-nudge', { detail: { dx: k === 'arrowright' ? step : k === 'arrowleft' ? -step : 0, dy: k === 'arrowdown' ? step : k === 'arrowup' ? -step : 0 } }));
         } else if (k === 'delete' || k === 'backspace') {
           if (st.selAttachment) st.removeAttachment(st.selAttachment);
           else if (st.selPleat) st.removePleat(st.selPleat);

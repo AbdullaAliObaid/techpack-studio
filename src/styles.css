@@ -1204,3 +1204,15 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .callout-box.warn svg { color: var(--orange-text); }
 .tool-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-panel); background: var(--bg-elevated); box-shadow: 0 0 0 2px var(--accent); }
 .tool-card h3 { margin: 0; font-size: 15px; font-weight: 700; }
+
+/* ---------- multi select ---------- */
+.guide-label { fill: var(--measure); font-weight: 600; }
+.mgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+.mfield { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 36px; padding: 0 10px; border-radius: 8px; background: var(--fill-2, oklch(0 0 0 / 0.05)); color: var(--text-2); font-size: 12px; }
+.mfield > span:first-child { font-weight: 600; color: var(--label); }
+.mfield .num { flex: 1; justify-content: flex-end; min-width: 0; }
+.mfield .num input { width: 100%; min-width: 0; max-width: 78px; text-align: right; background: transparent; padding: 0 4px; }
+.agrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.agrid .btn, .row .btn { flex: 1; justify-content: center; }
+@media (pointer: coarse) { .mfield { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .marquee { transition: none; } }

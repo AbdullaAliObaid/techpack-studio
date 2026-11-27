@@ -21,12 +21,17 @@ import { openPieceFlow } from './flow';
 import { attsOnEntry, computeGeo, layoutChart, type Geo } from './chartLayout';
 import { hitList, type Cand } from './chartHit';
 import { createPortal } from 'react-dom';
+import { allPointsOf, movesFromWorld, placeItems, pointsInRect, snapTargets, withLinked, itemId, type Placed } from './multi';
+import { GuideLayer, MarqueeLayer, SelectionChip, overlay } from './MultiOverlay';
+import { angleSnap, boxOf, snapMove, type Target } from './snap';
+import type { MultiItem } from '../store';
 import Icon from './Icon';
 
 type View = { x: number; y: number; k: number };
 
 type Drag =
-  | { mode: 'point'; pieceId: string; pointId: string; key: string; start: Pt; committed: boolean }
+  | { mode: 'point'; pieceId: string; pointId: string; key: string; start: Pt; committed: boolean; inMulti?: boolean; g?: GroupDrag; last?: { cx: number; cy: number; alt: boolean; shift: boolean } }
+  | { mode: 'marquee'; start: Pt; how: 'replace' | 'add' | 'toggle'; base: MultiItem[]; moved: boolean; sig: string }
   | { mode: 'piece'; pieceId: string; start: Pt; startOffset: Pt; committed: boolean }
   | { mode: 'attach'; id: string; key: string; grab: Pt; start: Pt; committed: boolean }
   | { mode: 'resize'; id: string; key: string; c: Pt; rot: number; d0: number; att0: Attachment; committed: boolean }
@@ -35,6 +40,12 @@ type Drag =
   | { mode: 'pen'; startClient: Pt; smoothed: boolean }
   | { mode: 'pan'; startClient: Pt; startView: View }
   | { mode: 'pinch'; startDist: number; startMid: Pt; startView: View };
+
+/** state of a point or group drag, built once when the drag starts moving */
+interface GroupDrag { items: Placed[]; w0: Pt[]; anchor: number; targets: Target[]; prev: Pt | null }
+/** how close (screen px) a dragged point must come to line up; scales with zoom because it is divided by k */
+const SNAP_PX = 6;
+const LONG_PRESS_MS = 380;
 
 const ACCENT = 'var(--measure)';
 export const SEAM_ALLOWANCE = 1; // cm
@@ -97,6 +108,10 @@ export default function PatternEditor() {
   geosRef.current = geos;
   const cycle = useRef({ x: -99, y: -99, t: 0, idx: 0, sig: '' });
   const pending = useRef<{ x: number; y: number; run: () => void } | null>(null);
+  const spaceDown = useRef(false);
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const dragRaf = useRef(0);
+  const lastNudge = useRef(0);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => {
     const el = svgRef.current;
@@ -127,6 +142,20 @@ export default function PatternEditor() {
     });
   };
   const hoverRaf = useRef(0);
+
+  // ---- multi selection: what is drawn --------------------------------------
+  const selMulti = s.selMulti;
+  const multiByPiece = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const i of selMulti) { if (!m.has(i.pieceId)) m.set(i.pieceId, new Set()); m.get(i.pieceId)!.add(i.pointId); }
+    return m;
+  }, [selMulti]);
+  const multiBox = useMemo(() => {
+    if (selMulti.length < 2) return null;
+    const placed = placeItems(selMulti, entries);
+    const b = boxOf(placed.map((q) => q.world));
+    return b && placed.length > 1 ? { box: b, count: placed.length } : null;
+  }, [selMulti, entries]);
 
   // ---- seam runs to draw, grouped by piece ------------------------------
   const seamList = useMemo(() => builtinSeams(project.garment, pieces, project.edits), [project.garment, pieces, project.edits]);
@@ -238,6 +267,99 @@ export default function PatternEditor() {
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
+  // Space held = pan with the pointer (the select tool drags a marquee on empty space)
+  useEffect(() => {
+    const typing = (t: EventTarget | null) => { const el = t as HTMLElement | null; return !!el && (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(el.tagName) || el.isContentEditable); };
+    const down = (e: KeyboardEvent) => { if (e.code === 'Space' && !typing(e.target)) { spaceDown.current = true; e.preventDefault(); } };
+    const up = (e: KeyboardEvent) => { if (e.code === 'Space') spaceDown.current = false; };
+    const blur = () => { spaceDown.current = false; };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    // arrow keys nudge the selected points (App.tsx forwards them): 1 mm, Shift 1 cm, one undo step per burst
+    const onNudge = (e: Event) => {
+      const { dx, dy } = (e as CustomEvent<{ dx: number; dy: number }>).detail;
+      const st = useStore.getState();
+      const items: { pieceId: string; pointId: string; key?: string }[] = st.selMulti.length ? st.selMulti : st.selPiece && st.selPoint ? [{ pieceId: st.selPiece, pointId: st.selPoint, key: findEntry(st.selPiece, st.selInstance ?? 0)?.key }] : [];
+      const placed = placeItems(items, entriesRef.current);
+      if (!placed.length) return;
+      const now = performance.now();
+      if (now - lastNudge.current > 700) st.commit();
+      lastNudge.current = now;
+      writeMoves(placed, placed.map((q) => ({ x: q.world.x + dx, y: q.world.y + dy })));
+    };
+    window.addEventListener('tps-nudge', onNudge);
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur); window.removeEventListener('tps-nudge', onNudge); };
+  }, []);
+
+  /** one store update for the whole group; a single point goes through movePoint so its own rules apply */
+  const writeMoves = (placed: Placed[], world: Pt[]) => {
+    const st = useStore.getState();
+    const moves = movesFromWorld(placed, world);
+    if (moves.length === 1) { st.movePoint(moves[0].pieceId, moves[0].pointId, moves[0].x, moves[0].y); return; }
+    st.moveGroup(withLinked(st.project.pieces, moves, st.totalSymmetry));
+  };
+
+  // one drag frame: where would the group be, magnetism, angle snap, then a single store write
+  const stepGroup = (d: Extract<Drag, { mode: 'point' }>) => {
+    const last = d.last;
+    if (!last || !svgRef.current) return;
+    d.last = undefined;
+    const st = useStore.getState();
+    const w = toWorld(last.cx, last.cy);
+    if (!d.g) {
+      const en = entriesRef.current.find((x) => x.key === d.key);
+      if (!en) return;
+      const asked = d.inMulti ? st.selMulti : [{ pieceId: d.pieceId, pointId: d.pointId, key: d.key }];
+      let items = placeItems(asked, entriesRef.current);
+      // the point under the pointer is moved on the copy it was grabbed on
+      const own = items.findIndex((q) => q.item.pieceId === d.pieceId && q.item.pointId === d.pointId);
+      const grabbed = en.src.points.find((q) => q.id === d.pointId);
+      if (own >= 0 && grabbed) items[own] = { item: { pieceId: d.pieceId, pointId: d.pointId, key: en.key }, entry: en, world: toWorldPt(en, grabbed), stored: { x: grabbed.x, y: grabbed.y } };
+      if (own < 0 && grabbed) items = [{ item: { pieceId: d.pieceId, pointId: d.pointId, key: en.key }, entry: en, world: toWorldPt(en, grabbed), stored: { x: grabbed.x, y: grabbed.y } }];
+      const anchor = Math.max(0, items.findIndex((q) => q.item.pieceId === d.pieceId && q.item.pointId === d.pointId));
+      // what moves with the drag is not a target: the selection, its mirror partners, linked points under total symmetry
+      const moving = new Set(items.map((q) => itemId(q.item)));
+      for (const q of items) {
+        const pc = q.entry.src, pt = pc.points.find((x) => x.id === q.item.pointId);
+        if (st.symmetry && pt?.mirror) moving.add(pc.id + '|' + pt.mirror);
+        if (st.totalSymmetry) for (const l of linkedPoints(st.project.pieces, pc.id, q.item.pointId)) moving.add(itemId(l));
+      }
+      const targets = snapTargets(entriesRef.current, geosRef.current, moving);
+      // keep the selection in a straight line: its own starting positions are lines to snap back to
+      for (const q of items) targets.push({ x: q.world.x, y: q.world.y, label: items.length > 1 ? 'Start line' : 'Start line' });
+      const pts = en.piece.points, idx = pts.findIndex((x) => x.id === d.pointId);
+      const pv = idx >= 0 ? pts[(idx - 1 + pts.length) % pts.length] : null;
+      const prev = pv && !moving.has(en.src.id + '|' + (en.src.points.find((x) => x.id === pv.id)?.id ?? '')) ? { x: en.offset.x + pv.x, y: en.offset.y + pv.y } : null;
+      d.g = { items, w0: items.map((q) => q.world), anchor, targets, prev };
+    }
+    const g = d.g;
+    const delta = { x: w.x - d.start.x, y: w.y - d.start.y };
+    let guides: import('./snap').Guide[] = [];
+    let tip: { x: number; y: number; text: string } | null = null;
+    const a0 = g.w0[g.anchor];
+    if (last.shift && g.prev) {
+      // Shift: the dragged point keeps 0, 45 or 90 degrees from the point before it
+      const sp = angleSnap(g.prev, { x: a0.x + delta.x, y: a0.y + delta.y }, 45);
+      delta.x = sp.x - a0.x; delta.y = sp.y - a0.y;
+      const ang = Math.round((Math.atan2(sp.y - g.prev.y, sp.x - g.prev.x) * 180) / Math.PI);
+      tip = { x: sp.x, y: sp.y, text: `${((ang % 180) + 180) % 180 === 0 ? 0 : Math.abs(ang) % 90 === 45 ? 45 : 90}°` };
+    } else if (st.snapOn && !last.alt) {
+      const r = snapMove(g.w0.map((p) => ({ x: p.x + delta.x, y: p.y + delta.y })), g.targets, SNAP_PX / viewRef.current.k);
+      delta.x += r.dx; delta.y += r.dy;
+      guides = r.guides;
+    }
+    overlay.set({ guides, tip });
+    writeMoves(g.items, g.w0.map((p) => ({ x: p.x + delta.x, y: p.y + delta.y })));
+  };
+
+  /** finish the frame that is waiting (pointer up must not lose the last move) */
+  const flushDrag = () => {
+    cancelAnimationFrame(dragRaf.current);
+    const d = drag.current;
+    if (d && d.mode === 'point' && d.last) stepGroup(d);
+  };
+
   // ---- pointer handling (mouse, Apple Pencil and touch) -------------------
   const startPinch = () => {
     const [a, b] = [...pointers.current.values()];
@@ -268,7 +390,15 @@ export default function PatternEditor() {
     const panNow = () => (drag.current = { mode: 'pan', startClient: { x: e.clientX, y: e.clientY }, startView: viewRef.current });
     pending.current = null;
 
-    if (st.tool === 'pan' || e.button === 1 || (e.button === 0 && e.altKey && !chartPick)) return panNow();
+    if (st.tool === 'pan' || e.button === 1 || spaceDown.current || (e.button === 0 && e.altKey && !chartPick)) return panNow();
+
+    // marquee: Select tool, empty space. Mouse and pen drag at once; a finger pans, and a long press turns that into a marquee.
+    const startMarquee = (how: 'replace' | 'add' | 'toggle') => {
+      const base = how === 'replace' ? [] : st.selMulti.length ? st.selMulti : st.selPiece && st.selPoint ? [{ pieceId: st.selPiece, pointId: st.selPoint, key: findEntry(st.selPiece, st.selInstance ?? 0)?.key ?? '' }] : [];
+      drag.current = { mode: 'marquee', start: w, how, base, moved: false, sig: '' };
+      overlay.set({ marquee: { x0: w.x, y0: w.y, x1: w.x, y1: w.y } });
+    };
+    const howOf = (): 'replace' | 'add' | 'toggle' => (e.metaKey || e.ctrlKey ? 'toggle' : e.shiftKey ? 'add' : 'replace');
 
     // what is under the pointer: one resolver, not the first DOM element (see chartHit.ts)
     let target = (e.target as Element).closest('[data-kind]') as HTMLElement | null;
@@ -415,12 +545,27 @@ export default function PatternEditor() {
         drag.current = null;
         return;
       }
-      st.select(pieceId, pointId);
+      // Shift adds a point to the selection, Cmd/Ctrl toggles it; neither starts a drag
+      if ((e.shiftKey || e.metaKey || e.ctrlKey) && st.tool === 'select') {
+        const cur: MultiItem[] = st.selMulti.length ? st.selMulti : st.selPiece && st.selPoint ? [{ pieceId: st.selPiece, pointId: st.selPoint, key: findEntry(st.selPiece, st.selInstance ?? 0)?.key ?? ent.key }] : [];
+        const has = cur.some((i) => i.pieceId === pieceId && i.pointId === pointId);
+        const next = e.metaKey || e.ctrlKey ? (has ? cur.filter((i) => !(i.pieceId === pieceId && i.pointId === pointId)) : [...cur, { pieceId, pointId, key: ent.key }]) : has ? cur : [...cur, { pieceId, pointId, key: ent.key }];
+        if (next.length > 1) st.setMulti(next);
+        else if (next.length === 1) st.select(next[0].pieceId, next[0].pointId);
+        else st.select(pieceId, null);
+        pick(ent);
+        drag.current = null;
+        return;
+      }
+      const inMulti = st.selMulti.length > 1 && st.selMulti.some((i) => i.pieceId === pieceId && i.pointId === pointId);
+      if (!inMulti) st.select(pieceId, pointId);
       pick(ent);
-      if (st.totalSymmetry) st.set({ linkedHot: linkedPoints(st.project.pieces, pieceId, pointId) });
-      drag.current = { mode: 'point', pieceId, pointId, key: ent.key, start: w, committed: false };
+      if (st.totalSymmetry && !inMulti) st.set({ linkedHot: linkedPoints(st.project.pieces, pieceId, pointId) });
+      drag.current = { mode: 'point', pieceId, pointId, key: ent.key, start: w, committed: false, inMulti };
       return;
     }
+
+    if (kind === 'piece' && st.tool === 'select' && (e.shiftKey || e.metaKey || e.ctrlKey)) return startMarquee(howOf());
 
     if ((kind === 'edge' || kind === 'piece') && pieceId && ent) {
       const local = { x: w.x - ent.offset.x, y: w.y - ent.offset.y };
@@ -440,6 +585,24 @@ export default function PatternEditor() {
       return;
     }
 
+    if (st.tool === 'select') {
+      if (e.pointerType === 'touch') {
+        // finger: pan, as every touch surface does. Press and hold, then drag, to rubber band instead.
+        panNow();
+        const sx = e.clientX, sy = e.clientY, id = e.pointerId;
+        clearTimeout(holdTimer.current);
+        holdTimer.current = setTimeout(() => {
+          const p = pointers.current.get(id);
+          if (drag.current?.mode !== 'pan' || pointers.current.size !== 1 || !p || Math.hypot(p.x - sx, p.y - sy) > 8) return;
+          startMarquee(howOf());
+          (navigator as Navigator & { vibrate?: (n: number) => boolean }).vibrate?.(8);
+        }, LONG_PRESS_MS);
+        if (!e.shiftKey && !e.metaKey && !e.ctrlKey) { st.select(null, null); st.set({ selAttachment: null, selPleat: null }); }
+        return;
+      }
+      startMarquee(howOf());
+      return;
+    }
     st.select(null, null);
     st.set({ selAttachment: null, selPleat: null });
     panNow();
@@ -502,6 +665,26 @@ export default function PatternEditor() {
         const pd = st.penDraft;
         if (pd.length) st.set({ penDraft: pd.map((q, i) => (i === pd.length - 1 ? { ...q, smooth: true } : q)) });
       }
+      return;
+    }
+    if (d.mode === 'marquee') {
+      const mw = toWorld(e.clientX, e.clientY);
+      if (!d.moved && Math.hypot(mw.x - d.start.x, mw.y - d.start.y) * viewRef.current.k < 3) return;
+      d.moved = true;
+      const r = { x0: Math.min(d.start.x, mw.x), y0: Math.min(d.start.y, mw.y), x1: Math.max(d.start.x, mw.x), y1: Math.max(d.start.y, mw.y) };
+      overlay.set({ marquee: { x0: d.start.x, y0: d.start.y, x1: mw.x, y1: mw.y } });
+      const hits = pointsInRect(entriesRef.current, r);
+      const id = (i: MultiItem) => i.pieceId + '|' + i.pointId;
+      const hitIds = new Set(hits.map(id));
+      const next = d.how === 'replace' ? hits
+        : d.how === 'add' ? [...d.base, ...hits.filter((i) => !d.base.some((b) => id(b) === id(i)))]
+        : [...d.base.filter((b) => !hitIds.has(id(b))), ...hits.filter((i) => !d.base.some((b) => id(b) === id(i)))];
+      const sig = next.map(id).join(',');
+      if (sig === d.sig) return;
+      d.sig = sig;
+      if (next.length > 1) st.setMulti(next);
+      else if (next.length === 1) st.select(next[0].pieceId, next[0].pointId);
+      else st.select(d.how === 'replace' ? null : st.selPiece, null);
       return;
     }
     const w = toWorld(e.clientX, e.clientY);
@@ -578,11 +761,11 @@ export default function PatternEditor() {
     const piece = st.project.pieces.find((p) => p.id === d.pieceId);
     if (!piece) return;
     if (d.mode === 'point') {
-      const en = entriesRef.current.find((x) => x.key === d.key);
-      if (!en) return;
-      const l = toSource(en, w);
-      st.movePoint(d.pieceId, d.pointId, l.x, l.y);
-    } else {
+      // one store write per animation frame for the whole group (see stepGroup)
+      const waiting = !!d.last;
+      d.last = { cx: e.clientX, cy: e.clientY, alt: e.altKey, shift: e.shiftKey };
+      if (!waiting) dragRaf.current = requestAnimationFrame(() => { const dd = drag.current; if (dd && dd.mode === 'point') stepGroup(dd); });
+    } else if (d.mode === 'piece') {
       st.movePiece(d.pieceId, { x: d.startOffset.x + w.x - d.start.x, y: d.startOffset.y + w.y - d.start.y });
     }
   };
@@ -591,6 +774,16 @@ export default function PatternEditor() {
     const pc = pending.current;
     pending.current = null;
     if (pc && Math.hypot(e.clientX - pc.x, e.clientY - pc.y) < 4 && !(drag.current && 'committed' in drag.current && drag.current.committed)) pc.run();
+    if (pointers.current.size <= 1) {
+      flushDrag();
+      const dd = drag.current;
+      const stU = useStore.getState();
+      if (dd?.mode === 'marquee' && !dd.moved && dd.how === 'replace' && e.type === 'pointerup') { stU.select(null, null); stU.set({ selAttachment: null, selPleat: null }); }
+      // a click on a point that was part of the selection narrows the selection to it
+      if (dd?.mode === 'point' && dd.inMulti && !dd.committed && e.type === 'pointerup') stU.select(dd.pieceId, dd.pointId);
+      overlay.clear();
+    }
+    clearTimeout(holdTimer.current);
     pointers.current.delete(e.pointerId);
     if (useStore.getState().linkedHot.length) useStore.setState({ linkedHot: [] });
     if (pointers.current.size === 0) drag.current = null;
@@ -710,6 +903,7 @@ export default function PatternEditor() {
                   k={k}
                   selected={active}
                   selPoint={active ? selPoint : null}
+                  multiIds={multiByPiece.get(p.id) ?? null}
                   symmetry={symmetry}
                   showMeasure={showMeasure}
                   showStitch={showStitch}
@@ -734,6 +928,9 @@ export default function PatternEditor() {
             })}
             <g ref={setLabelsEl} />
             <g ref={setTopEl} />
+            {multiBox && <SelectionChip box={multiBox.box} count={multiBox.count} k={k} />}
+            <GuideLayer k={k} />
+            <MarqueeLayer k={k} />
             {hover && tool !== 'pen' && <HoverOverlay hover={hover} entries={entries} geos={geos} k={k} />}
             {tool === 'pen' && <PenPreview draft={penDraft} hover={penHover} k={k} snap={penSnap} />}
           </g>
@@ -754,7 +951,7 @@ export default function PatternEditor() {
 }
 
 const HUD: Record<string, string> = {
-  select: 'Drag points to reshape. Double tap an edge to add a point. Drag a design to move it. Click again, or Option-click, to select what is underneath.',
+  select: 'Drag points to reshape, or drag on empty space to select several (touch: press and hold, then drag). Shift adds, Cmd toggles. Hold Option to turn off snapping, Shift to snap angles. Space and drag pans.',
   add: 'Tap an edge to add a point.',
   pan: 'Drag to pan the chart.',
   seams: 'Click a start point, then an end point, to pick a range to sew. Escape to stop.',
@@ -790,6 +987,8 @@ function PieceView(props: {
   k: number;
   selected: boolean;
   selPoint: string | null;
+  /** points picked as a group (marquee, shift-click) on this piece */
+  multiIds: ReadonlySet<string> | null;
   symmetry: boolean;
   showMeasure: boolean;
   showStitch: boolean;
@@ -810,7 +1009,7 @@ function PieceView(props: {
   labelsEl: SVGGElement | null;
   topEl: SVGGElement | null;
 }) {
-  const { geo, layout, labelsEl, topEl, entry, k, selected, selPoint, symmetry, showMeasure, showStitch, units, tool, attachments, selAttachment, pleats, selPleat, ghosts, runs, starts, dropTarget, pickSeg, picking } = props;
+  const { geo, layout, labelsEl, topEl, entry, k, selected, selPoint, multiIds, symmetry, showMeasure, showStitch, units, tool, attachments, selAttachment, pleats, selPleat, ghosts, runs, starts, dropTarget, pickSeg, picking } = props;
   const p = entry.piece;
   const inst = entry.inst;
   const px = (n: number) => n / k;
@@ -1000,9 +1199,10 @@ function PieceView(props: {
           const isSel = q.id === selPoint;
           const isMirror = symmetry && sel && sel.mirror === q.id && sel.id !== q.id;
           const isLinked = linkedHot.some((h) => h.pieceId === p.id && h.pointId === q.id);
-          const r = px(isSel ? 6 : tool === 'seams' ? 6 : selected ? 4.5 : 3.5);
-          const fill = isSel ? 'var(--accent)' : isMirror ? 'var(--purple)' : 'var(--point-fill)';
-          const stroke = isMirror ? 'var(--purple)' : selected ? 'var(--accent)' : 'var(--point-stroke)';
+          const inGroup = !!multiIds?.has(q.id);
+          const r = px(isSel || inGroup ? 6 : tool === 'seams' ? 6 : selected ? 4.5 : 3.5);
+          const fill = isSel || inGroup ? 'var(--accent)' : isMirror ? 'var(--purple)' : 'var(--point-fill)';
+          const stroke = inGroup ? 'var(--bg-elevated)' : isMirror ? 'var(--purple)' : selected ? 'var(--accent)' : 'var(--point-stroke)';
           return (
             <g key={q.id}>
               {q.smooth ? (

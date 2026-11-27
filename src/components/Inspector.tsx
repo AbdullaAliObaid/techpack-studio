@@ -14,6 +14,7 @@ import { BodyFields, BodyType } from './BodyPanel';
 import { Disclosure, Seg, SubLabel, TabHeader } from './controls';
 import { copiesOf } from './sides';
 import Icon from './Icon';
+import MultiPanel from './MultiPanel';
 
 const TABS: { id: InspectorTab; label: string; icon: string }[] = [
   { id: 'garment', label: 'Garment', icon: 'garment' },
@@ -184,7 +185,7 @@ function BodyTab() {
 }
 
 function SpecsTab() {
-  const { project, units, selPiece, selPoint, toggleSmooth, deletePoint } = useStore();
+  const { project, units, selPiece, selPoint, toggleSmooth, deletePoint, selMulti } = useStore();
   const g = garmentSpecs(project.garment, project.pieces);
   const piece = project.pieces.find((p) => p.id === selPiece);
   const point = piece?.points.find((q) => q.id === selPoint);
@@ -192,7 +193,12 @@ function SpecsTab() {
   return (
     <>
       <TabHeader icon="specs" title="Specs" subtitle="Measurements, fit check and seam lengths for the tech pack." />
-      {point && piece && (
+      {selMulti.length > 1 && (
+        <Disclosure id="spec-point" title="Selected points" icon="target" count={selMulti.length}>
+          <MultiPanel />
+        </Disclosure>
+      )}
+      {selMulti.length < 2 && point && piece && (
         <Disclosure id="spec-point" title="Selected point" icon="target">
           <div className="kv"><span>Across</span><b>{toUnit(point.x, units).toFixed(2)} {units}</b></div>
           <div className="kv"><span>Down</span><b>{toUnit(point.y, units).toFixed(2)} {units}</b></div>
