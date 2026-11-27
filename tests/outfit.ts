@@ -9,6 +9,7 @@ import { meshField, GridCollider, PosedCollider } from '../src/three/mesher';
 import { assembleOutfit, displayOutfit, layerCheck, sidesOf, warmStartOutfit, type OutfitInput, type Outfit3D } from '../src/sim/outfit';
 import { boneMatrices, invert, poseAt, type Mode } from '../src/sim/pose';
 import { EMPTY_EDITS } from '../src/data/edits';
+import { styleEdits } from '../src/data/construction';
 import type { Outfit, Project } from '../src/store';
 import { assemble, setFloat, type Garment3D } from '../src/sim/setup';
 import { outfitReport } from '../src/lib/specs';
@@ -25,7 +26,12 @@ let fails = 0;
 const verdict = (ok: boolean, msg: string) => { if (!ok) fails++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); };
 
 let ids = 0;
-const project = (garment: StyleId): Project => ({ id: `p${ids++}`, name: garment, garment, pieces: makePreset(garment, body), body, linkPattern: true, fit: 'regular', edits: { ...EMPTY_EDITS }, updatedAt: 0 });
+// like the app: a new project carries its style details (buttons that close split fronts, collar down)
+const project = (garment: StyleId): Project => {
+  const pieces = makePreset(garment, body);
+  const collared = pieces.some((p) => p.role === 'collar');
+  return { id: `p${ids++}`, name: garment, garment, pieces, body, linkPattern: true, fit: 'regular', edits: styleEdits(garment, pieces, body, { ...EMPTY_EDITS, ...(collared ? { collar: 'down' as const } : {}) }), updatedAt: 0 };
+};
 const item = (garment: StyleId, layer: number, tuck?: 'in' | 'out'): OutfitInput => ({ project: project(garment), layer, ...(tuck ? { tuck } : {}) });
 
 function settle(O: Outfit3D, frames = 600) {
