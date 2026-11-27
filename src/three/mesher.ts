@@ -69,13 +69,16 @@ export function meshField(field: BodyField, res = 0.55): BodyMesh {
     for (let c = 0; c < 8; c++) mn = Math.min(mn, Math.abs(coarse[(i + (c & 1)) + (j + ((c >> 1) & 1)) * cnx + (k + (c >> 2)) * cnx * cny]));
     if (mn < band) near[i + j * cnx + k * cnx * cny] = 1;
   }
+  const CI = new Int32Array(nx), U = new Float64Array(nx);
+  for (let i = 0; i < nx; i++) { CI[i] = Math.min(cnx - 2, Math.floor(i / C)); U[i] = i / C - CI[i]; }
   for (let k = 0; k < nz; k++) {
     const ck = Math.min(cnz - 2, Math.floor(k / C)), w = k / C - ck;
     for (let j = 0; j < ny; j++) {
       const cj = Math.min(cny - 2, Math.floor(j / C)), v = j / C - cj;
+      const bjk = cj * cnx + ck * cnx * cny, X = 1, Y = cnx, Z = cnx * cny;
       for (let i = 0; i < nx; i++) {
-        const ci = Math.min(cnx - 2, Math.floor(i / C)), u = i / C - ci;
-        const b = ci + cj * cnx + ck * cnx * cny, X = 1, Y = cnx, Z = cnx * cny;
+        const u = U[i];
+        const b = CI[i] + bjk;
         const c00 = coarse[b] * (1 - u) + coarse[b + X] * u;
         const c10 = coarse[b + Y] * (1 - u) + coarse[b + Y + X] * u;
         const c01 = coarse[b + Z] * (1 - u) + coarse[b + Z + X] * u;
@@ -99,18 +102,24 @@ export function meshField(field: BodyField, res = 0.55): BodyMesh {
   const cellVert = new Int32Array((nx - 1) * (ny - 1) * (nz - 1)).fill(-1);
   const verts: number[] = [];
   const cidx = (i: number, j: number, k: number) => i + j * (nx - 1) + k * (nx - 1) * (ny - 1);
-  const E = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
+  const EA = [0, 2, 4, 6, 0, 1, 4, 5, 0, 1, 2, 3], EB = [1, 3, 5, 7, 2, 3, 6, 7, 4, 5, 6, 7];
   const cv = new Float32Array(8);
-  for (let k = 0; k < nz - 1; k++) for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
+  const CO = new Int32Array(8);
+  for (let c = 0; c < 8; c++) CO[c] = (c & 1) + ((c >> 1) & 1) * sy + (c >> 2) * sz;
+  for (let k = 0; k < nz - 1; k++) for (let j = 0; j < ny - 1; j++) {
+    const row = j * sy + k * sz;
+    for (let i = 0; i < nx - 1; i++) {
+    const base = i + row;
     let mask = 0;
     for (let c = 0; c < 8; c++) {
-      const v = data[(i + (c & 1)) + (j + ((c >> 1) & 1)) * sy + (k + (c >> 2)) * sz];
+      const v = data[base + CO[c]];
       cv[c] = v;
       if (v < 0) mask |= 1 << c;
     }
     if (mask === 0 || mask === 255) continue;
     let px = 0, py = 0, pz = 0, n = 0;
-    for (const [a, b] of E) {
+    for (let e = 0; e < 12; e++) {
+      const a = EA[e], b = EB[e];
       if ((cv[a] < 0) === (cv[b] < 0)) continue;
       const t = cv[a] / (cv[a] - cv[b]);
       px += (a & 1) + (((b & 1) - (a & 1)) * t);
@@ -120,24 +129,25 @@ export function meshField(field: BodyField, res = 0.55): BodyMesh {
     }
     cellVert[cidx(i, j, k)] = verts.length / 3;
     verts.push(ox + (i + px / n) * res, oy + (j + py / n) * res, oz + (k + pz / n) * res);
+    }
   }
   const quads: number[] = [];
+  const DSTEP = [1, sy, sz];
   for (let k = 1; k < nz - 1; k++) for (let j = 1; j < ny - 1; j++) for (let i = 1; i < nx - 1; i++) {
-    const v0 = data[i + j * sy + k * sz];
+    const id = i + j * sy + k * sz;
+    const in0 = data[id] < 0;
     // edges along +x, +y, +z from this grid point
-    const dirs: [number, number, number][] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
-    for (const [dx, dy, dz] of dirs) {
-      const v1 = data[(i + dx) + (j + dy) * sy + (k + dz) * sz];
-      if ((v0 < 0) === (v1 < 0)) continue;
+    for (let d = 0; d < 3; d++) {
+      if (in0 === (data[id + DSTEP[d]] < 0)) continue;
       // the four cells around this edge
-      let c: number[];
-      if (dx) c = [cidx(i, j - 1, k - 1), cidx(i, j, k - 1), cidx(i, j, k), cidx(i, j - 1, k)];
-      else if (dy) c = [cidx(i - 1, j, k - 1), cidx(i - 1, j, k), cidx(i, j, k), cidx(i, j, k - 1)];
-      else c = [cidx(i - 1, j - 1, k), cidx(i, j - 1, k), cidx(i, j, k), cidx(i - 1, j, k)];
-      const q = c.map((x) => cellVert[x]);
-      if (q.some((x) => x < 0)) continue;
-      if (v0 < 0) quads.push(q[0], q[1], q[2], q[3]);
-      else quads.push(q[3], q[2], q[1], q[0]);
+      let c0: number, c1: number, c2: number, c3: number;
+      if (d === 0) { c0 = cidx(i, j - 1, k - 1); c1 = cidx(i, j, k - 1); c2 = cidx(i, j, k); c3 = cidx(i, j - 1, k); }
+      else if (d === 1) { c0 = cidx(i - 1, j, k - 1); c1 = cidx(i - 1, j, k); c2 = cidx(i, j, k); c3 = cidx(i, j, k - 1); }
+      else { c0 = cidx(i - 1, j - 1, k); c1 = cidx(i, j - 1, k); c2 = cidx(i, j, k); c3 = cidx(i - 1, j, k); }
+      const q0 = cellVert[c0], q1 = cellVert[c1], q2 = cellVert[c2], q3 = cellVert[c3];
+      if (q0 < 0 || q1 < 0 || q2 < 0 || q3 < 0) continue;
+      if (in0) quads.push(q0, q1, q2, q3);
+      else quads.push(q3, q2, q1, q0);
     }
   }
 

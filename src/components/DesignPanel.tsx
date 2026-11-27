@@ -1,7 +1,7 @@
 // Design library: every tile is one simple thing (a shape, a word, a trim, a tag) that is cut and sewn on, stitched in
 // thread, printed, or fixed on as hardware. Tiles drag onto the 2D chart or the 3D model, or are added to the selection.
 import { useRef, useState } from 'react';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import type { Attachment, HardwareType } from '../data/edits';
 import { fabricById } from '../data/fabrics';
 import { centroid, samplePoly } from '../lib/geometry';
@@ -37,7 +37,7 @@ function Preview({ t, host }: { t: AttachTemplate; host: string }) {
 }
 
 export default function DesignLibrary() {
-  const { project, selPiece, selInstance, selAttachment, showBothSides, addAttachment, set, units, designFace, openDesign } = useStore();
+  const { project, selPiece, selInstance, selAttachment, showBothSides, addAttachment, set, units, designFace, openDesign } = usePick('project', 'selPiece', 'selInstance', 'selAttachment', 'showBothSides', 'addAttachment', 'set', 'units', 'designFace', 'openDesign');
   const [opts, setOpts] = useState<DesignOpts>({ ...DEFAULT_OPTS, fabric: { id: 'canvas', color: 2 } });
   const [cutKind, setCutKind] = useState<Kind4>('pocket');
   const [hwType, setHwType] = useState<HardwareType>('rivet');

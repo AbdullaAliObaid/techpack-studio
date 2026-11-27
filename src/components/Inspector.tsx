@@ -1,5 +1,5 @@
 // Inspector: four sections (Garment, Construction, Body, Specs), each with titled, collapsible groups.
-import { useStore, type InspectorTab } from '../store';
+import { useStore, type InspectorTab, usePick } from '../store';
 import { CATALOG, migrateGarment } from '../data/catalog';
 import { FABRICS, fabricById, stretchLabel } from '../data/fabrics';
 import { fabricDataUrl } from '../lib/textures';
@@ -23,7 +23,7 @@ const TABS: { id: InspectorTab; label: string; icon: string }[] = [
 ];
 
 export default function Inspector() {
-  const { inspectorTab: tab, set, drawer } = useStore();
+  const { inspectorTab: tab, set, drawer } = usePick('inspectorTab', 'set', 'drawer');
   const go = (id: InspectorTab) => set({ inspectorTab: id });
   const onKey = (e: React.KeyboardEvent) => {
     const i = TABS.findIndex((t) => t.id === tab);
@@ -57,7 +57,7 @@ export default function Inspector() {
 }
 
 function FitPick() {
-  const { project, setFit } = useStore();
+  const { project, setFit } = usePick('project', 'setFit');
   const fit = project.fit ?? 'regular';
   return (
     <div className="seg full" role="group" aria-label="Fit">
@@ -70,7 +70,7 @@ function FitPick() {
 
 /** Collar worn folded down or popped up. */
 export function CollarControl() {
-  const { project, setCollar } = useStore();
+  const { project, setCollar } = usePick('project', 'setCollar');
   const collar = project.edits?.collar ?? 'down';
   return (
     <>
@@ -88,7 +88,7 @@ function Swatch({ fabric, size = 44, label }: { fabric: { id: string; color: num
 
 /** Outside and inside of the garment: a two face preview of the selected piece, a default for the whole garment, and the chart face. */
 function FacesSection() {
-  const { project, selPiece, viewFace, set, setInsideFabric, setInsideAll } = useStore();
+  const { project, selPiece, viewFace, set, setInsideFabric, setInsideAll } = usePick('project', 'selPiece', 'viewFace', 'set', 'setInsideFabric', 'setInsideAll');
   const piece = project.pieces.find((p) => p.id === selPiece);
   const inside = project.edits?.insideFabric ?? {};
   const collar = project.edits?.collar;
@@ -126,7 +126,7 @@ function FacesSection() {
 }
 
 function GarmentTab() {
-  const { project, selPiece, fabricScope, set, setFabric } = useStore();
+  const { project, selPiece, fabricScope, set, setFabric } = usePick('project', 'selPiece', 'fabricScope', 'set', 'setFabric');
   const style = CATALOG.find((s) => s.id === migrateGarment(project.garment));
   const piece = project.pieces.find((p) => p.id === selPiece);
   const scope = piece ? fabricScope : 'all';
@@ -200,7 +200,7 @@ function GarmentTab() {
 }
 
 function BodyTab() {
-  const { resetBody, project } = useStore();
+  const { resetBody, project } = usePick('resetBody', 'project');
   return (
     <>
       <TabHeader icon="body" title="Body" subtitle={`${project.body.sex === 'female' ? 'Female' : 'Male'} body, measurements, pose and movement`} />
@@ -220,7 +220,7 @@ function BodyTab() {
 }
 
 function SpecsTab() {
-  const { project, units, selPiece, selPoint, toggleSmooth, deletePoint } = useStore();
+  const { project, units, selPiece, selPoint, toggleSmooth, deletePoint } = usePick('project', 'units', 'selPiece', 'selPoint', 'toggleSmooth', 'deletePoint');
   const g = garmentSpecs(project.garment, project.pieces);
   const piece = project.pieces.find((p) => p.id === selPiece);
   const point = piece?.points.find((q) => q.id === selPoint);

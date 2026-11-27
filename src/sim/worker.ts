@@ -12,6 +12,8 @@ import type { Attachment } from '../data/edits';
 import { migrateGarment, styleById } from '../data/catalog';
 import { boneMatrices, clampPose, invert, lerpPose, poseAt, poseDistance, stepPose, type Mode } from './pose';
 import { ZERO_POSE, type CustomPose, type Edits } from '../data/edits';
+import { loadBody, saveBody } from './bodyCache';
+import type { BodyMesh } from '../three/mesher';
 
 let bodyKey = '';
 let collider: PosedCollider | null = null;
@@ -50,15 +52,23 @@ type BuildMsg =
   | { type: 'pose'; pose: CustomPose };
 
 let attachments: Attachment[] = [];
-function postAttachDetails() {
+/** what the last posted stitching / hardware were built from; an attachments message rebuilds only what changed */
+let sentKeys = { stitch: '', hardware: '' };
+function postAttachDetails(force = true) {
   if (!G) return;
-  try {
+  const keys = {
+    stitch: JSON.stringify(attachments.filter((a) => a.kind !== 'hardware' && a.kind !== 'print' && a.kind !== 'embroidery')),
+    hardware: JSON.stringify(attachments.filter((a) => a.kind === 'hardware')),
+  };
+  const stitch = force || keys.stitch !== sentKeys.stitch, hardware = force || keys.hardware !== sentKeys.hardware;
+  sentKeys = keys;
+  if (stitch) try {
     const det = buildAttachmentDetails(G, attachments);
     (self as unknown as Worker).postMessage(det, detailTransfers(det as never));
   } catch (err) {
     console.warn('attachment details failed', err);
   }
-  try {
+  if (hardware) try {
     // hardware trims: anchors on the host cloth per copy (instance), drawn by src/three/Hardware.tsx
     const hw = buildHardware(G, attachments, G.panelSign ? Array.from(G.panelSign) : outwardSignsHosted(G.panels, G.sim.pos));
     (self as unknown as Worker).postMessage(hw, hardwareTransfers(hw));
@@ -116,8 +126,18 @@ function loop(myGen: number) {
   if (!G.sim.sleeping) timer = setTimeout(() => loop(myGen), Math.max(0, 16 - (performance.now() - t0)));
 }
 
+// messages are handled in order; a build may wait for the body cache (IndexedDB) first
+let queue: Promise<void> = Promise.resolve();
 self.onmessage = (e: MessageEvent<BuildMsg>) => {
-  const m = e.data;
+  queue = queue.then(() => handle(e.data)).catch((err) => console.warn('worker message failed', err));
+};
+
+const copyMesh = (m: BodyMesh): BodyMesh => ({
+  positions: m.positions.slice(), normals: m.normals.slice(), indices: m.indices.slice(), skinIndex: m.skinIndex.slice(), skinWeight: m.skinWeight.slice(),
+  grid: { ...m.grid },
+});
+
+async function handle(m: BuildMsg) {
   if (m.type === 'pose') {
     poseTarget = clampPose(m.pose);
     if (mode !== 'custom') { poseCur = posePrev = poseTarget; return; }
@@ -140,7 +160,7 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
   }
   if (m.type === 'attachments') {
     attachments = m.attachments;
-    postAttachDetails();
+    postAttachDetails(false);
     return;
   }
   if (m.type !== 'build') return;
@@ -148,10 +168,14 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
   const key = JSON.stringify(m.body);
   if (key !== bodyKey || !collider) {
     (self as unknown as Worker).postMessage({ type: 'status', text: 'Building body…' });
-    const field = calibratedField(m.body);
-    const mesh = meshField(field);
-    const fr = field.f;
+    let mesh = await loadBody(key);
+    if (!mesh) {
+      mesh = meshField(calibratedField(m.body));
+      // the display arrays are transferred to the page below, so the cache gets its own copy (the grid stays here)
+      void saveBody(key, copyMesh(mesh));
+    }
     frame = bodyFrame(m.body);
+    const fr = frame;
     collider = new PosedCollider(mesh.grid, [fr.ankleH + 6, fr.crotchH + 1], fr);
     bodyKey = key;
     (self as unknown as Worker).postMessage(
@@ -246,4 +270,4 @@ self.onmessage = (e: MessageEvent<BuildMsg>) => {
   }
   postAttachDetails();
   loop(gen);
-};
+}

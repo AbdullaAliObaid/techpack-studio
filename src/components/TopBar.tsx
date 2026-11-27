@@ -1,6 +1,6 @@
 import Logo from './Logo';
 import { useEffect, useRef, useState } from 'react';
-import { useStore, type Project, type ThemePref } from '../store';
+import { useStore, type Project, type ThemePref, usePick } from '../store';
 import { CATALOG, migrateGarment } from '../data/catalog';
 import Icon from './Icon';
 import { deleteProject, listProjects, saveProject } from '../lib/projects';
@@ -10,7 +10,7 @@ import { piecesToDxf } from '../lib/exportDxf';
 import { flushSave, goHome, openNewFlow } from './nav';
 
 export default function TopBar() {
-  const { project, units, past, future, set, undo, redo, loadProject, rename, theme, drawer } = useStore();
+  const { project, units, past, future, set, undo, redo, loadProject, rename, theme, drawer } = usePick('project', 'units', 'past', 'future', 'set', 'undo', 'redo', 'loadProject', 'rename', 'theme', 'drawer');
   const [menu, setMenu] = useState<'open' | 'export' | 'theme' | null>(null);
   const [saved, setSaved] = useState(true);
   const [list, setList] = useState<Project[]>([]);

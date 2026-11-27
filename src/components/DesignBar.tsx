@@ -1,13 +1,13 @@
 // The Insert design bar under the Pattern title: a large primary button, what it will add to, and the face the chart shows.
 import { useState } from 'react';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import { Seg } from './controls';
 import { designHost, faceName } from './editHelpers';
 import { copiesOf, instanceName } from './sides';
 import Icon from './Icon';
 
 export default function DesignBar() {
-  const { project, selPiece, selAttachment, selInstance, showBothSides, designFace, viewFace, designOpen, coachDone, openDesign, dismissCoach, set } = useStore();
+  const { project, selPiece, selAttachment, selInstance, showBothSides, designFace, viewFace, designOpen, coachDone, openDesign, dismissCoach, set } = usePick('project', 'selPiece', 'selAttachment', 'selInstance', 'showBothSides', 'designFace', 'viewFace', 'designOpen', 'coachDone', 'openDesign', 'dismissCoach', 'set');
   const [nudge, setNudge] = useState(false);
   const atts = project.edits?.attachments ?? [];
   const host = designHost(project.pieces, atts, selPiece, selAttachment);

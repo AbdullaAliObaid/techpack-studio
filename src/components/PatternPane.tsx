@@ -1,5 +1,5 @@
 // The Pattern workspace: title bar, tool rail, chart and footer.
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import { CATALOG, migrateGarment } from '../data/catalog';
 import { PaneTitle, Switch } from './controls';
 import { copiesOf } from './sides';
@@ -10,7 +10,7 @@ import DesignDock from './DesignDock';
 import { useDockMode } from './dock';
 
 export default function PatternPane() {
-  const { project, showBothSides, set } = useStore();
+  const { project, showBothSides, set } = usePick('project', 'showBothSides', 'set');
   const style = CATALOG.find((s) => s.id === migrateGarment(project.garment))?.name ?? 'Garment';
   const hasPairs = project.pieces.some((p) => copiesOf(project.garment, p) === 2);
   const n = project.pieces.length;
