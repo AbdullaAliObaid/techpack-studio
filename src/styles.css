@@ -1722,3 +1722,58 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
   .mtray-hint { display: none; }
   .mtray-row { flex-wrap: nowrap; }
 }
+
+/* ---------- Insert section: the bright place where things get added ---------- */
+.insert-sec {
+  display: flex; flex-direction: column; gap: 10px; padding: 10px; border-radius: var(--radius-panel);
+  background: linear-gradient(in oklch, var(--accent-soft), color-mix(in oklch, var(--accent-soft) 40%, transparent));
+  border: 1.5px solid color-mix(in oklch, var(--accent) 55%, transparent);
+}
+.insert-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.insert-head h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--accent-text); }
+.insert-ico { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 8px; background: var(--accent-fill); color: #fff; }
+.insert-sub { font-size: 12px; color: var(--label-2); }
+.insert-hint, .insert-notice { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 8px 10px; border-radius: 8px; background: var(--bg-elevated); font-size: 12px; line-height: 1.35; box-shadow: 0 0 0 0.5px var(--separator); }
+.insert-notice { color: var(--orange-text); font-weight: 500; }
+.insert-body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.insert-body .target-card { box-shadow: 0 0 0 0.5px var(--separator); }
+.insert-body .photo-card { box-shadow: 0 0 0 0.5px var(--separator); }
+.insert-body .dsc { background: var(--bg-elevated); }
+.tile.pulse { animation: tile-pulse 600ms ease-out; }
+@keyframes tile-pulse { 0% { box-shadow: 0 0 0 0 var(--accent); background: var(--accent-soft); } 100% { box-shadow: 0 0 0 8px transparent; } }
+.method-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.method-tile {
+  position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 2px; min-height: 44px; padding: 4px 4px 6px; border: 0; border-radius: 10px;
+  background: var(--bg-elevated); color: var(--label); text-align: center; box-shadow: 0 0 0 0.5px var(--separator); transition: box-shadow var(--ease);
+}
+.method-tile:disabled { opacity: 0.45; }
+.method-tile.on { box-shadow: 0 0 0 2px var(--accent); }
+.method-tile .mt-art { width: 100%; height: auto; aspect-ratio: 64 / 40; border-radius: 6px; display: block; }
+.method-tile .mt-name { font-size: 12px; font-weight: 600; }
+.method-tile .mt-blurb { font-size: 11px; color: var(--label-2); line-height: 1.2; }
+.method-tile.on .mt-name { color: var(--accent-text); }
+.dz-lib-head.insert-head-bar { background: linear-gradient(in oklch, var(--accent-soft), transparent); }
+@media (prefers-reduced-motion: reduce) { .tile.pulse { animation: none; box-shadow: 0 0 0 2px var(--accent); } }
+
+/* ---------- loading scissors in the 3D view ---------- */
+.gl-wrap { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; pointer-events: none; background: color-mix(in oklch, var(--viewport) 70%, transparent); }
+.gl-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 18px 28px; border-radius: 16px; border: 0.5px solid var(--material-border); box-shadow: var(--shadow); text-align: center; }
+.gl-text { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.gl-text span { font-size: 12px; color: var(--label-2); }
+.gl-a, .gl-b { transform-box: view-box; transform-origin: 0 0; }
+.gl-a { animation: gl-snip-a 900ms ease-in-out infinite; }
+.gl-b { animation: gl-snip-b 900ms ease-in-out infinite; }
+@keyframes gl-snip-a { 0%, 100% { transform: rotate(-19deg); } 45% { transform: rotate(-1deg); } }
+@keyframes gl-snip-b { 0%, 100% { transform: rotate(19deg); } 45% { transform: rotate(1deg); } }
+.gl-dots { animation: gl-dots 900ms steps(4, end) infinite; }
+@keyframes gl-dots { 0% { opacity: 1; } 100% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .gl-a, .gl-b, .gl-dots { animation: none; } }
+@media (prefers-reduced-transparency: reduce) { .gl-card { background: var(--bg-elevated); -webkit-backdrop-filter: none; backdrop-filter: none; } .gl-wrap { background: var(--viewport); } }
+
+/* Camera | Edit switch, top centre of the 3D view */
+.vp-mode { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 2px; padding: 3px; border-radius: 13px; border: 0.5px solid var(--material-border); box-shadow: var(--shadow); }
+.vp-mode button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--label-2); font-size: 12px; font-weight: 600; }
+.vp-mode button:hover { background: var(--fill-2); color: var(--label); }
+.vp-mode button.on { background: var(--accent-soft); color: var(--accent-text); }
+@media (prefers-reduced-transparency: reduce) { .vp-mode { background: var(--bg-elevated); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+@container (max-width: 560px) { .vp-mode button span { display: none; } }

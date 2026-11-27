@@ -4,6 +4,7 @@
 import type { Attachment, Band, Outline, Sheen, ShapeLayer } from '../data/edits';
 import type { Piece } from '../data/presets';
 import { uid } from '../lib/units';
+import { bandSlope } from '../data/bandGeom';
 import { outlinePolygon, pathPolygon, shapePolygon } from '../lib/shapes';
 
 export type Workspace = 'shape' | 'seams' | 'fabric' | 'paint' | 'design' | 'trims' | 'fit' | 'outfit' | 'finish' | 'review' | 'techpack';
@@ -188,15 +189,22 @@ export function pieceBottom(p: Piece): number {
 const BAND_ROLES = new Set(['front', 'back']);
 export const bandSkips = (b: Band, p: Piece) => (b.skip ? b.skip.includes(p.id) : !BAND_ROLES.has(p.role));
 
-export interface BandStripe { y0: number; y1: number; color: string }
+export interface BandStripe {
+  /** the stripe's top and bottom at pattern x = 0 (the centre line) */
+  y0: number; y1: number; color: string;
+  /** dy/dx when the band is tilted (see src/data/bandGeom.ts); 0 or missing = level */
+  slope?: number;
+}
 /** Where the band's stripes sit on one piece, in that piece's own pattern coordinates (cm), or null when it skips the piece. */
 export function bandRanges(b: Band, p: Piece): BandStripe[] | null {
   if (bandSkips(b, p) || !b.stripes.length) return null;
   const total = b.stripes.reduce((s, q) => s + q.height, 0);
   let y = b.from === 'shoulder' ? pieceTop(p) + b.offset : pieceBottom(p) - b.offset - total;
-  const lo = Math.min(...p.points.map((q) => q.y)), hi = Math.max(...p.points.map((q) => q.y));
+  const slope = bandSlope(b, p.role);
+  const reach = Math.abs(slope) * Math.max(...p.points.map((q) => Math.abs(q.x)));
+  const lo = Math.min(...p.points.map((q) => q.y)) - reach, hi = Math.max(...p.points.map((q) => q.y)) + reach;
   const out: BandStripe[] = [];
-  for (const s of b.stripes) { out.push({ y0: y, y1: y + s.height, color: s.color }); y += s.height; }
+  for (const s of b.stripes) { out.push({ y0: y, y1: y + s.height, color: s.color, ...(slope ? { slope } : {}) }); y += s.height; }
   if (out[out.length - 1].y1 < lo || out[0].y0 > hi) return null;
   return out;
 }

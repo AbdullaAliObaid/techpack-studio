@@ -40,9 +40,10 @@ export default function DesignLibrary() {
   const [q, setQ] = useState('');
   const groups = useMemo(() => LIBRARY.map((g) => ({ ...g, items: g.items.filter((i) => !q.trim() || `${i.name} ${g.name}`.toLowerCase().includes(q.trim().toLowerCase())) })).filter((g) => g.items.length), [q]);
   return (
-    <aside className="dz-lib" aria-label="Shape library">
-      <div className="dz-lib-head">
-        <h2>Shapes</h2>
+    <aside className="dz-lib" aria-label="Insert: shape library">
+      <div className="dz-lib-head insert-head-bar">
+        <h2>Insert</h2>
+        <span className="insert-sub">Click a shape to add it to the artboard</span>
         <AddPicture />
         <label className="dz-search"><Icon name="search" size={14} /><input type="search" placeholder="Search shapes" aria-label="Search shapes" value={q} onChange={(e) => setQ(e.target.value)} /></label>
       </div>

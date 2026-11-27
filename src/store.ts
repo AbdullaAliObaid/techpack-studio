@@ -218,6 +218,8 @@ export interface State {
   showBody: boolean;
   /** 3D view: pull the cloth by hand (drag a point; Shift-click pins one) instead of orbiting */
   pullMode: boolean;
+  /** 3D view: 'camera' only orbits, pans and zooms (nothing on the garment is picked up); 'edit' moves and edits designs. Per session. */
+  view3dMode: 'camera' | 'edit';
   /** soft skin: tight cloth presses the mannequin's skin in (src/sim/softSkin.ts) */
   softSkin: boolean;
   skin: number;
@@ -225,6 +227,8 @@ export interface State {
   showGarment: boolean;
   showTape: boolean;
   draping: boolean;
+  /** a garment was just picked and its first drape frame has not arrived: the 3D view hides the old garment and shows the loading scissors */
+  garmentLoading: boolean;
   simStatus: string;
   drapePeak: { ratio: number; strain: number; where: string; over?: number };
   redrapeToken: number;
@@ -594,12 +598,14 @@ export const useStore = create<State>((set, get) => {
     view3d: 'fabric',
     showBody: true,
     pullMode: false,
+    view3dMode: 'camera',
     softSkin: true,
     skin: 1,
     showJoints: false,
     showGarment: true,
     showTape: false,
     draping: false,
+    garmentLoading: false,
     simStatus: '',
     drapePeak: { ratio: 0, strain: 0, where: '' },
     redrapeToken: 0,
