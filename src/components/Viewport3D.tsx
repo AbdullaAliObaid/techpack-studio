@@ -48,7 +48,8 @@ export default function Viewport3D() {
       onPointerUp={(e) => {
         // a plain click on the garment (no drag, no orbit) marks that spot on the pattern
         const d = downAt.current; downAt.current = null;
-        if (!d || d.b !== 0 || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
+        // Pull mode: a press on the cloth grabs it (src/three/Pull.tsx), it does not mark the pattern
+        if (!d || d.b !== 0 || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey || useStore.getState().pullMode) return;
         if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
         const h = hitCloth(e.clientX, e.clientY);
         useStore.setState({ probe: h ? { pieceId: h.pieceId, instance: h.instance ?? 0, x: h.x, y: h.y, at: Date.now() } : null });
