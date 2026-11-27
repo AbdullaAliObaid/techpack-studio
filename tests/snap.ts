@@ -1,5 +1,6 @@
 // Run: npx tsx tests/snap.ts  (part of npm test). Pure magnetism, align, distribute and marquee selection.
 import { alignPoints, angleSnap, boxOf, distributePoints, placeBox, snapMove } from '../src/components/snap';
+import { designTargets, layerBox, snapBox } from '../src/components/designSnap';
 import { chartEntries, pointsInRect } from '../src/components/multi';
 import { freshProject } from '../src/store';
 
@@ -84,6 +85,18 @@ const near = (a: number, b: number, e = 1e-9) => Math.abs(a - b) < e;
   ok(hits.length === hem.length && hits.every((h) => h.pieceId === front.src.id), 'marquee around the hem selects exactly the hem points');
   const all = pointsInRect(entries, { x0: -1e4, y0: -1e4, x1: 1e4, y1: 1e4 });
   ok(new Set(all.map((h) => h.pieceId + h.pointId)).size === all.length, 'a point drawn on two copies is selected once');
+}
+// design artboard magnet: a layer near the centre line and another layer's edge lines up with both
+{
+  const tg = designTargets(20, 10, [layerBox({ x: 5, y: 0, w: 4, h: 2, rotation: 0 })]);
+  const r = snapBox(layerBox({ x: 0.2, y: 3, w: 2, h: 2, rotation: 0 }), tg, 0.5);
+  ok(near(r.dx, -0.2, 1e-6), 'layer centre snaps to the centre line');
+  const e = snapBox(layerBox({ x: 8.9, y: 3, w: 2, h: 2, rotation: 0 }), tg, 0.5);
+  ok(near(e.dx, 0.1, 1e-6), 'layer edge snaps to the piece edge');
+  const none = snapBox(layerBox({ x: 4, y: 3.7, w: 1, h: 1, rotation: 0 }), tg, 0.2);
+  ok(none.dx === 0 && none.dy === 0 && none.guides.length === 0, 'nothing in range, no shift');
+  const b = layerBox({ x: 0, y: 0, w: 2, h: 2, rotation: 45 });
+  ok(near(b.x1, Math.SQRT2), 'rotated layer box');
 }
 if (fails) { console.error(`${fails} failed`); process.exit(1); }
 console.log('snap tests passed');
