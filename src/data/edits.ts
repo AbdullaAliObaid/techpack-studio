@@ -30,6 +30,8 @@ export interface ShapeLayer {
   image?: string;
   /** shape 'path': SVG path data in the unit box -0.5..0.5 (fill rule evenodd) */
   path?: string;
+  /** relief in mm: positive = raised (puff print, padded applique, stacked felt), negative = pressed in (deboss) */
+  relief?: number;
 }
 
 /**
@@ -213,7 +215,26 @@ export interface Edits {
   /** collar worn folded down (default) or popped up */
   collar?: 'down' | 'up';
   /** fabric on the inside face of a piece (under collar, placket facing, lining look); key = piece id */
+  bands?: Band[];
   insideFabric?: Record<string, { id: string; color: number; hex?: string; pattern?: import('./fabrics').FabricPattern }>;
+}
+
+/**
+ * A band across the garment (rugby / polo chest stripe): a horizontal stripe set at a height on the body that runs
+ * across every piece it crosses and lines up at the seams. Height is measured down from the high point shoulder (tops)
+ * or up from the hem.
+ */
+export interface Band {
+  id: string;
+  from: 'shoulder' | 'hem';
+  /** distance in cm from the reference to the band's top edge */
+  offset: number;
+  /** stripes from top to bottom: height cm and colour */
+  stripes: { height: number; color: string }[];
+  method: 'printed' | 'woven' | 'sewn';
+  /** pieces the band skips (e.g. sleeves); default: every piece it crosses */
+  skip?: string[];
+  sheen?: Sheen;
 }
 
 export const EMPTY_EDITS: Edits = { attachments: [], customSeams: [], detachedSeams: [], pleats: [] };
