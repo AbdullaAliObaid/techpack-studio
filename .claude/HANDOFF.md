@@ -38,3 +38,9 @@ Merged already this round: techpack (full tech pack PDF, share files, body prese
 Merge each branch into main, resolve conflicts (store.ts, PatternEditor.tsx, setup.ts, worker.ts are hot spots;
 components use `usePick(...)` selectors, keep that), `npx tsc --noEmit`, `npm run build`, `npm test`,
 `npm run test:motion`, `npm run test:drape` (slow), screenshot check, push, confirm the Vercel deploy is READY.
+
+## 2026-11-27 update
+- Done and pushed: drag-to-scroll rows, centre hem front/back link under Symmetry and Total symmetry, fabric thickness and layer stacks (agent/thick merged), outfits keep lining thickness.
+- In flight: measure tools tray (ruler, tape, protractor, grid/set square, edge rulers) on agent/measure in /home/claude/wt-measure.
+- Known: QUICK=1 test:clip has 5 to 6 failures on the male button-up cuff (pre-existing per thick agent, unconfirmed on old code).
+- Open: no UI for Attachment.lining; no visible thick edge in 3D (Garment3D.panelThickness ready).
