@@ -88,6 +88,10 @@ export function writeTheme(t: ThemePref) {
   try { localStorage.setItem(THEME_KEY, t); } catch { /* storage blocked */ }
 }
 
+/** one point of a multi selection: the stored point, and the copy of the piece it was picked on (entry key) */
+export interface MultiItem { pieceId: string; pointId: string; key: string }
+export interface GroupMove { pieceId: string; pointId: string; x: number; y: number }
+
 export interface State {
   theme: ThemePref;
   inspectorTab: InspectorTab;
@@ -104,6 +108,14 @@ export interface State {
   showStitch: boolean;
   selPiece: string | null;
   selPoint: string | null;
+  /** several points selected at once (marquee, shift-click); empty when zero or one point is selected */
+  selMulti: MultiItem[];
+  /** magnetism while dragging points (Alt/Option turns it off for one drag) */
+  snapOn: boolean;
+  setMulti: (items: MultiItem[]) => void;
+  /** move many points in one update (absolute stored positions); symmetric partners follow */
+  moveGroup: (moves: GroupMove[]) => void;
+  setSmoothMany: (items: { pieceId: string; pointId: string }[], smooth: boolean) => void;
   view3d: 'fabric' | 'stretch';
   showBody: boolean;
   skin: number;
@@ -284,6 +296,43 @@ export const useStore = create<State>((set, get) => {
     showStitch: true,
     selPiece: null,
     selPoint: null,
+    selMulti: [],
+    snapOn: true,
+    setMulti: (items) => set((s) => ({ selMulti: items, selPoint: null, selPiece: items.length ? (items.some((i) => i.pieceId === s.selPiece) ? s.selPiece : items[0].pieceId) : s.selPiece })),
+    moveGroup: (moves) => {
+      const { symmetry, project } = get();
+      const by = new Map<string, Map<string, Pt>>();
+      for (const m of moves) { if (!by.has(m.pieceId)) by.set(m.pieceId, new Map()); by.get(m.pieceId)!.set(m.pointId, { x: m.x, y: m.y }); }
+      const pieces = project.pieces.map((p) => {
+        const mv = by.get(p.id);
+        if (!mv) return p;
+        const ids = new Map(p.points.map((q) => [q.id, q]));
+        return {
+          ...p,
+          points: p.points.map((q) => {
+            const own = mv.get(q.id);
+            const onAxis = q.mirror === q.id;
+            const twin = symmetry && !onAxis && q.mirror ? ids.get(q.mirror) : undefined;
+            const twinMoved = twin && mv.has(twin.id) ? mv.get(twin.id) : undefined;
+            if (own && twinMoved && q.x < twin!.x) return { ...q, x: -twinMoved.x, y: twinMoved.y };
+            if (own) return { ...q, x: symmetry && onAxis ? 0 : own.x, y: own.y };
+            const partner = symmetry && q.mirror && q.mirror !== q.id ? mv.get(q.mirror) : undefined;
+            if (partner && ids.get(q.mirror!)?.mirror === q.id) return { ...q, x: -partner.x, y: partner.y };
+            return q;
+          }),
+        };
+      });
+      setPieces(pieces);
+    },
+    setSmoothMany: (items, smooth) => {
+      const { symmetry, project } = get();
+      get().commit();
+      const ids = new Set(items.map((i) => i.pieceId + '|' + i.pointId));
+      setPieces(project.pieces.map((p) => ({
+        ...p,
+        points: p.points.map((q) => (ids.has(p.id + '|' + q.id) || (symmetry && q.mirror && q.mirror !== q.id && ids.has(p.id + '|' + q.mirror)) ? { ...q, smooth } : q)),
+      })));
+    },
     view3d: 'fabric',
     showBody: true,
     skin: 1,
@@ -345,7 +394,7 @@ export const useStore = create<State>((set, get) => {
       restore(future[0]);
     },
 
-    select: (piece, point = null) => set({ selPiece: piece, selPoint: point, ...(piece === null ? { selInstance: null, fabricScope: 'all' } : {}) }),
+    select: (piece, point = null) => set({ selPiece: piece, selPoint: point, selMulti: [], ...(piece === null ? { selInstance: null, fabricScope: 'all' } : {}) }),
 
     movePoint: (pieceId, pointId, x, y) => {
       const { symmetry, totalSymmetry, project } = get();

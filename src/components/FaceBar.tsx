@@ -2,7 +2,7 @@
 // it over (a real 3D turn, each face carries its own cloth) and the chart turns over with it, like a garment turned
 // inside out. FaceFlip runs the chart's half of the turn.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import type { Face } from '../data/edits';
 import { FabricSwatch, fabricLabel } from './FabricBrowser';
 import { faceName } from './editHelpers';
@@ -42,7 +42,7 @@ export function FaceFlip({ children }: { children: ReactNode }) {
 }
 
 export default function FaceBar() {
-  const { project, selPiece, viewFace, set } = useStore();
+  const { project, selPiece, viewFace, set } = usePick('project', 'selPiece', 'viewFace', 'set');
   const piece = project.pieces.find((p) => p.id === selPiece) ?? project.pieces[0];
   const collar = project.edits?.collar;
   const insideOwn = project.edits?.insideFabric?.[piece.id];

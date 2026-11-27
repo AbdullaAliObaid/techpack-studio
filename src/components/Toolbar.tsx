@@ -21,7 +21,7 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
 }
 
 export default function Toolbar() {
-  const { tool, symmetry, totalSymmetry, setTotalSymmetry, showMeasure, showStitch, set } = usePick('tool', 'symmetry', 'totalSymmetry', 'setTotalSymmetry', 'showMeasure', 'showStitch', 'set');
+  const { tool, symmetry, totalSymmetry, setTotalSymmetry, showMeasure, showStitch, snapOn, set } = usePick('tool', 'symmetry', 'totalSymmetry', 'setTotalSymmetry', 'showMeasure', 'showStitch', 'snapOn', 'set');
   const t = (v: Tool) => () => set({ tool: v });
   // build tools open their controls in the Construction tab and drop any half finished action
   const build = (v: Tool) => () => set({
@@ -46,6 +46,7 @@ export default function Toolbar() {
         <Btn on={totalSymmetry} label="Total symmetry" aria="Total symmetry" icon="symAll"
           tip="Total symmetry (T): link every mating piece. Move a point on one jeans leg and it moves on all four leg pieces, the same way the front and back bodies and both sleeves move together."
           onClick={() => { setTotalSymmetry(!totalSymmetry); if (!totalSymmetry) set({ symmetry: true }); }} />
+        <Btn on={snapOn} label="Snap" tip="Snap: dragged points line up with other points and the grainline. Hold Option to turn it off for one drag." icon="snap" onClick={() => set({ snapOn: !snapOn })} />
         <Btn on={showStitch} label="Stitch lines" tip="Stitch lines: cut line 1 cm outside the sewing line" icon="stitch" onClick={() => set({ showStitch: !showStitch })} />
       </Group>
       <Group title="View">

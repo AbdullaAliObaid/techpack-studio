@@ -5,6 +5,7 @@ const P: Record<string, ReactNode> = {
   add: <><path d="M4 18C8 6 16 6 20 18" /><circle cx="12" cy="9" r="2.2" /><path d="M18 3v5M15.5 5.5h5" /></>,
   pan: <path d="M8 13V6a1.5 1.5 0 013 0v6m0-7a1.5 1.5 0 013 0v7m0-5a1.5 1.5 0 013 0v7c0 4-2.5 7-6 7-3 0-4.5-1.5-6-4l-2-3.5a1.5 1.5 0 012.5-1.5L8 15" />,
   sym: <><path d="M12 3v18" strokeDasharray="2 2" /><path d="M9 7L4 12l5 5M15 7l5 5-5 5" /></>,
+  snap: <><path d="M6 4v8a6 6 0 0012 0V4h-4v8a2 2 0 01-4 0V4z" /><path d="M6 8h4M14 8h4" /></>,
   symAll: <><path d="M12 3v18M3 12h18" strokeDasharray="2 2" /><path d="M9 5.5L5.5 8 9 10.5M15 5.5L18.5 8 15 10.5M9 13.5L5.5 16 9 18.5M15 13.5l3.5 2.5-3.5 2.5" /></>,
   search: <><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></>,
   measure: <><path d="M3 15l12-12 6 6-12 12z" /><path d="M7 11l2 2M10 8l2 2M13 5l2 2" /></>,

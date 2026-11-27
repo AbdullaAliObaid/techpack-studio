@@ -5,7 +5,7 @@
 //   Cut it from fabric  appliqué: the same traced shapes, cut from cloth and sewn on
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useStore } from '../store';
+import { useStore, usePick } from '../store';
 import type { Attachment } from '../data/edits';
 import { centroid, samplePoly } from '../lib/geometry';
 import { pathRings } from '../lib/shapes';
@@ -54,7 +54,7 @@ export default function PhotoSheet() {
 }
 
 function Sheet({ bmp, target, onClose }: { bmp: Bitmap; target?: PhotoTarget; onClose: () => void }) {
-  const { project, selPiece, selAttachment, selInstance, showBothSides, designFace, units, addAttachment, openDesign, set } = useStore();
+  const { project, selPiece, selAttachment, selInstance, showBothSides, designFace, units, addAttachment, openDesign, set } = usePick('project', 'selPiece', 'selAttachment', 'selInstance', 'showBothSides', 'designFace', 'units', 'addAttachment', 'openDesign', 'set');
   const [mode, setMode] = useState<Mode>('print');
   const [crop, setCrop] = useState({ l: 0, r: 0, t: 0, b: 0 }); // percent trimmed from each side
   const [bgOn, setBgOn] = useState(false);

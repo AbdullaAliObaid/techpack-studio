@@ -273,7 +273,7 @@ function PiecesSection() {
 
 /** The pen tool's controls: a card above the sections so nothing has to be opened. */
 function PenCard() {
-  const { set, penDraft, penSnap } = useStore();
+  const { set, penDraft, penSnap } = usePick('set', 'penDraft', 'penSnap');
   return (
     <section className="tool-card" aria-label="Drawing a new piece">
       <h3>Draw a piece</h3>
