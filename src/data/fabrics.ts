@@ -405,6 +405,22 @@ export function colorName(pf: FabricRef): string {
   return (f.colors[pf.color] ?? f.colors[0]).name;
 }
 
+/** Typical fibre content per fabric id, for the tech pack bill of materials. Typical values: the mill's spec sheet wins. */
+const COMPOSITION: Record<string, string> = {
+  canvas: '100% cotton', denim: '100% cotton', 'stretch-denim': '98% cotton, 2% elastane', poplin: '100% cotton', linen: '100% linen',
+  wool: '100% wool', poly: '100% polyester', jersey: '100% cotton', rib: '95% cotton, 5% elastane', leather: 'Leather (cow hide)',
+  spandex: '80% polyester, 20% elastane', oxford: '100% cotton', chambray: '100% cotton', 'shirting-twill': '100% cotton', flannel: '100% cotton',
+  seersucker: '100% cotton', voile: '100% cotton', 'selvedge-denim': '100% cotton', 'raw-denim': '100% cotton', 'white-denim': '100% cotton',
+  'black-denim': '100% cotton', 'slub-jersey': '100% cotton', pique: '100% cotton', interlock: '100% cotton', 'french-terry': '100% cotton',
+  fleece: '80% cotton, 20% polyester', waffle: '100% cotton', modal: '100% modal (beech fibre)', duck: '100% cotton', ripstop: '100% nylon',
+  'nylon-taffeta': '100% nylon', softshell: '92% polyester, 8% elastane', 'waxed-cotton': '100% cotton, wax coated', corduroy: '100% cotton',
+  moleskin: '100% cotton', melton: '100% wool', tweed: '100% wool', gabardine: '100% cotton', satin: '100% polyester', 'silk-crepe': '100% silk',
+  velvet: '100% polyester', suede: 'Suede (cow split)', 'faux-leather': 'Polyurethane on polyester knit', mesh: '100% polyester',
+  'tech-stretch': '88% nylon, 12% elastane',
+};
+/** Typical composition of a fabric (see COMPOSITION). */
+export const compositionOf = (id: string) => COMPOSITION[id] ?? 'Not specified';
+
 export function stretchLabel(s: number) {
   if (s < 0.05) return 'Low stretch';
   if (s < 0.15) return 'Some stretch';
