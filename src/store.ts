@@ -5,10 +5,12 @@ import { migrateGarment, type StyleId } from './data/catalog';
 import { DEFAULT_BODY, type Body } from './three/body';
 import { draft, regradePoints, type Fit } from './data/draft';
 import { bezAt, toBeziers, type PPoint, type Pt } from './lib/geometry';
-import { uid, type Units } from './lib/units';
+import { fromUnit, uid, type Units } from './lib/units';
 import { pleatIntakeOf, EMPTY_EDITS, ZERO_POSE, type Face, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
 import { FEMALE_BODY, MALE_BODY } from './three/body';
 import { applyMoves, linkedMoves } from './data/symmetry';
+import { setMeasurement, targetKey, type MeasureTarget } from './data/measureEdit';
+import { fitTable, garmentSpecs, pieceSpecs } from './lib/specs';
 import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorkspaceMap, defaultBand } from './components/designDoc';
 import type { Band } from './data/edits';
 import { deleteOutfit as removeSavedOutfit, listOutfits, listProjects, saveOutfit, saveProject } from './lib/projects';
@@ -80,7 +82,11 @@ export interface OutfitItem {
 }
 export interface Outfit { id: string; name: string; body: Body; items: OutfitItem[]; updatedAt: number }
 
-export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen' | 'note';
+export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen' | 'note' | 'block';
+/** Edge paint tool settings (src/data/colourBlock.ts) */
+export interface BlockSettings { colour: string; sheen: import('./data/edits').Sheen; look: 'dyed' | 'printed'; h: number; mode: 'rect' | 'poly' }
+/** a block being drawn: world points, on the copy it started on */
+export interface BlockDraft { key: string; pts: Pt[]; rect: boolean }
 export type NoteKind = Note['kind'];
 export type Screen = 'home' | 'new' | 'editor';
 export interface NewFlow { mode: 'create' | 'change'; from: 'home' | 'editor' }
@@ -144,6 +150,9 @@ export function writeTheme(t: ThemePref) {
 /** one point of a multi selection: the stored point, and the copy of the piece it was picked on (entry key) */
 export interface MultiItem { pieceId: string; pointId: string; key: string }
 export interface GroupMove { pieceId: string; pointId: string; x: number; y: number }
+
+/** a spot picked on the 3D garment, shown on the pattern chart (piece local cm, as hitCloth returns it) */
+export interface Probe { pieceId: string; instance: number; x: number; y: number; at: number }
 
 export interface State {
   theme: ThemePref;
@@ -248,6 +257,14 @@ export interface State {
   redo: () => void;
   select: (piece: string | null, point?: string | null) => void;
   movePoint: (pieceId: string, pointId: string, x: number, y: number) => void;
+  /** Type a measurement: change the pattern so it reads `value` (in `unit`, default the current units). One undo step. False when it cannot be solved. */
+  setMeasure: (target: MeasureTarget, value: number, unit?: Units) => boolean;
+  /** the last typed measurement: which numbers changed (target keys) and which points moved, so the UI can pulse them */
+  measureFlash: { n: number; keys: string[]; points: string[] } | null;
+  colourBlock: BlockSettings;
+  blockDraft: BlockDraft | null;
+  /** add edge paint blocks (one undo step) and select the first */
+  addColourBlocks: (list: Omit<Attachment, 'id'>[]) => void;
   movePiece: (pieceId: string, offset: Pt) => void;
   insertPoint: (pieceId: string, seg: number, t: number) => string | null;
   deletePoint: (pieceId: string, pointId: string) => void;
@@ -298,6 +315,8 @@ export interface State {
   resetPose: () => void;
   loadProject: (p: Project) => void;
   rename: (name: string) => void;
+  /** the last spot clicked on the 3D garment, marked on the pattern */
+  probe: Probe | null;
   // --- workspaces (Construct, Design, Finish, Tech pack) and the Design workspace ---
   workspace: Workspace;
   setWorkspace: (w: Workspace) => void;
@@ -307,6 +326,10 @@ export interface State {
   designSel: string[];
   /** Design workspace right panel: the patch layers or the band tool */
   dwTab: 'layers' | 'band';
+  /** Design workspace: the patch designer, or inserting a ready made design on the garment */
+  designMode: 'patch' | 'insert';
+  /** Paint workspace right panel: Edge paint or Bands across the garment */
+  paintTab: 'edge' | 'bands';
   selBand: string | null;
   addBand: (b?: Partial<Omit<Band, 'id'>>) => string;
   updateBand: (id: string, patch: Partial<Band>) => void;
@@ -497,7 +520,7 @@ export const useStore = create<State>((set, get) => {
     penSheet: null,
     seamHint: null,
     symmetricPose: true,
-    cancelTools: () => set({ selNote: null, tool: 'select', seamDraft: EMPTY_SEAM_DRAFT, penDraft: [], penSheet: null, pieceFlow: null, seamHint: null, selLayer: null, selPleat: null, hoverSeam: null }),
+    cancelTools: () => set({ blockDraft: null, selNote: null, tool: 'select', seamDraft: EMPTY_SEAM_DRAFT, penDraft: [], penSheet: null, pieceFlow: null, seamHint: null, selLayer: null, selPleat: null, hoverSeam: null }),
     designOpen: false,
     designCollapsed: false,
     designTab: 'add',
@@ -535,6 +558,35 @@ export const useStore = create<State>((set, get) => {
     },
 
     select: (piece, point = null) => set({ selPiece: piece, selPoint: point, selMulti: [], ...(piece === null ? { selInstance: null, fabricScope: 'all' } : {}) }),
+
+    measureFlash: null,
+    colourBlock: { colour: '#111111', sheen: 'matte', look: 'dyed', h: 6, mode: 'rect' },
+    blockDraft: null,
+    addColourBlocks: (list) => {
+      if (!list.length) return;
+      get().commit();
+      const added = list.map((a) => ({ ...a, id: uid() }));
+      setEdits((e) => ({ ...e, attachments: [...e.attachments, ...added] }));
+      set({ selAttachment: added[0].id, blockDraft: null });
+    },
+    setMeasure: (target, value, unit) => {
+      const { project, totalSymmetry, units } = get();
+      const cm = fromUnit(value, unit ?? units);
+      const moves = setMeasurement(project.garment, project.pieces, target, cm, { total: totalSymmetry });
+      if (!moves.length) return false;
+      const next = applyMoves(project.pieces, moves);
+      // every number on screen that changed pulses, the typed one first
+      const keys = new Set<string>([targetKey(target)]);
+      const diff = (a: { label: string; value: number }[], b: { label: string; value: number }[], pre: (l: string) => string) =>
+        a.forEach((r, i) => { if (Math.abs(r.value - (b[i]?.value ?? r.value)) > 0.005 || a.length !== b.length) keys.add(pre(r.label)); });
+      project.pieces.forEach((p, i) => diff(pieceSpecs(p), pieceSpecs(next[i]), (l) => `spec:${p.id}:${l}`));
+      diff(garmentSpecs(project.garment, project.pieces), garmentSpecs(project.garment, next), (l) => `garment:${l}`);
+      const fa = fitTable(project.garment, project.pieces, project.body), fb = fitTable(project.garment, next, project.body);
+      fa.forEach((r, i) => { if (Math.abs(r.garment - (fb[i]?.garment ?? r.garment)) > 0.005) keys.add(`fit:${r.label}`); });
+      get().commit();
+      set((s) => ({ project: { ...s.project, pieces: next, updatedAt: Date.now() }, measureFlash: { n: (s.measureFlash?.n ?? 0) + 1, keys: [...keys], points: moves.map((m) => m.pointId) } }));
+      return true;
+    },
 
     movePoint: (pieceId, pointId, x, y) => {
       const { symmetry, totalSymmetry, project } = get();
@@ -681,7 +733,10 @@ export const useStore = create<State>((set, get) => {
     loadProject: (p) => set((s) => ({ project: withCollar({ ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1, sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' })),
     rename: (name) => set((s) => ({ project: { ...s.project, name, updatedAt: Date.now() } })),
 
-    workspace: 'construct',
+    probe: null,
+    workspace: 'shape',
+    designMode: 'patch',
+    paintTab: 'edge',
     setWorkspace: (w) => { const m = { ...readWorkspaceMap(), [get().project.id]: w }; writeWorkspaceMap(m); set({ workspace: w }); },
     design: newDesign(),
     setDesign: (patch) => set((s) => ({ design: { ...s.design, ...(typeof patch === 'function' ? patch(s.design) : patch) } })),

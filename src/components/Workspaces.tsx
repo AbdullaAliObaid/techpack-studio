@@ -1,53 +1,104 @@
-// Workspace switcher (Premiere Pro style) and the two simple workspaces: Finish (coming) and Tech pack (preview + export).
-import { useEffect } from 'react';
+// The workspace bar, plus the two simple workspaces: Finish (coming) and Tech pack (preview + export).
+import { useEffect, useRef, useState } from 'react';
 import { useStore, usePick } from '../store';
-import { WORKSPACES, type Workspace } from './designDoc';
+import { visibleWorkspaces, type Workspace } from './designDoc';
+import { useOutfit } from './uiData';
 import { exportTechPack } from '../lib/exportPdf';
 import { CATALOG, migrateGarment } from '../data/catalog';
 import Icon from './Icon';
 
-export function WorkspaceSwitch() {
+const fitSoon = () => requestAnimationFrame(() => window.dispatchEvent(new Event('tps-fit')));
+
+/** Large row of workspace tabs under the top bar. Scrolls sideways with edge fades, arrow buttons and a rubberband at the ends. */
+export function WorkspaceBar() {
   const { workspace, setWorkspace } = usePick('workspace', 'setWorkspace');
-  const go = (w: Workspace) => { setWorkspace(w); if (w === 'construct') requestAnimationFrame(() => window.dispatchEvent(new Event('tps-fit'))); };
+  const outfit = !!useOutfit();
+  const list = visibleWorkspaces(outfit);
+  const scroller = useRef<HTMLDivElement>(null);
+  const track = useRef<HTMLDivElement>(null);
+  const [edge, setEdge] = useState({ l: false, r: false });
+  const measure = () => {
+    const el = scroller.current;
+    if (el) setEdge({ l: el.scrollLeft > 2, r: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 });
+  };
+  useEffect(() => {
+    measure();
+    const el = scroller.current;
+    if (!el) return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [list.length]);
+  // keep the open tab in view
+  useEffect(() => { document.getElementById(`ws-${workspace}`)?.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' }); }, [workspace]);
+  // rubberband: wheel pushing past either end stretches the row a little, then it springs back
+  useEffect(() => {
+    const el = scroller.current, tr = track.current;
+    if (!el || !tr) return;
+    let pull = 0, t = 0;
+    const on = (e: WheelEvent) => {
+      const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.shiftKey ? e.deltaY : 0;
+      if (!d) return;
+      const atL = el.scrollLeft <= 0 && d < 0, atR = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1 && d > 0;
+      if (!atL && !atR) return;
+      pull = Math.max(-28, Math.min(28, pull - d * 0.25));
+      tr.style.transition = 'none';
+      tr.style.transform = `translateX(${pull}px)`;
+      window.clearTimeout(t);
+      t = window.setTimeout(() => { pull = 0; tr.style.transition = 'transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1)'; tr.style.transform = ''; }, 90);
+    };
+    el.addEventListener('wheel', on, { passive: true });
+    return () => { el.removeEventListener('wheel', on); window.clearTimeout(t); };
+  }, []);
+  const go = (w: Workspace) => { setWorkspace(w); fitSoon(); };
+  const nudge = (dir: 1 | -1) => scroller.current?.scrollBy({ left: dir * Math.max(160, (scroller.current.clientWidth * 0.6)), behavior: 'smooth' });
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') return;
     e.preventDefault();
-    const i = WORKSPACES.findIndex((w) => w.id === workspace);
-    const n = WORKSPACES[(i + (e.key === 'ArrowRight' ? 1 : WORKSPACES.length - 1)) % WORKSPACES.length];
+    const i = list.findIndex((w) => w.id === workspace);
+    const n = e.key === 'Home' ? list[0] : e.key === 'End' ? list[list.length - 1] : list[(i + (e.key === 'ArrowRight' ? 1 : list.length - 1)) % list.length];
     go(n.id);
     requestAnimationFrame(() => document.getElementById(`ws-${n.id}`)?.focus());
   };
   return (
-    <div className="ws-switch" role="tablist" aria-label="Workspaces" onKeyDown={onKey}>
-      {WORKSPACES.map((w) => (
-        <button key={w.id} id={`ws-${w.id}`} role="tab" aria-selected={workspace === w.id} tabIndex={workspace === w.id ? 0 : -1} className={workspace === w.id ? 'on' : ''} title={`${w.label} workspace (Ctrl or Cmd + ${w.key})`} onClick={() => go(w.id)}>
-          <Icon name={w.icon} size={16} /><span>{w.label}</span>
-        </button>
-      ))}
-    </div>
+    <nav className="ws-bar" aria-label="Workspaces" data-l={edge.l} data-r={edge.r}>
+      <button className="ws-arrow left" aria-label="Scroll workspaces left" tabIndex={-1} disabled={!edge.l} onClick={() => nudge(-1)}><Icon name="chevronLeft" size={18} /></button>
+      <div className="ws-scroll" ref={scroller} onScroll={measure}>
+        <div className="ws-track" ref={track} role="tablist" aria-label="Workspaces" onKeyDown={onKey}>
+          {list.map((w, i) => (
+            <button key={w.id} id={`ws-${w.id}`} role="tab" aria-selected={workspace === w.id} tabIndex={workspace === w.id ? 0 : -1} className={`ws-tab ${workspace === w.id ? 'on' : ''}`}
+              title={`${w.label}: ${w.blurb}${i < 9 ? ` (Ctrl or Cmd + ${i + 1})` : ''}`} onClick={() => go(w.id)}>
+              <Icon name={w.icon} size={22} /><span>{w.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <button className="ws-arrow right" aria-label="Scroll workspaces right" tabIndex={-1} disabled={!edge.r} onClick={() => nudge(1)}><Icon name="chevronRight" size={18} /></button>
+    </nav>
   );
 }
 
-/** Cmd or Ctrl + 1..4 switches workspace. */
+/** Cmd or Ctrl + 1..9 switches to that tab of the bar. */
 export function useWorkspaceKeys() {
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-      const w = WORKSPACES.find((q) => q.key === e.key);
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || !/^[1-9]$/.test(e.key)) return;
       const st = useStore.getState();
-      if (!w || st.screen !== 'editor') return;
+      if (st.screen !== 'editor') return;
+      const w = visibleWorkspaces(!!(st as unknown as { outfit?: unknown }).outfit)[Number(e.key) - 1];
+      if (!w) return;
       e.preventDefault();
       st.setWorkspace(w.id);
-      if (w.id === 'construct') requestAnimationFrame(() => window.dispatchEvent(new Event('tps-fit')));
+      fitSoon();
     };
     window.addEventListener('keydown', on);
     return () => window.removeEventListener('keydown', on);
   }, []);
 }
 
-export function FinishPanel() {
+export function FinishCard() {
   return (
-    <aside className="ws-side finish" aria-label="Finish">
+    <div className="finish-wrap">
       <div className="ws-card">
         <span className="ws-card-ico" aria-hidden="true"><Icon name="sparkle" size={22} /></span>
         <h2>Finish is coming</h2>
@@ -59,7 +110,7 @@ export function FinishPanel() {
         </ul>
         <p className="ws-note">Your garment stays in the 3D view while you switch workspaces, so nothing re-simulates.</p>
       </div>
-    </aside>
+    </div>
   );
 }
 

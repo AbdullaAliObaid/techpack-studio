@@ -332,6 +332,17 @@ export function shapePolygon(shape: ShapeId, w: number, h: number, text?: string
 }
 
 /**
+ * Cutting outline of an SVG path drawn in the unit box (-0.5..0.5, evenodd), scaled into a w x h box centred on 0,0 (cm).
+ * Used for patch bases made from a pen shape or a picture's silhouette. Holes are not cut.
+ */
+export function pathPolygon(d: string, w: number, h: number): P2[] {
+  const rings = pathRings(d);
+  if (!rings.length) return [];
+  const outer = rings.reduce((a, b) => (Math.abs(ringArea(b)) > Math.abs(ringArea(a)) ? b : a));
+  return outer.map((q) => ({ x: q.x * w, y: q.y * h }));
+}
+
+/**
  * Cloth outline(s) of an attachment, centred on 0,0 in its own coords (cm): an applique (or outline 'shape')
  * is cut to its shape, one piece per letter for text; everything else is one outline.
  */

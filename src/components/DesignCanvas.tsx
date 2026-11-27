@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { LayerShape, outlineD } from './Artwork';
 import { fontOf } from '../three/detailsArt';
-import { newLayer, type DLayer, type DesignDoc } from './designDoc';
+import { isCloth, newLayer, type DLayer, type DesignDoc } from './designDoc';
+import { imageFileOf, openPhoto } from './editHelpers';
 import { uid } from '../lib/units';
 import Icon from './Icon';
 
@@ -85,6 +86,7 @@ export function DLayerView({ l, doc }: { l: DLayer; doc?: Pick<DesignDoc, 'group
 
 export default function DesignCanvas() {
   const design = useStore((s) => s.design);
+  const hasBase = isCloth(design) && design.layers.some((l) => !l.hidden);
   const setDesign = useStore((s) => s.setDesign);
   const sel = useStore((s) => s.designSel);
   const set = useStore((s) => s.set);
@@ -291,7 +293,7 @@ export default function DesignCanvas() {
   } : null;
 
   return (
-    <div className={`dz-art ${tool === 'pen' ? 'pen' : ''} ${space ? 'space' : ''}`} ref={wrap} tabIndex={0} onKeyDown={onKeyDown} onKeyUp={(e) => { if (e.key === ' ') setSpace(false); }} aria-label="Design artboard. Space and drag to pan, Ctrl and scroll to zoom.">
+    <div className={`dz-art ${tool === 'pen' ? 'pen' : ''} ${space ? 'space' : ''}`} ref={wrap} tabIndex={0} onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }} onDrop={(e) => { const f = imageFileOf(e.dataTransfer.files); if (f) { e.preventDefault(); openPhoto(f); } }} onKeyDown={onKeyDown} onKeyUp={(e) => { if (e.key === ' ') setSpace(false); }} aria-label="Design artboard. Space and drag to pan, Ctrl and scroll to zoom.">
       <svg ref={svg} width={size.w} height={size.h} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel} onPointerLeave={() => setCursor(null)} role="img" aria-label="Artboard">
         <defs>
           <pattern id="dz-check" width="14" height="14" patternUnits="userSpaceOnUse"><rect width="14" height="14" fill="var(--canvas)" /><rect width="7" height="7" fill="var(--grid)" /><rect x="7" y="7" width="7" height="7" fill="var(--grid)" /></pattern>
@@ -305,12 +307,11 @@ export default function DesignCanvas() {
               {ticksY.map((v) => <line key={`gy${v}`} y1={v} y2={v} x1={-view.x / k} x2={(size.w - view.x) / k} strokeOpacity={Math.abs(v / (rs * 5) - Math.round(v / (rs * 5))) < 1e-6 ? 1 : 0.4} />)}
             </g>
           )}
-          {/* the cloth (patch / applique) or a transparent checker (print / embroidery) */}
-          <path d={o.d} transform={o.transform} fill={cloth ? design.cloth : 'url(#dz-check)'} stroke="var(--label-2)" strokeWidth={1.2} vectorEffect="non-scaling-stroke" strokeDasharray={cloth ? undefined : '5 3'} />
-          <g clipPath={cloth ? 'url(#dz-clip)' : undefined}>
+          {/* the cloth (patch / applique): the first layer is the base and draws it. Print and embroidery get a transparent checker. */}
+          {!hasBase && <path d={o.d} transform={o.transform} fill={cloth ? design.cloth : 'url(#dz-check)'} stroke="var(--label-2)" strokeWidth={1.2} vectorEffect="non-scaling-stroke" strokeDasharray={cloth ? '5 4' : '5 4'} opacity={cloth ? 0.55 : 1} pointerEvents="none" />}
+          <g>
             {layers.map((l) => <DLayerView key={l.id} l={l} doc={design} />)}
           </g>
-          {cloth && <path d={o.d} transform={o.transform} fill="none" stroke={design.thread} strokeWidth={1.4} vectorEffect="non-scaling-stroke" strokeDasharray="5 3" opacity={0.85} pointerEvents="none" />}
           {/* centre guides */}
           <g stroke="var(--accent)" strokeWidth={px(1)} strokeDasharray={`${px(3)} ${px(4)}`} opacity={0.5} pointerEvents="none">
             <line x1={0} x2={0} y1={-design.h / 2 - 1} y2={design.h / 2 + 1} /><line y1={0} y2={0} x1={-design.w / 2 - 1} x2={design.w / 2 + 1} />
@@ -340,6 +341,7 @@ export default function DesignCanvas() {
             </g>
           )}
         </g>
+        {cloth && !hasBase && <text x={size.w / 2} y={size.h - 28} textAnchor="middle" fontSize="13" fill="var(--text-2)" pointerEvents="none">The first shape you add becomes the patch base: a circle, a star, a picture, anything.</text>}
         {/* rulers */}
         <g pointerEvents="none" fontSize="11" fill="var(--text-2)" style={{ fontVariantNumeric: 'tabular-nums' }}>
           <rect width={size.w} height={R} fill="var(--bg-grouped)" /><rect width={R} height={size.h} fill="var(--bg-grouped)" />

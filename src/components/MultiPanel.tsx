@@ -3,6 +3,9 @@ import { useMemo, useRef } from 'react';
 import { useStore, usePick } from '../store';
 import { fromUnit, toUnit } from '../lib/units';
 import { NumInput } from './controls';
+import MeasureField from './MeasureField';
+import { targetKey, type MeasureTarget } from '../data/measureEdit';
+import { outlineLength } from '../lib/geometry';
 import { chartEntries, movesFromWorld, placeItems, withLinked } from './multi';
 import { alignPoints, boxOf, distributePoints, placeBox, type AlignMode, type Box } from './snap';
 
@@ -38,10 +41,16 @@ export default function MultiPanel() {
     </label>
   );
   const pieceCount = new Set(placed.map((p) => p.item.pieceId)).size;
+  // two points on one piece: the edge (run) between them is a measurement you can type
+  const pair = placed.length === 2 && pieceCount === 1 ? project.pieces.find((q) => q.id === placed[0].item.pieceId) : undefined;
+  const run: MeasureTarget | null = pair ? { kind: 'edge', pieceId: pair.id, fromId: placed[0].item.pointId, toId: placed[1].item.pointId } : null;
 
   return (
     <>
       <div className="kv"><span>Selected</span><b>{placed.length} points{pieceCount > 1 ? ` on ${pieceCount} pieces` : ''}</b></div>
+      {run && pair && (
+        <div className="kv"><span>Edge between them</span><MeasureField cm={outlineLength(pair.points, run.kind === 'edge' ? run.fromId : '', run.kind === 'edge' ? run.toId : '')} units={units} label="Edge length between the two points" target={run} pulseKey={targetKey(run)} /></div>
+      )}
       <div className="mgrid">
         {fld('X', box.x - o.x, (n) => edit({ x: n + o.x }))}
         {fld('Y', box.y - o.y, (n) => edit({ y: n + o.y }))}

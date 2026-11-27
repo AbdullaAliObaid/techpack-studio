@@ -27,6 +27,7 @@ const P: Record<string, ReactNode> = {
   library: <><rect x="3.5" y="3.5" width="7" height="7" rx="2" /><rect x="13.5" y="3.5" width="7" height="7" rx="2" /><rect x="3.5" y="13.5" width="7" height="7" rx="2" /><rect x="13.5" y="13.5" width="7" height="7" rx="2" /></>,
   seams: <path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" />,
   pleat: <path d="M3 6l4 12 5-12 5 12 4-12" />,
+  block: <><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M4 14h16" /><path d="M4 14h16v3a3 3 0 01-3 3H7a3 3 0 01-3-3z" fill="currentColor" /></>,
   pen: <path d="M4 20l1-5L16 4l4 4L9 19zM14 6l4 4" />,
   patch: <><rect x="4.5" y="4.5" width="15" height="15" rx="3.5" strokeDasharray="3 2.5" /><path d="M9 12h6M12 9v6" /></>,
   pose: <><circle cx="12" cy="4.8" r="2" /><path d="M12 8v6M5 10l7-2 7 2M12 14l-4 7M12 14l4 7" /></>,

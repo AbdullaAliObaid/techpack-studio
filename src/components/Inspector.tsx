@@ -1,65 +1,20 @@
-// Inspector: four sections (Garment, Construction, Body, Specs), each with titled, collapsible groups.
-import { useStore, type InspectorTab, usePick } from '../store';
+// Sections the workspace panels share: inside and outside card, fit, point and piece numbers, the review tables.
+import { useStore, usePick } from '../store';
 import type { PieceFabric } from '../data/presets';
-import { CATALOG, migrateGarment } from '../data/catalog';
 import { fabricById } from '../data/fabrics';
 import { fitTable, garmentSpecs, pieceSpecs, seamReport } from '../lib/specs';
 import { FITS } from '../data/draft';
 import { fmt, toUnit } from '../lib/units';
 import { FabricPick } from './TrimFields';
-import FabricBrowser, { FabricSwatch, fabricLabel } from './FabricBrowser';
-import { faceName, hasCollar } from './editHelpers';
-import ConstructionPanel from './ConstructionPanel';
-import PosePanel from './PosePanel';
-import { BodyFields, BodyType } from './BodyPanel';
-import { SavedBodies } from './BodyPresets';
-import { Disclosure, Seg, SubLabel, TabHeader } from './controls';
+import { FabricSwatch } from './FabricBrowser';
+import { faceName } from './editHelpers';
+import { Disclosure, Seg, SubLabel } from './controls';
 import { copiesOf } from './sides';
-import Icon from './Icon';
 import MultiPanel from './MultiPanel';
+import MeasureField from './MeasureField';
+import { canEditMeasure, targetKey, type MeasureTarget } from '../data/measureEdit';
 
-const TABS: { id: InspectorTab; label: string; icon: string }[] = [
-  { id: 'garment', label: 'Garment', icon: 'garment' },
-  { id: 'construction', label: 'Construction', icon: 'construction' },
-  { id: 'body', label: 'Body', icon: 'body' },
-  { id: 'specs', label: 'Specs', icon: 'specs' },
-];
-
-export default function Inspector() {
-  const { inspectorTab: tab, set, drawer } = usePick('inspectorTab', 'set', 'drawer');
-  const go = (id: InspectorTab) => set({ inspectorTab: id });
-  const onKey = (e: React.KeyboardEvent) => {
-    const i = TABS.findIndex((t) => t.id === tab);
-    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-      e.preventDefault();
-      const n = TABS[(i + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length];
-      go(n.id);
-      requestAnimationFrame(() => document.getElementById(`itab-${n.id}`)?.focus());
-    }
-  };
-  return (
-    <>
-      <aside className={`inspector ${drawer ? 'drawer-open' : ''}`} aria-label="Inspector">
-        <div className="inspector-head">
-          <button className="drawer-close btn small" onClick={() => set({ drawer: false })} aria-label="Close inspector"><Icon name="chevronRight" size={14} /> Hide inspector</button>
-          <div className="itabs" role="tablist" aria-label="Inspector sections" onKeyDown={onKey}>
-            {TABS.map((t) => (
-              <button key={t.id} id={`itab-${t.id}`} role="tab" aria-selected={tab === t.id} tabIndex={tab === t.id ? 0 : -1} className={tab === t.id ? 'on' : ''} title={t.label} onClick={() => go(t.id)}>
-                <i className="itab-dot"><Icon name={t.icon} size={20} /></i>
-                <span>{t.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="inspector-body" role="tabpanel" aria-labelledby={`itab-${tab}`}>
-          {tab === 'garment' ? <GarmentTab /> : tab === 'construction' ? <ConstructionPanel /> : tab === 'body' ? <BodyTab /> : <SpecsTab />}
-        </div>
-      </aside>
-    </>
-  );
-}
-
-function FitPick() {
+export function FitPick() {
   const { project, setFit } = usePick('project', 'setFit');
   const fit = project.fit ?? 'regular';
   return (
@@ -84,7 +39,7 @@ export function CollarControl() {
 }
 
 /** Outside and inside of the garment: a two face preview of the selected piece, a default for the whole garment, and the chart face. */
-function FacesSection() {
+export function FacesSection() {
   const { project, selPiece, viewFace, set, setInsideFabric, setInsideAll, commit, updatePiece } = usePick('project', 'selPiece', 'viewFace', 'set', 'setInsideFabric', 'setInsideAll', 'commit', 'updatePiece');
   const piece = project.pieces.find((p) => p.id === selPiece);
   /** outside fabric of one piece, or of every piece (null) */
@@ -142,99 +97,75 @@ function FacesSection() {
   );
 }
 
-function GarmentTab() {
-  const { project, selPiece, fabricScope, set, applyFabric } = usePick('project', 'selPiece', 'fabricScope', 'set', 'applyFabric');
-  const style = CATALOG.find((s) => s.id === migrateGarment(project.garment));
-  const piece = project.pieces.find((p) => p.id === selPiece);
-  const scope = piece ? fabricScope : 'all';
-  const current = (piece ?? project.pieces[0]).fabric;
-  const cf = fabricById(current.id);
 
-  return (
-    <>
-      <div className="mat-head">
-        <FabricSwatch fabric={current} size={72} label={`${cf.name} swatch`} />
-        <div>
-          <span className="mat-kicker">Material and fit</span>
-          <h2>{style?.name ?? 'Garment'}</h2>
-          <p>{fabricLabel(current)}{piece ? ` on ${piece.name}` : ', whole garment'}</p>
-        </div>
-      </div>
-
-      <FacesSection />
-
-      {hasCollar(project.pieces) && (
-        <Disclosure id="gar-collar" title="Collar position" icon="collar">
-          <CollarControl />
-        </Disclosure>
-      )}
-
-      <Disclosure id="gar-fabric" title="Fabric, colour and pattern" icon="grid">
-        <div className="seg full">
-          <button className={scope === 'all' ? 'on' : ''} onClick={() => set({ fabricScope: 'all' })}>Whole garment</button>
-          <button className={scope === 'piece' ? 'on' : ''} disabled={!piece} onClick={() => set({ fabricScope: 'piece' })}>
-            {piece ? piece.name : 'Select a piece'}
-          </button>
-        </div>
-        <FabricBrowser idKey="outside" value={current} onChange={applyFabric} />
-      </Disclosure>
-
-      <Disclosure id="gar-fit" title="Fit" icon="stretch">
-        <FitPick />
-        <p className="group-note">How much room the pattern has around the body. The pattern and the 3D garment follow.</p>
-      </Disclosure>
-    </>
-  );
+/** Hooks for the numbers you can type into: a measurement field when the pattern has something to move, a plain number otherwise. */
+function useField() {
+  const { project, units } = usePick('project', 'units');
+  const tgt = (t: MeasureTarget) => (canEditMeasure(project.garment, project.pieces, t) ? t : null);
+  return (cm: number, t: MeasureTarget, label: string) => <MeasureField cm={cm} units={units} label={label} target={tgt(t)} pulseKey={targetKey(t)} />;
 }
 
-function BodyTab() {
-  const { resetBody, project } = usePick('resetBody', 'project');
-  return (
-    <>
-      <TabHeader icon="body" title="Body" subtitle={`${project.body.sex === 'female' ? 'Female' : 'Male'} body, measurements, pose and movement`} />
-      <SavedBodies />
-      <Disclosure id="body-type" title="Body type" icon="body">
-        <BodyType />
-      </Disclosure>
-      <Disclosure id="body-measure" title="Measurements" icon="tape">
-        <BodyFields advanced={false} />
-        <button className="btn ghost small" onClick={resetBody}>Reset to default</button>
-      </Disclosure>
-      <Disclosure id="body-more" title="More measurements" icon="tape">
-        <BodyFields advanced />
-      </Disclosure>
-      <PosePanel />
-    </>
-  );
-}
-
-function SpecsTab() {
+/** Shape: the selected point, or every selected point with the align tools. */
+export function PointCard() {
   const { project, units, selPiece, selPoint, toggleSmooth, deletePoint, selMulti } = usePick('project', 'units', 'selPiece', 'selPoint', 'toggleSmooth', 'deletePoint', 'selMulti');
-  const g = garmentSpecs(project.garment, project.pieces);
   const piece = project.pieces.find((p) => p.id === selPiece);
   const point = piece?.points.find((q) => q.id === selPoint);
+  if (selMulti.length > 1) {
+    return (
+      <Disclosure id="shape-point" title="Selected points" icon="target" count={selMulti.length} openFirst>
+        <MultiPanel />
+      </Disclosure>
+    );
+  }
+  if (!point || !piece) return null;
+  return (
+    <Disclosure id="shape-point" title="Selected point" icon="target" openFirst>
+      <div className="kv"><span>Across</span><b>{toUnit(point.x, units).toFixed(2)} {units}</b></div>
+      <div className="kv"><span>Down</span><b>{toUnit(point.y, units).toFixed(2)} {units}</b></div>
+      {point.tag && <div className="kv"><span>Anchor</span><b>{point.tag}</b></div>}
+      <div className="row">
+        <button className="btn small" onClick={() => toggleSmooth(piece.id, point.id)}>{point.smooth ? 'Make corner' : 'Make curve'}</button>
+        <button className="btn small ghost" disabled={!!point.tag} onClick={() => deletePoint(piece.id, point.id)}>Delete</button>
+      </div>
+    </Disclosure>
+  );
+}
 
+/** Measurements of the selected piece (or of the whole garment when nothing is selected), typeable. */
+export function PieceNumbers() {
+  const { project, units, selPiece } = usePick('project', 'units', 'selPiece');
+  const field = useField();
+  const piece = project.pieces.find((p) => p.id === selPiece);
+  const g = garmentSpecs(project.garment, project.pieces);
   return (
     <>
-      <TabHeader icon="specs" title="Specs" subtitle="Measurements, fit check and seam lengths for the tech pack." />
-      {selMulti.length > 1 && (
-        <Disclosure id="spec-point" title="Selected points" icon="target" count={selMulti.length}>
-          <MultiPanel />
+      {piece && (
+        <Disclosure id="shape-piece" title={piece.name} icon="pattern" openFirst>
+          <div className="sublabel"><span className="muted">{fabricById(piece.fabric.id).name} · cut {piece.cut}{copiesOf(project.garment, piece) === 2 ? ', right and left' : ''}</span></div>
+          {pieceSpecs(piece, project.edits).map((s) => (
+            <div className="kv" key={s.label}><span>{s.label}</span>{piece.specs.some((d) => d.label === s.label) ? field(s.value, { kind: 'spec', pieceId: piece.id, label: s.label }, `${piece.name} ${s.label}`) : <b>{fmt(s.value, units)}</b>}</div>
+          ))}
+          <p className="fit-note">Click a number to type your own. The pattern and the 3D garment follow.</p>
         </Disclosure>
       )}
-      {selMulti.length < 2 && point && piece && (
-        <Disclosure id="spec-point" title="Selected point" icon="target">
-          <div className="kv"><span>Across</span><b>{toUnit(point.x, units).toFixed(2)} {units}</b></div>
-          <div className="kv"><span>Down</span><b>{toUnit(point.y, units).toFixed(2)} {units}</b></div>
-          {point.tag && <div className="kv"><span>Anchor</span><b>{point.tag}</b></div>}
-          <div className="row">
-            <button className="btn small" onClick={() => toggleSmooth(piece.id, point.id)}>{point.smooth ? 'Make corner' : 'Make curve'}</button>
-            <button className="btn small ghost" disabled={!!point.tag} onClick={() => deletePoint(piece.id, point.id)}>Delete</button>
-          </div>
-        </Disclosure>
-      )}
+      <Disclosure id="shape-garment" title="Whole garment" icon="specs" openFirst={!piece}>
+        {g.map((r) => (
+          <div className="kv" key={r.label}><span>{r.label}</span>{field(r.value, { kind: 'garment', label: r.label }, r.label)}</div>
+        ))}
+        {!piece && <p className="fit-note">Select a piece on the chart to see and type its own numbers.</p>}
+      </Disclosure>
+    </>
+  );
+}
 
-      <Disclosure id="spec-fit" title="Fit check" icon="stretch">
+/** Review: the fit table, seam report, garment specs and every piece. */
+export function ReviewSections() {
+  const { project, units, selPiece } = usePick('project', 'units', 'selPiece');
+  const field = useField();
+  const g = garmentSpecs(project.garment, project.pieces);
+  return (
+    <>
+      <Disclosure id="spec-fit" title="Fit check" icon="stretch" openFirst>
         <FitPick />
         <div className="fit-head"><span /><span>Body</span><span>Garment</span><span>Ease</span></div>
         {fitTable(project.garment, project.pieces, project.body).map((r) => {
@@ -243,17 +174,17 @@ function SpecsTab() {
             <div className="fit-row" key={r.label}>
               <span>{r.label}</span>
               <span className="muted">{r.body === null ? '·' : toUnit(r.body, units).toFixed(1)}{r.estimated ? '*' : ''}</span>
-              <b>{toUnit(r.garment, units).toFixed(1)}</b>
+              {field(r.garment, { kind: 'fit', label: r.label }, `${r.label} garment measurement`)}
               <span className={ease === null || r.length ? '' : ease < 0 ? 'neg' : ease < 2 ? 'tight' : 'pos'}>
                 {ease === null ? '' : (ease > 0 ? '+' : '') + toUnit(ease, units).toFixed(1)}
               </span>
             </div>
           );
         })}
-        <div className="fit-note">In {units}. * estimated from your other measurements. Negative ease means the garment is smaller than the body and has to stretch.</div>
+        <div className="fit-note">In {units}. Click a garment number to type your own. * estimated from your other measurements. Negative ease means the garment is smaller than the body and has to stretch.</div>
       </Disclosure>
 
-      <Disclosure id="spec-seams" title="Seam lengths" icon="seams">
+      <Disclosure id="spec-seams" title="Seam report" icon="seams">
         {seamReport(project.garment, project.pieces, project.edits).map((r) => {
           const diff = r.a - r.b;
           const want = r.ease ?? 0;
@@ -273,7 +204,7 @@ function SpecsTab() {
 
       <Disclosure id="spec-garment" title="Garment specs" icon="specs">
         {g.map((r) => (
-          <div className="kv" key={r.label}><span>{r.label}</span><b>{fmt(r.value, units)}</b></div>
+          <div className="kv" key={r.label}><span>{r.label}</span>{field(r.value, { kind: 'garment', label: r.label }, r.label)}</div>
         ))}
       </Disclosure>
 
@@ -282,7 +213,7 @@ function SpecsTab() {
           <div className={`piece-spec ${p.id === selPiece ? 'hl' : ''}`} key={p.id}>
             <div className="sublabel">{p.name} <span className="muted">· {fabricById(p.fabric.id).name} · cut {p.cut}{copiesOf(project.garment, p) === 2 ? ', right and left' : ''}</span></div>
             {pieceSpecs(p, project.edits).map((s) => (
-              <div className="kv" key={s.label}><span>{s.label}</span><b>{fmt(s.value, units)}</b></div>
+              <div className="kv" key={s.label}><span>{s.label}</span>{p.specs.some((d) => d.label === s.label) ? field(s.value, { kind: 'spec', pieceId: p.id, label: s.label }, `${p.name} ${s.label}`) : <b>{fmt(s.value, units)}</b>}</div>
             ))}
           </div>
         ))}

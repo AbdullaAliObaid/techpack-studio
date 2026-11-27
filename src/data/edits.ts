@@ -146,6 +146,8 @@ export interface Attachment {
    * src/sim/seams.ts: 0 = +x copy, the wearer's left; 1 = the wearer's right; crown panels 0..5). Omitted: every copy.
    */
   instance?: number;
+  /** a colour block (src/data/colourBlock.ts): a print the chart clips to the piece outline */
+  block?: boolean;
 }
 
 /** A run along a piece outline between two outline points (ids), taking the shorter way round. */

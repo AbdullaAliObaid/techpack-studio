@@ -6,7 +6,18 @@ import { PALETTE } from './editHelpers';
 import { LIBRARY, type LibItem } from './designShapes';
 import { fontOf } from '../three/detailsArt';
 import { newLayer } from './designDoc';
+import { imageFileOf, openPhoto } from './editHelpers';
 import Icon from './Icon';
+
+/** Upload a picture as a layer (it opens the picture options: print, stitch or cut as a patch). Drop and paste work too. */
+export function AddPicture() {
+  return (
+    <label className="btn add-pic" title="Add a picture. You can also drop one on the artboard or paste it.">
+      <Icon name="print" size={16} /> Add picture
+      <input type="file" accept="image/*" aria-label="Add a picture as a layer" hidden onChange={(e) => { const f = imageFileOf(e.target.files); if (f) openPhoto(f); e.target.value = ''; }} />
+    </label>
+  );
+}
 
 export function addLibItem(item: LibItem) {
   const st = useStore.getState();
@@ -32,6 +43,7 @@ export default function DesignLibrary() {
     <aside className="dz-lib" aria-label="Shape library">
       <div className="dz-lib-head">
         <h2>Shapes</h2>
+        <AddPicture />
         <label className="dz-search"><Icon name="search" size={14} /><input type="search" placeholder="Search shapes" aria-label="Search shapes" value={q} onChange={(e) => setQ(e.target.value)} /></label>
       </div>
       <div className="dz-lib-body">

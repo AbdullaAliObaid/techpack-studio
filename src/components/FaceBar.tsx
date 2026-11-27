@@ -41,7 +41,7 @@ export function FaceFlip({ children }: { children: ReactNode }) {
   return <div className="flip-stage"><div className="flip-card" ref={ref}>{children}</div></div>;
 }
 
-export default function FaceBar() {
+export default function FaceBar({ compact }: { compact?: boolean }) {
   const { project, selPiece, viewFace, set } = usePick('project', 'selPiece', 'viewFace', 'set');
   const piece = project.pieces.find((p) => p.id === selPiece) ?? project.pieces[0];
   const collar = project.edits?.collar;
@@ -50,6 +50,14 @@ export default function FaceBar() {
   const inside = viewFace === 'inside';
   const [touched, setTouched] = useState(false);
   const go = (f: Face) => { setTouched(true); set({ viewFace: f, designFace: f }); };
+  if (compact) {
+    return (
+      <div className="seg face-seg" role="group" aria-label="Which side of the cloth the pattern shows">
+        <button className={!inside ? 'on' : ''} aria-pressed={!inside} onClick={() => go('outside')}>Outside</button>
+        <button className={inside ? 'on' : ''} aria-pressed={inside} onClick={() => go('inside')}>Inside out</button>
+      </div>
+    );
+  }
   return (
     <div className="face-bar" role="group" aria-label="Which side of the cloth the pattern shows">
       <button
