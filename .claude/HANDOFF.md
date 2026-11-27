@@ -45,3 +45,4 @@ components use `usePick(...)` selectors, keep that), `npx tsc --noEmit`, `npm ru
 - Known: QUICK=1 test:clip has 5 to 6 failures on the male button-up cuff (pre-existing per thick agent, unconfirmed on old code).
 - Open: no UI for Attachment.lining; no visible thick edge in 3D (Garment3D.panelThickness ready).
 - Fly-away fix and soft skin merged and pushed (Body panel switch "Soft skin", tests in tests/worker.ts).
+- In flight: agent/hats (wt-hats: beanie, visor, five panel, HAT_DESIGNS, star stitch, user buttonholes) and agent/designs (wt-designs: designs library, src/data/designs.ts). Collar button pushed.
