@@ -12,6 +12,7 @@ import StudioLight from '../three/StudioLight';
 import BodyCard from './BodyPanel';
 import MeasureOverlay from '../three/MeasureOverlay';
 import { useCssVars } from './theme';
+import GarmentLoading from './GarmentLoading';
 import Icon from './Icon';
 import { PaneTitle } from './controls';
 import { CATALOG, migrateGarment } from '../data/catalog';
@@ -75,6 +76,8 @@ export default function Viewport3D() {
         </mesh>
         <OrbitControls target={[0, H * 0.5, 0]} minDistance={60} maxDistance={900} enablePan makeDefault />
       </Canvas>
+
+      <GarmentLoading />
 
       <div className="vp-top">
         <div className="vp-toolbar material" role="toolbar" aria-label="Show in 3D view">

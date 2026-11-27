@@ -1754,3 +1754,18 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .method-tile.on .mt-name { color: var(--accent-text); }
 .dz-lib-head.insert-head-bar { background: linear-gradient(in oklch, var(--accent-soft), transparent); }
 @media (prefers-reduced-motion: reduce) { .tile.pulse { animation: none; box-shadow: 0 0 0 2px var(--accent); } }
+
+/* ---------- loading scissors in the 3D view ---------- */
+.gl-wrap { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; pointer-events: none; background: color-mix(in oklch, var(--viewport) 70%, transparent); }
+.gl-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 18px 28px; border-radius: 16px; border: 0.5px solid var(--material-border); box-shadow: var(--shadow); text-align: center; }
+.gl-text { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.gl-text span { font-size: 12px; color: var(--label-2); }
+.gl-a, .gl-b { transform-box: view-box; transform-origin: 0 0; }
+.gl-a { animation: gl-snip-a 900ms ease-in-out infinite; }
+.gl-b { animation: gl-snip-b 900ms ease-in-out infinite; }
+@keyframes gl-snip-a { 0%, 100% { transform: rotate(-19deg); } 45% { transform: rotate(-1deg); } }
+@keyframes gl-snip-b { 0%, 100% { transform: rotate(19deg); } 45% { transform: rotate(1deg); } }
+.gl-dots { animation: gl-dots 900ms steps(4, end) infinite; }
+@keyframes gl-dots { 0% { opacity: 1; } 100% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .gl-a, .gl-b, .gl-dots { animation: none; } }
+@media (prefers-reduced-transparency: reduce) { .gl-card { background: var(--bg-elevated); -webkit-backdrop-filter: none; backdrop-filter: none; } .gl-wrap { background: var(--viewport); } }

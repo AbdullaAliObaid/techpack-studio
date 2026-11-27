@@ -225,6 +225,8 @@ export interface State {
   showGarment: boolean;
   showTape: boolean;
   draping: boolean;
+  /** a garment was just picked and its first drape frame has not arrived: the 3D view hides the old garment and shows the loading scissors */
+  garmentLoading: boolean;
   simStatus: string;
   drapePeak: { ratio: number; strain: number; where: string; over?: number };
   redrapeToken: number;
@@ -600,6 +602,7 @@ export const useStore = create<State>((set, get) => {
     showGarment: true,
     showTape: false,
     draping: false,
+    garmentLoading: false,
     simStatus: '',
     drapePeak: { ratio: 0, strain: 0, where: '' },
     redrapeToken: 0,

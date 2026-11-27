@@ -1,5 +1,5 @@
 import { subscribeArt } from './detailsArt';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { GarmentType, Piece } from '../data/presets';
@@ -86,6 +86,18 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
   const pending = useRef<{ pos?: Float32Array; strain?: Float32Array }>({});
   const lastStrain = useRef<Float32Array | null>(null);
   const set = useStore((s) => s.set);
+  const projectId = useStore((s) => s.project.id);
+  const loading = useStore((s) => s.garmentLoading);
+  // a new garment or design: hide the old one before the next paint, show it again once the first frame of the new drape arrives
+  const seq = useRef({ posted: 0, built: 0, phantom: false });
+  const countPost = () => { if (seq.current.phantom) seq.current.phantom = false; else seq.current.posted++; };
+  const wantFrame = useRef(false);
+  useLayoutEffect(() => { wantFrame.current = true; if (!seq.current.phantom && seq.current.posted === seq.current.built) { seq.current.posted++; seq.current.phantom = true; } useStore.getState().set({ garmentLoading: true }); invalidate(); }, [type, projectId]);
+  useEffect(() => {
+    if (!loading) return;
+    const t = setTimeout(() => { wantFrame.current = false; useStore.getState().set({ garmentLoading: false }); }, 20000); // never stuck
+    return () => clearTimeout(t);
+  }, [loading]);
   const redrape = useStore((s) => s.redrapeToken);
   const f = useMemo(() => bodyFrame(body), [body]);
   const fRef = useRef(f);
@@ -120,6 +132,7 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
           return g;
         });
       } else if (m.type === 'built') {
+        seq.current.built++;
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(m.pos, 3));
         geo.setAttribute('uv', new THREE.BufferAttribute(m.uv, 2));
@@ -158,6 +171,7 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
       } else if (m.type === 'attachDetails') {
         setAttachDetails({ ...m, type: 'details' });
       } else if (m.type === 'frame') {
+        if (wantFrame.current && seq.current.built >= seq.current.posted) { wantFrame.current = false; setIf({ garmentLoading: false }); }
         pending.current.pos = m.pos;
         invalidate();
         pose.current = { mode: m.mode, t: m.t, custom: m.pose };
@@ -210,6 +224,7 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
     const first = lastOutfit.current === null;
     const t = setTimeout(() => {
       lastOutfit.current = shape;
+      countPost();
       worker.postMessage({ type: 'outfit', items, body: outfit.body, spacing: SPACING, warm });
     }, first ? 0 : 160);
     return () => clearTimeout(t);
@@ -223,18 +238,21 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
   const lastBody = useRef<Body | null>(null);
   const lastToken = useRef(redrape);
   const lastType = useRef(type);
+  const lastProject = useRef(projectId);
   useEffect(() => {
     if (outfit) { lastBody.current = null; return; } // the outfit effect above builds
     const first = lastBody.current === null;
     const t = setTimeout(() => {
-      const warm = !first && lastBody.current === body && lastToken.current === redrape && lastType.current === type;
+      const warm = !first && lastBody.current === body && lastToken.current === redrape && lastType.current === type && lastProject.current === projectId;
+      lastProject.current = projectId;
       lastBody.current = body;
       lastToken.current = redrape;
       lastType.current = type;
+      countPost();
       worker.postMessage({ type: 'build', garment: type, pieces, body, warm, spacing: SPACING, edits: simEdits });
     }, first ? 0 : 160);
     return () => clearTimeout(t);
-  }, [type, pieces, body, redrape, worker, simEdits, outfit === null]);
+  }, [type, projectId, pieces, body, redrape, worker, simEdits, outfit === null]);
 
   // stitching around pockets, patches and straps follows the attachments (debounced while dragging)
   // prints and embroidery are painted here on the main thread (Prints.tsx), so moving one does not rebuild them
@@ -324,17 +342,17 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
       {showJoints && Array.from({ length: JOINT_COUNT }, (_, i) => (
         <mesh key={i} ref={(el) => { if (el) jointRefs.current[i] = el; }} geometry={jointGeo} material={jointMat} renderOrder={10} />
       ))}
-      {showGarment && topo && (
+      {showGarment && !loading && topo && (
         <mesh geometry={topo.geo} material={stretch || !cloth ? topo.fabrics.map(() => stretchMat) : cloth.outside} castShadow receiveShadow frustumCulled={false} />
       )}
-      {showGarment && topo && cloth?.twoSided && !stretch && (
+      {showGarment && !loading && topo && cloth?.twoSided && !stretch && (
         <mesh geometry={topo.geo} material={cloth.inside} receiveShadow frustumCulled={false} />
       )}
-      {showGarment && topo && <Prints geo={topo.geo} pat={topo.pat} visible={!stretch} all={allAttachments} />}
-      {showGarment && topo && hardware && <Hardware data={hardware} geo={topo.geo} visible={!stretch} updater={hardwareUpdater} />}
-      {showGarment && topo && attachDetails && <Details data={attachDetails} geo={topo.geo} visible={!stretch} updater={attachUpdater} />}
-      {showGarment && topo && details && <Details data={details} geo={topo.geo} visible={!stretch} updater={detailUpdater} />}
-      {showGarment && topo && <Pull geo={topo.geo} worker={worker} enabled={pullMode && showBody} />}
+      {showGarment && !loading && topo && <Prints geo={topo.geo} pat={topo.pat} visible={!stretch} all={allAttachments} />}
+      {showGarment && !loading && topo && hardware && <Hardware data={hardware} geo={topo.geo} visible={!stretch} updater={hardwareUpdater} />}
+      {showGarment && !loading && topo && attachDetails && <Details data={attachDetails} geo={topo.geo} visible={!stretch} updater={attachUpdater} />}
+      {showGarment && !loading && topo && details && <Details data={details} geo={topo.geo} visible={!stretch} updater={detailUpdater} />}
+      {showGarment && !loading && topo && <Pull geo={topo.geo} worker={worker} enabled={pullMode && showBody} />}
     </group>
   );
 }
