@@ -50,3 +50,22 @@ Scale (desktop pt): title 22 semibold, headline 15 semibold, body 13, callout 12
 2. Sidebar style inspector, segmented controls for 2 to 5 choices, popovers or sheets for menus.
 3. Motion is short (150 to 250 ms) and purposeful; respect `prefers-reduced-motion`.
 4. Accessibility: every icon button has an aria-label and a tooltip; full keyboard focus rings (`:focus-visible`); never colour alone to carry meaning.
+
+## Craft rules (from the product owner; apply wherever they fit, HIG wins on a clash)
+1. Nested corners: inner radius = outer radius minus the padding between them. Never reuse the outer radius inside.
+2. Borders use alpha (e.g. `oklch(0 0 0 / 0.1)` light, `oklch(1 0 0 / 0.12)` dark), not solid greys, so they sit on any surface.
+3. Colour math in OKLCH, not HSL. Gradients interpolate in OKLCH (`linear-gradient(in oklch, ...)`) so they stay even the whole way.
+4. Icon stroke matches the weight of the text beside it (regular text = 1.5 px strokes at 16 px, semibold = 2 px).
+5. Carousels and horizontal scrollers fade out at their edges with a mask (`mask-image: linear-gradient(...)`).
+6. Icon swaps cross-fade with a short blur (out: blur 4 px + fade, in: reverse, about 150 ms).
+7. Dark mode depth comes from lighter surfaces (elevated layers step up in lightness), not shadows.
+8. Full-height layouts use `100dvh` (with `100vh` fallback), never plain `100vh`.
+9. Success is confirmed with a brief pulse on the element that succeeded.
+10. Expand the same element instead of swapping it for another (grow it in place so the eye never loses it).
+11. Scroll and drag past an edge rubberbands with resistance.
+12. Reveal content with masks rather than hard pops.
+13. Stage focus: a focused sheet or mode dims and slightly blurs everything behind it.
+14. The more often something is used, the less it animates. High frequency controls (tools, sliders, selection) respond instantly; rare moments (intro, new project, success) can be expressive.
+15. Fitts: frequent targets are big and close to where the pointer already is.
+16. Hick: fewer choices at once; progressive disclosure over long option lists.
+17. Doherty: every interaction gives feedback within 400 ms (show progress or an optimistic state if work takes longer).
