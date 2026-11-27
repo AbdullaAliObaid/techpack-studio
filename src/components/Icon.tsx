@@ -78,12 +78,17 @@ const P: Record<string, ReactNode> = {
   zipper: <><path d="M12 2v20" /><path d="M9 5h3M12 8h3M9 11h3M12 14h3" /><rect x="9.5" y="16" width="5" height="5" rx="1.5" /></>,
   note: <><path d="M5 4.5h14v11H12l-4.5 4v-4H5z" /><path d="M9 9h6M9 12h3" /></>,
   noteshow: <><path d="M5 4.5h14v11H12l-4.5 4v-4H5z" /><circle cx="12" cy="10" r="2" /></>,
+  ruler: <><rect x="2.5" y="8" width="19" height="8" rx="2" /><path d="M7 8v3M11 8v4M15 8v3M19 8v2" /></>,
+  protractor: <><path d="M3 18a9 9 0 0118 0z" /><path d="M12 18V9.5M12 18l-5.5-6.5M12 18l5.5-6.5" /></>,
+  square: <><path d="M4 4v16h16z" /><path d="M4 14h6v6" /></>,
+  rulers: <><path d="M3 3h18v5H3zM3 3v18h5V8" /><path d="M7 3v2M11 3v2M15 3v2M3 7h2M3 11h2M3 15h2" /></>,
   target: <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3.5" /></>,
 };
 
-export default function Icon({ name, size = 20 }: { name: keyof typeof P | string; size?: number }) {
+/** `weight` is the drawn stroke in px, so an icon beside 13 px text can match it (1.5 px at 16 px). */
+export default function Icon({ name, size = 20, weight }: { name: keyof typeof P | string; size?: number; weight?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={weight ? (weight * 24) / size : 1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
       {P[name]}
     </svg>
   );
