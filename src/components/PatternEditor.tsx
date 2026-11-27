@@ -1,3 +1,4 @@
+import BandStripes from './BandStripes';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { useStore, usePick } from '../store';
@@ -1127,6 +1128,7 @@ function PieceView(props: {
       {/* body */}
       <path d={geo.d} fill={viewFace === 'inside' ? `url(#fab-in-${p.id})` : `url(#fab-${p.id})`} data-kind="piece" data-piece={p.id} data-inst={inst} style={{ cursor: picking ? 'crosshair' : 'move' }} />
       <path d={geo.d} fill="var(--piece-sheen)" pointerEvents="none" />
+      <BandStripes piece={p} d={geo.d} id={`${p.id}-${inst}`} />
       {viewFace === 'inside' && <InsideDecor entry={entry} geo={geo} k={k} style={garment} ownInside={insideOwn} />}
       {showStitch && <path d={geo.cut} fill="none" stroke="var(--cut-line)" strokeWidth={px(1)} pointerEvents="none" />}
       {/* the editable outline is the sewing line (finished size); the outer line is the cut line with seam allowance */}

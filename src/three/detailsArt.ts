@@ -10,6 +10,17 @@ import { SHAPES } from '../lib/shapes';
 
 const rad = (d: number) => (d * Math.PI) / 180;
 
+/** Font styles of text layers. The Design workspace sets `font` on a layer; without it the bold system face is used. */
+export const FONT_STACKS: Record<string, string> = {
+  classic: `700 {h}px Georgia, 'Times New Roman', serif`,
+  varsity: `900 {h}px Rockwell, 'Roboto Slab', 'Arial Black', serif`,
+  script: `italic 700 {h}px 'Snell Roundhand', 'Brush Script MT', 'Segoe Script', cursive`,
+  block: `900 {h}px Impact, 'Arial Black', sans-serif`,
+  mono: `700 {h}px 'SF Mono', Menlo, Consolas, monospace`,
+};
+/** canvas font for a text layer of height h */
+export const fontOf = (l: ShapeLayer, h: number) => (FONT_STACKS[(l as { font?: string }).font ?? ''] ?? '700 {h}px system-ui, sans-serif').replace('{h}', String(h));
+
 /* ---------- art version: bumps whenever an image or pattern tile finishes decoding, so painters can repaint ---------- */
 let version = 0;
 const subs = new Set<() => void>();
@@ -75,7 +86,7 @@ export function drawLayer(ctx: CanvasRenderingContext2D, l: ShapeLayer, fill: st
   ctx.fillStyle = fill;
   if (l.shape === 'text') {
     if (l.text) {
-      ctx.font = `700 ${Math.max(0.02, l.h)}px system-ui, sans-serif`;
+      ctx.font = fontOf(l, Math.max(0.02, l.h));
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(l.text, 0, 0, Math.max(0.02, l.w));

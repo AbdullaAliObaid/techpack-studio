@@ -17,6 +17,11 @@ import NewFlow from './components/NewFlow';
 import { nudgePatch } from './components/editHelpers';
 import { OutfitBar } from './components/Outfits';
 import { installOutfitFallback } from './components/uiData';
+import DesignCanvas from './components/DesignCanvas';
+import DesignLibrary from './components/DesignLibrary';
+import DesignSide from './components/DesignSide';
+import { FinishPanel, TechPackPanel, useWorkspaceKeys } from './components/Workspaces';
+import { newDesign, readWorkspaceMap } from './components/designDoc';
 
 installOutfitFallback();
 
@@ -37,6 +42,16 @@ export default function App() {
   const dockW = useStore((s) => s.designSize.w);
   const screen = useStore((s) => s.screen);
   const newFrom = useStore((s) => s.newFlow.from);
+  const workspace = useStore((s) => s.workspace);
+  const dwTab = useStore((s) => s.dwTab);
+  const projectId = useStore((s) => s.project.id);
+  useWorkspaceKeys();
+  // each project remembers its own workspace; a new project starts a fresh design
+  useEffect(() => {
+    useStore.setState({ workspace: readWorkspaceMap()[projectId] ?? 'construct', design: newDesign(), designSel: [], selBand: null });
+    requestAnimationFrame(() => window.dispatchEvent(new Event('tps-fit')));
+  }, [projectId]);
+  useEffect(() => { const t = setTimeout(() => window.dispatchEvent(new Event('tps-fit')), 60); return () => clearTimeout(t); }, [workspace, dwTab]);
   const prevScreen = useRef(screen);
   useEffect(() => { prevScreen.current = screen; }, [screen]);
   const extra = !stacked && dock === 'side' && dockOpen ? (dockCollapsed ? 44 : dockW) : 0;
@@ -55,6 +70,7 @@ export default function App() {
       const st = useStore.getState();
       if (st.screen !== 'editor') return; // Home and the New flow own the keyboard
       const mod = e.metaKey || e.ctrlKey;
+      if (st.workspace !== 'construct' && !(mod && ['z', 'y'].includes(e.key.toLowerCase()))) return; // other workspaces handle their own keys
       if (st.pieceFlow && e.key.toLowerCase() !== 'escape') return; // the New piece sheet owns the keyboard
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -122,7 +138,7 @@ export default function App() {
       <div className="editor-shell" {...inertIf(screen !== 'editor')} data-state={screen === 'editor' ? 'active' : 'hidden'}>
       <TopBar />
       <OutfitBar />
-      <main className="workspace">
+      <main className="workspace" data-ws={workspace} data-dw={dwTab}>
         <div
           className="canvases"
           onPointerMove={(e) => {
@@ -132,8 +148,12 @@ export default function App() {
           }}
           onPointerUp={() => (dragging.current = false)}
         >
-          <div className="pane-slot" style={stacked ? { height: `${split}%` } : { width: `min(calc(${split}% + ${extra}px), calc(100% - 340px))` }}>
+          <div className="pane-slot pattern-slot" style={stacked ? { height: `${split}%` } : { width: `min(calc(${split}% + ${extra}px), calc(100% - 340px))` }}>
             <PatternPane />
+          </div>
+          <div className="dz-slot">
+            <DesignLibrary />
+            <DesignCanvas />
           </div>
           <div
             className="divider"
@@ -146,6 +166,9 @@ export default function App() {
             }}
           />
           <Viewport3D />
+          <DesignSide />
+          <FinishPanel />
+          <TechPackPanel />
         </div>
         <Inspector />
       </main>

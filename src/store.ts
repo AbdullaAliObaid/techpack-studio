@@ -9,6 +9,8 @@ import { uid, type Units } from './lib/units';
 import { pleatIntakeOf, EMPTY_EDITS, ZERO_POSE, type Face, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
 import { FEMALE_BODY, MALE_BODY } from './three/body';
 import { applyMoves, linkedMoves } from './data/symmetry';
+import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorkspaceMap, defaultBand } from './components/designDoc';
+import type { Band } from './data/edits';
 
 /** undo history entry: pattern pieces plus garment edits */
 export interface Snapshot { pieces: Piece[]; edits?: Edits; notes?: Note[] }
@@ -293,6 +295,19 @@ export interface State {
   resetPose: () => void;
   loadProject: (p: Project) => void;
   rename: (name: string) => void;
+  // --- workspaces (Construct, Design, Finish, Tech pack) and the Design workspace ---
+  workspace: Workspace;
+  setWorkspace: (w: Workspace) => void;
+  /** the design being drawn in the Design workspace; once placed it stays linked to its attachment */
+  design: DesignDoc;
+  setDesign: (patch: Partial<DesignDoc> | ((d: DesignDoc) => Partial<DesignDoc>)) => void;
+  designSel: string[];
+  /** Design workspace right panel: the patch layers or the band tool */
+  dwTab: 'layers' | 'band';
+  selBand: string | null;
+  addBand: (b?: Partial<Omit<Band, 'id'>>) => string;
+  updateBand: (id: string, patch: Partial<Band>) => void;
+  removeBand: (id: string) => void;
 }
 
 /** Garments with a collar store the collar position explicitly (folded down unless chosen), which turns on the
@@ -626,6 +641,27 @@ export const useStore = create<State>((set, get) => {
     // older saves stored 'jacket' | 'shirt' | 'pants'; map them onto catalog styles
     loadProject: (p) => set((s) => ({ project: withCollar({ ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true }), past: [], future: [], selPiece: null, selPoint: null, fitToken: s.fitToken + 1, sections: {}, viewFace: 'outside', chartFace: 'outside', fabricScope: 'all' })),
     rename: (name) => set((s) => ({ project: { ...s.project, name, updatedAt: Date.now() } })),
+
+    workspace: 'construct',
+    setWorkspace: (w) => { const m = { ...readWorkspaceMap(), [get().project.id]: w }; writeWorkspaceMap(m); set({ workspace: w }); },
+    design: newDesign(),
+    setDesign: (patch) => set((s) => ({ design: { ...s.design, ...(typeof patch === 'function' ? patch(s.design) : patch) } })),
+    designSel: [],
+    dwTab: 'layers',
+    selBand: null,
+    addBand: (b = {}) => {
+      const id = uid();
+      get().commit();
+      setEdits((e) => ({ ...e, bands: [...(e.bands ?? []), { ...defaultBand(), ...b, id }] }));
+      set({ selBand: id });
+      return id;
+    },
+    updateBand: (id, patch) => setEdits((e) => ({ ...e, bands: (e.bands ?? []).map((q) => (q.id === id ? { ...q, ...patch } : q)) })),
+    removeBand: (id) => {
+      get().commit();
+      setEdits((e) => ({ ...e, bands: (e.bands ?? []).filter((q) => q.id !== id) }));
+      set((s) => ({ selBand: s.selBand === id ? null : s.selBand }));
+    },
 
     // ---- edits ----
     selAttachment: null,

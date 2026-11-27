@@ -10,7 +10,8 @@ import { registerHitCloth, type ClothHit } from './hitCloth';
 import { NONE, type VertexPattern } from './printsAdapter';
 import { fabricHex as hexOf } from './fabricAdapter';
 import { patternFill, isPlain } from './detailsPattern';
-import { artVersion, drawLayer, fillRuleOf, hasPictures, subscribeArt, unitPath } from './detailsArt';
+import { artVersion, drawLayer, fontOf, fillRuleOf, hasPictures, subscribeArt, unitPath } from './detailsArt';
+import { bandRanges, type BandStripe } from '../components/designDoc';
 import { applyLook, cottonTile, grainTile, labelLook, sheenLook, weaveTile, type LabelLook } from './detailsLook';
 
 // Attachment artwork on the draped cloth, plus picking and dragging in 3D.
@@ -127,9 +128,10 @@ function stitchLayer(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2
   const kx = sc.width / (w + 2 * pad), ky = sc.height / (h + 2 * pad);
   for (const x of [c, g]) x.setTransform(kx, 0, 0, ky, (w / 2 + pad) * kx, (h / 2 + pad) * ky);
   const base = rgbOf(l.color);
-  const pitch = 0.11, R = Math.hypot(w, h) / 2 + pad;
+  const stitchKind = (l as { stitch?: string }).stitch;
+  const pitch = stitchKind === 'fill' ? 0.16 : stitchKind === 'running' ? 0.32 : 0.11, R = Math.hypot(w, h) / 2 + pad;
   // stitches run across the narrow side; compact shapes and letters get a diagonal fill
-  const ang = l.shape === 'text' ? rad(28) : w >= h * 1.3 ? 0 : h >= w * 1.3 ? rad(90) : rad(35);
+  const ang = stitchKind === 'fill' ? rad(45) : l.shape === 'text' ? rad(28) : w >= h * 1.3 ? 0 : h >= w * 1.3 ? rad(90) : rad(35);
   let rnd = seed;
   const rand = () => ((rnd = (rnd * 1664525 + 1013904223) >>> 0) / 4294967296);
   c.save();
@@ -160,7 +162,7 @@ function stitchLayer(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2
     x.globalCompositeOperation = 'destination-in';
     x.fillStyle = '#000';
     if (l.shape === 'text') {
-      x.font = `700 ${Math.max(0.5, l.h)}px system-ui, sans-serif`;
+      x.font = fontOf(l, Math.max(0.5, l.h));
       x.textAlign = 'center';
       x.textBaseline = 'middle';
       x.fillText(l.text ?? '', 0, 0, w);
@@ -178,7 +180,7 @@ function stitchLayer(col: CanvasRenderingContext2D, hgt: CanvasRenderingContext2
     x.lineWidth = 0.075;
     x.setLineDash([0.16, 0.045]);
     x.lineCap = 'round';
-    if (l.shape === 'text') { x.font = `700 ${Math.max(0.5, l.h)}px system-ui, sans-serif`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.strokeText(l.text ?? '', 0, 0, w); }
+    if (l.shape === 'text') { x.font = fontOf(l, Math.max(0.5, l.h)); x.textAlign = 'center'; x.textBaseline = 'middle'; x.strokeText(l.text ?? '', 0, 0, w); }
     else { x.scale(l.w, l.h); x.lineWidth = 0.075 / Math.max(l.w, l.h); x.setLineDash([0.16 / Math.max(l.w, l.h), 0.045 / Math.max(l.w, l.h)]); x.stroke(unitPath(l)!); }
     x.restore();
   };
@@ -320,12 +322,85 @@ function lifted(m: THREE.Material, lift: number, sgn: number) {
   m.customProgramCacheKey = () => 'decal-lift';
 }
 
+/* ---------- relief: layers push the surface out (positive mm) or press it in (negative), summed where they overlap ---------- */
+const RELIEF_FULL_MM = 3; // 3 mm = the strongest height step the map can hold
+const RELIEF_BUMP = 6; // bump scale for the height map: about 1 unit per mm
+const scratch: HTMLCanvasElement[] = [];
+function scratchCanvas(i: number, w: number, h: number) {
+  let c = scratch[i];
+  if (!c) c = scratch[i] = document.createElement('canvas');
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  return c;
+}
+const reliefOf = (a: Attachment) => (a.kind !== 'embroidery' && a.kind !== 'label' ? a.layers.reduce((m, l) => Math.max(m, Math.abs(l.relief ?? 0)), 0) : 0);
+
+/**
+ * Height map of the ink: neutral grey where flat, brighter where raised, darker where pressed. Raised and pressed layers
+ * are summed in two scratch canvases (light on black, 'lighter' adds up stacked layers) and combined onto the grey.
+ * Band methods add a little: woven is a fine rib, sewn a stitched stripe with grooves at its edges.
+ */
+function paintRelief(hc: CanvasRenderingContext2D, W: number, H: number, k: number, b: Bounds, arts: Attachment[], own: string | undefined, flip: boolean, bands: { method: string; stripes: BandStripe[] }[]) {
+  const pc = scratchCanvas(0, W, H), nc = scratchCanvas(1, W, H);
+  const pg = pc.getContext('2d')!, ng = nc.getContext('2d')!;
+  for (const g of [pg, ng]) { g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1; g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.setTransform(k, 0, 0, k, -b.x0 * k, -b.y0 * k); g.globalCompositeOperation = 'lighter'; }
+  const level = (mm: number) => Math.min(1, Math.abs(mm) / RELIEF_FULL_MM) * 0.5; // half range each way
+  for (const a of arts) {
+    const local = a.id === own;
+    for (const l of a.layers) {
+      const r = l.relief ?? 0;
+      if (!r || (l.opacity ?? 1) <= 0 || l.shape === 'image') continue;
+      const g = r > 0 ? pg : ng;
+      g.save();
+      if (!local) { g.translate(a.x, a.y); g.rotate(rad(a.rotation)); }
+      if (flip) g.scale(-1, 1);
+      g.globalAlpha = level(r);
+      drawLayer(g, l, '#fff', 'height');
+      g.restore();
+    }
+  }
+  for (const bd of bands) {
+    if (bd.method === 'printed') continue;
+    for (const s of bd.stripes) {
+      pg.save();
+      pg.globalAlpha = level(bd.method === 'sewn' ? 0.7 : 0.35);
+      pg.fillStyle = '#fff';
+      pg.fillRect(b.x0 - 1, s.y0, b.w + 2, s.y1 - s.y0);
+      pg.restore();
+      if (bd.method === 'sewn') {
+        ng.save(); ng.globalAlpha = level(0.5); ng.strokeStyle = '#fff'; ng.lineWidth = 0.07; ng.setLineDash([0.22, 0.12]);
+        for (const y of [s.y0 + 0.12, s.y1 - 0.12]) { ng.beginPath(); ng.moveTo(b.x0 - 1, y); ng.lineTo(b.x0 + b.w + 1, y); ng.stroke(); }
+        ng.restore();
+      } else {
+        // woven rib: fine horizontal ribs along the stripe
+        pg.save(); pg.globalAlpha = level(0.18); pg.strokeStyle = '#fff'; pg.lineWidth = 0.05;
+        for (let y = s.y0 + 0.1; y < s.y1; y += 0.14) { pg.beginPath(); pg.moveTo(b.x0 - 1, y); pg.lineTo(b.x0 + b.w + 1, y); pg.stroke(); }
+        pg.restore();
+      }
+    }
+  }
+  hc.save();
+  hc.setTransform(1, 0, 0, 1, 0, 0);
+  hc.globalCompositeOperation = 'source-over';
+  hc.fillStyle = '#808080';
+  hc.fillRect(0, 0, W, H);
+  hc.filter = 'blur(1.1px)';
+  hc.globalCompositeOperation = 'lighter';
+  hc.drawImage(pc, 0, 0);
+  hc.globalCompositeOperation = 'difference';
+  hc.drawImage(nc, 0, 0);
+  hc.filter = 'none';
+  hc.globalCompositeOperation = 'source-over';
+  hc.restore();
+}
+
 interface Slot { canvas: HTMLCanvasElement; tex: THREE.CanvasTexture; sig: string; hgt?: HTMLCanvasElement; hgtTex?: THREE.CanvasTexture }
 interface ThreadSlot { col: HTMLCanvasElement; hgt: HTMLCanvasElement; colTex: THREE.CanvasTexture; hgtTex: THREE.CanvasTexture; sig: string; k: number }
 
 export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometry; pat: VertexPattern; visible: boolean }) {
   const { gl, camera, controls } = useThree();
   const attachments = useStore((s) => s.project.edits?.attachments);
+  const bands = useStore((s) => s.project.edits?.bands);
+  const pieces = useStore((s) => s.project.pieces);
   const sel = useStore((s) => s.selAttachment);
   const list = useMemo(() => attachments ?? [], [attachments]);
   // pictures and pattern tiles decode asynchronously: repaint the artwork that uses them when they have
@@ -462,12 +537,15 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
       const inkArt = art.filter((a) => (a.kind !== 'embroidery' && a.kind !== 'label') || a.id === sel);
       const threadArt = art.filter((a) => (a.kind === 'embroidery' && a.layers.length > 0) || a.kind === 'label');
       const inkMat = rig.inkMats[e], threadMat = rig.threadMats[e];
+      // bands across the garment: painted on the outside of every piece they cross, at that piece's own height reference
+      const pieceDef = pieces.find((q) => q.id === pid);
+      const myBands = !own && face === 'outside' && pieceDef ? (bands ?? []).flatMap((bd) => { const r = bandRanges(bd, pieceDef); return r ? [{ method: bd.method, sheen: bd.sheen, stripes: r }] : []; }) : [];
 
       /* ink */
       const asyncInk = inkArt.some((a) => hasPictures(a.layers) || (a.fabric?.pattern && !isPlain(a.fabric.pattern)));
-      const sig = JSON.stringify([inkArt, sel, accent, flip, own, asyncInk ? artTick : 0]);
+      const sig = JSON.stringify([inkArt, myBands, sel, accent, flip, own, asyncInk ? artTick : 0]);
       let slot = rig.ink.get(slotKey);
-      if (inkArt.length || slot) {
+      if (inkArt.length || myBands.length || slot) {
         // pictures need more pixels than flat ink: up to 24 px per cm, never more than 2048 px a side
         const pics = inkArt.some((a) => hasPictures(a.layers));
         const kWant = Math.min(pics ? PICTURE_PX_CM : PX_PER_CM, (pics ? PICTURE_PX_MAX : MAX_PX) / Math.max(b.w, b.h));
@@ -478,8 +556,9 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
           slot = undefined;
         }
         // gloss follows the last print that names a sheen; a glossy print also puffs up a little
-        const sh = [...inkArt].reverse().find((a) => a.kind === 'print' && a.sheen)?.sheen;
+        const sh = [...inkArt].reverse().find((a) => a.kind === 'print' && a.sheen)?.sheen ?? [...myBands].reverse().find((q) => q.sheen && q.sheen !== 'matte')?.sheen;
         const puff = sh === 'glossy';
+        const relief = Math.max(0, ...inkArt.map(reliefOf)) > 0 || inkArt.some((a) => a.layers.some((l) => l.relief)) || myBands.some((q) => q.method !== 'printed');
         if (!slot) {
           const canvas = mkCanvas(b.w * kWant, b.h * kWant);
           const tex = new THREE.CanvasTexture(canvas);
@@ -498,11 +577,18 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
           ctx.setTransform(1, 0, 0, 1, 0, 0);
           ctx.clearRect(0, 0, slot.canvas.width, slot.canvas.height);
           ctx.setTransform(k, 0, 0, k, -b.x0 * k, -b.y0 * k);
+          for (const bd of myBands) for (const q of bd.stripes) { ctx.fillStyle = q.color; ctx.fillRect(b.x0 - 1, q.y0, b.w + 2, q.y1 - q.y0); }
           for (const a of inkArt) drawInk(ctx, a, a.id === own, a.id !== own && a.kind !== 'print', a.id === sel ? accent : null, flip);
           slot.tex.needsUpdate = true;
-          inkMat.visible = inkArt.length > 0;
+          inkMat.visible = inkArt.length > 0 || myBands.length > 0;
           applyLook(inkMat, { ...sheenLook(sh, false), roughness: sh ? sheenLook(sh, false).roughness : 0.85 });
-          if (puff) {
+          if (relief) {
+            if (!slot.hgt) { slot.hgt = mkCanvas(slot.canvas.width, slot.canvas.height); slot.hgtTex = new THREE.CanvasTexture(slot.hgt); slot.hgtTex.flipY = false; }
+            paintRelief(slot.hgt.getContext('2d')!, slot.hgt.width, slot.hgt.height, k, b, inkArt, own, flip, myBands);
+            slot.hgtTex!.needsUpdate = true;
+            const peak = Math.max(0.5, ...inkArt.map(reliefOf));
+            inkMat.bumpMap = slot.hgtTex!; inkMat.bumpScale = RELIEF_BUMP * Math.min(1.4, 0.7 + peak * 0.3);
+          } else if (puff) {
             if (!slot.hgt) { slot.hgt = mkCanvas(slot.canvas.width, slot.canvas.height); slot.hgtTex = new THREE.CanvasTexture(slot.hgt); slot.hgtTex.flipY = false; }
             const hc = slot.hgt.getContext('2d')!;
             hc.setTransform(1, 0, 0, 1, 0, 0);
@@ -562,7 +648,7 @@ export default function Prints({ geo, pat, visible }: { geo: THREE.BufferGeometr
         }
       }
     });
-  }, [rig, pat, bounds, list, sel, artTick]);
+  }, [rig, pat, bounds, list, sel, artTick, bands, pieces]);
 
   /* ---- picking ---- */
   const hit = useMemo(() => {

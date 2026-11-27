@@ -8,6 +8,7 @@ import { uid } from '../lib/units';
 import { exportTechPack } from '../lib/exportPdf';
 import { piecesToDxf } from '../lib/exportDxf';
 import { flushSave, goHome, openNewFlow } from './nav';
+import { WorkspaceSwitch } from './Workspaces';
 import { exportProjectFile, shareProjects } from './uiData';
 
 export default function TopBar() {
@@ -140,6 +141,8 @@ export default function TopBar() {
       <input className="proj-name" aria-label="Project name" value={project.name} onChange={(e) => rename(e.target.value)} />
       <span className="save-state" role="status">{saved ? 'Saved' : 'Saving…'}</span>
 
+      <div className="spacer" />
+      <WorkspaceSwitch />
       <div className="spacer" />
 
       <button className="icon-btn drawer-toggle" title="Show or hide the inspector" aria-label="Show or hide the inspector" aria-pressed={drawer} onClick={() => set({ drawer: !drawer })}><Icon name="sidebar" /></button>
