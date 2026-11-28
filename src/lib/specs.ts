@@ -6,6 +6,7 @@ import { builtinSeams, faceLabel, faceOf, instanceLabel, crownCount } from '../s
 import { buttonholeSlots } from '../data/construction';
 import { labelMaterial, labelSewing, labelSize } from '../data/labels';
 import { FABRIC_CATEGORIES, FABRICS, PATTERNS, colorName, compositionOf, fabricById, fabricHex, fabricThickness, patternLabel, withPatternDefaults, type FabricRef } from '../data/fabrics';
+import { patternEditsText } from '../data/patterns';
 import { attachmentStack, stackOf, stackText } from '../data/stack';
 import type { Note, Outfit, Project } from '../store';
 import type { StyleId } from '../data/catalog';
@@ -650,6 +651,8 @@ export interface FabricInfo {
   pattern?: string;
   /** pattern colours, named from the fabric cards where they match: 'White / Navy' */
   colourway?: string;
+  /** opacity, shift, hidden and recoloured colours; undefined when the pattern is as drawn */
+  adjust?: string;
 }
 
 const hexName = (hex: string, prefer?: string) => {
@@ -666,6 +669,7 @@ export function fabricInfo(pf: FabricRef): FabricInfo {
     const p = withPatternDefaults(pf.pattern);
     info.pattern = patternLabel(p);
     info.colourway = p.colors.map((c) => hexName(c, pf.id)).join(' / ');
+    info.adjust = patternEditsText(p, (h) => hexName(h, pf.id)) || undefined;
   }
   return info;
 }
@@ -679,7 +683,7 @@ export function fabricText(pf: FabricRef): string {
 /** Colour and pattern only: 'Indigo; Gingham, 0.8 cm repeat, woven, colourway White / Navy'. */
 export function fabricDetail(pf: FabricRef): string {
   const i = fabricInfo(pf);
-  return `${i.colour}${i.pattern ? `; ${i.pattern}, colourway ${i.colourway}` : ''}`;
+  return `${i.colour}${i.pattern ? `; ${i.pattern}, colourway ${i.colourway}${i.adjust ? `; ${i.adjust}` : ''}` : ''}`;
 }
 
 /** Same fabric, colour and pattern: one row in a materials table. */
@@ -951,6 +955,8 @@ export interface FabricBomRow {
   pattern?: string;
   repeat?: string;
   colourway?: string;
+  /** opacity, shift, hidden and recoloured colours */
+  adjust?: string;
   /** plain, woven in or printed on */
   construction: 'plain' | 'woven' | 'printed';
   finish: string;
@@ -973,7 +979,7 @@ function bomBase(ref: FabricRef & { sheen?: string }) {
   const pat = ref.pattern && ref.pattern.id !== 'solid' ? withPatternDefaults(ref.pattern) : undefined;
   return {
     fabric: i.fabric, category: i.category, gsm: i.gsm, thickness: fabricThickness(f.id), composition: compositionOf(f.id), colour: i.colour, hex: i.hex,
-    ...(pat ? { pattern: PATTERNS[pat.id]?.name ?? pat.id, repeat: `${Math.round(pat.scale * 10) / 10} cm${pat.rotation ? `, at ${Math.round(pat.rotation)} deg` : ''}`, colourway: i.colourway } : {}),
+    ...(pat ? { pattern: PATTERNS[pat.id]?.name ?? pat.id, repeat: `${Math.round(pat.scale * 10) / 10} cm${pat.rotation ? `, at ${Math.round(pat.rotation)} deg` : ''}`, colourway: i.colourway, ...(i.adjust ? { adjust: i.adjust } : {}) } : {}),
     construction: (pat ? (pat.method ?? 'printed') : 'plain') as 'plain' | 'woven' | 'printed',
     finish: ref.sheen ? SHEEN_NAME[ref.sheen] ?? ref.sheen : 'Natural finish of the cloth',
   };

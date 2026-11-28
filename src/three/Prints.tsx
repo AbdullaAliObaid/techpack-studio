@@ -57,9 +57,9 @@ function fabricHex(f: Attachment['fabric']) {
 }
 
 /** fill of a cloth outline painted on the host: the pattern in cm space (rotated), else the colour */
-function clothFill(ctx: CanvasRenderingContext2D, f: NonNullable<Attachment['fabric']>): string | CanvasPattern {
+function clothFill(ctx: CanvasRenderingContext2D, f: NonNullable<Attachment['fabric']>, host?: { x: number; y: number; rotation: number }): string | CanvasPattern {
   if (f.pattern && !isPlain(f.pattern)) {
-    const p = patternFill(ctx, f.pattern);
+    const p = patternFill(ctx, f.pattern, host);
     if (p) return p;
   }
   return fabricHex(f) ?? '#ffffff';
@@ -92,7 +92,7 @@ function drawInk(ctx: CanvasRenderingContext2D, a: Attachment, local: boolean, o
   if (flip) ctx.scale(-1, 1);
   const fill = fabricHex(a.fabric);
   if ((a.kind === 'print' || onHost) && fill && a.kind !== 'embroidery' && a.kind !== 'hardware' && a.kind !== 'label') {
-    ctx.fillStyle = clothFill(ctx, a.fabric!);
+    ctx.fillStyle = clothFill(ctx, a.fabric!, a.alignPattern ? { x: a.x, y: a.y, rotation: a.rotation } : undefined);
     ctx.fill(outlinePath(a), 'evenodd');
   } else if (onHost && a.kind !== 'print' && a.kind !== 'embroidery' && a.kind !== 'hardware' && a.kind !== 'label') {
     // no cloth of its own yet: a faint edge so the shape still reads

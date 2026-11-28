@@ -432,7 +432,7 @@ export async function buildTechPack(p: Project, units: Units, snapshot: string |
     `${r.fabric}\n${r.category}\n${r.composition}`,
     col(r),
     `${r.gsm}\n${r.thickness} mm`,
-    r.pattern ? `${r.pattern}\nRepeat ${r.repeat}\n${r.construction === 'woven' ? 'Woven in' : 'Printed'}, colourway ${r.colourway}` : 'Plain, no pattern',
+    r.pattern ? `${r.pattern}\nRepeat ${r.repeat}\n${r.construction === 'woven' ? 'Woven in' : 'Printed'}, colourway ${r.colourway}${r.adjust ? `\nAdjusted: ${r.adjust}` : ''}` : 'Plain, no pattern',
     r.finish,
     `${r.where.join(', ')}${r.face === 'outside' && r.insideToo.length ? `\nInside face is the same cloth on: ${r.insideToo.join(', ')}` : ''}${r.stacks.length ? `\nLayers: ${r.stacks.join('; ')}` : ''}`,
     `${r.metres.toFixed(2)} m\n${(r.kg).toFixed(2)} kg`,

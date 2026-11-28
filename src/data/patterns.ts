@@ -11,6 +11,7 @@
 // transforms or strokes, so the SVG is tiny and easy to rasterise anywhere. All designs are generic (generic setts,
 // generic flowers, generic spots): nothing copies a trademarked or clan design.
 
+import { drawnColours, patternColours, isHidden } from './patternFx';
 import type { FabricPattern, PatternId, PatternMotif, RepeatLayout } from './fabrics';
 
 export interface PatternDef {
@@ -75,6 +76,9 @@ export function cleanMotif(m: PatternMotif | undefined): PatternMotif | undefine
   if (image) out.image = image;
   if (paths?.length) out.paths = paths;
   if (m.detectedTile && m.detectedTile.w > 0 && m.detectedTile.h > 0) out.detectedTile = { w: m.detectedTile.w, h: m.detectedTile.h };
+  const pal = Array.isArray(m.palette) ? m.palette.filter((c) => HEX.test(c)).slice(0, 8).map((c) => c.toLowerCase()) : [];
+  if (pal.length) out.palette = pal;
+  if (typeof m.source === 'string' && m.source.length < 6_000_000 && DATA_URL.test(m.source)) out.source = m.source;
   return out;
 }
 
@@ -84,6 +88,11 @@ export function withPatternDefaults(p: Partial<FabricPattern> & { id: PatternId 
   const colors = d.colors.map((c, i) => (p.colors?.[i] && HEX.test(p.colors[i]) ? p.colors[i].toLowerCase() : c));
   const scale = Number.isFinite(p.scale) && p.scale! > 0.05 ? p.scale! : d.scale;
   const out: FabricPattern = { id: PATTERNS[p.id] ? p.id : 'solid', colors, scale, rotation: Number.isFinite(p.rotation) ? p.rotation! : 0, method: p.method ?? d.method };
+  if (Number.isFinite(p.opacity) && p.opacity! < 1) out.opacity = Math.max(0, p.opacity!);
+  if (Number.isFinite(p.offsetX) && p.offsetX) out.offsetX = Math.max(-100, Math.min(100, p.offsetX!));
+  if (Number.isFinite(p.offsetY) && p.offsetY) out.offsetY = Math.max(-100, Math.min(100, p.offsetY!));
+  const hid = Array.isArray(p.hidden) ? [...new Set(p.hidden.filter((i) => Number.isInteger(i) && i >= (p.id === 'custom' ? 0 : 1) && i < 12))].sort((a, b) => a - b) : [];
+  if (hid.length) out.hidden = hid;
   if (out.id === 'custom') {
     const motif = cleanMotif(p.motif);
     if (motif) out.motif = motif;
@@ -246,13 +255,38 @@ function woven(t: Tile, n: number, m: number, fill: string, on: (i: number, j: n
  */
 export function patternTile(pIn: FabricPattern): { size: [number, number]; svg: string; body: string } {
   const p = withPatternDefaults(pIn);
-  if (p.id === 'custom') return customTile(p);
+  const raw = p.id === 'custom' ? customTile(p) : baseTile(p);
+  return finishTile(p, raw);
+}
+
+/**
+ * Opacity and offset, applied the same way for every pattern: the ground (first element, the base cloth colour) stays
+ * put; the print above it is faded by `opacity` and shifted by the offset with wrap round, so the tile stays seamless.
+ */
+function finishTile(p: FabricPattern, t: { size: [number, number]; svg: string; body: string; ground?: string }) {
+  const op = p.opacity !== undefined && p.opacity < 1, shift = !!(p.offsetX || p.offsetY);
+  if (!op && !shift) return { size: t.size, svg: t.svg, body: t.body };
+  const [W, H] = t.size;
+  const ground = t.ground ?? `<rect x="0" y="0" width="${f(W)}" height="${f(H)}" fill="${p.colors[0]}"/>`;
+  const rest = t.ground ? t.body.slice(t.ground.length) : t.body;
+  let art = rest;
+  if (shift) {
+    const dx = (((p.offsetX ?? 0) % W) + W) % W, dy = (((p.offsetY ?? 0) % H) + H) % H;
+    art = '';
+    for (const y of dy ? [dy - H, dy] : [0]) for (const x of dx ? [dx - W, dx] : [0]) art += `<g transform="translate(${f(x)} ${f(y)})">${rest}</g>`;
+  }
+  const body = ground + (op ? `<g opacity="${f(p.opacity!)}">${art}</g>` : art);
+  return { size: t.size, body, svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${f(W)}" height="${f(H)}" viewBox="0 0 ${f(W)} ${f(H)}">${body}</svg>` };
+}
+
+function baseTile(p: FabricPattern): { size: [number, number]; svg: string; body: string; ground: string } {
   const S = p.scale;
-  const c = p.colors;
+  const c = drawnColours(p);
   const rnd = rng(hash(p.id));
   const H = p.id === 'chevron' ? S * 0.5 : S;
   const t = new Tile(S, H);
   t.rect(0, 0, S, H, c[0]); // ground
+  const ground = t.out[0];
   switch (p.id) {
     case 'solid': break;
     case 'stripe': t.rect(0.3 * S, 0, 0.4 * S, H, c[1]); break;
@@ -391,7 +425,7 @@ export function patternTile(pIn: FabricPattern): { size: [number, number]; svg: 
   }
   const body = t.out.join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${f(S)}" height="${f(H)}" viewBox="0 0 ${f(S)} ${f(H)}">${body}</svg>`;
-  return { size: [S, H], svg, body };
+  return { size: [S, H], svg, body, ground };
 }
 
 // ---------------------------------------------------------------- custom motif repeats
@@ -421,7 +455,7 @@ export function motifPlacements(layout: RepeatLayout, S: number): { W: number; H
   }
 }
 
-function customTile(p: FabricPattern): { size: [number, number]; svg: string; body: string } {
+function customTile(p: FabricPattern): { size: [number, number]; svg: string; body: string; ground?: string } {
   const S = p.scale, layout = p.layout ?? 'block';
   // a full repeat cut from a photo of a print (detectedTile): the picture IS the tile, at its own proportions,
   // edge to edge with no ground showing; scale is the repeat width in cm
@@ -435,13 +469,13 @@ function customTile(p: FabricPattern): { size: [number, number]; svg: string; bo
   const { W, H, items } = motifPlacements(layout, S);
   const out: string[] = [`<rect x="0" y="0" width="${f(W)}" height="${f(H)}" fill="${p.colors[0]}"/>`];
   const m = p.motif;
-  const useImage = !!m?.image && !(m.paths?.length && p.recolor?.length);
+  const useImage = !!m?.image && !(m.paths?.length && (p.recolor?.length || p.hidden?.length));
   if (m && (useImage || m.paths?.length)) {
     const a = m.aspect, iw = a >= 1 ? 1 : a, ih = a >= 1 ? 1 / a : 1;
-    const id = 'mt' + hash(useImage ? m.image! : JSON.stringify([m.paths, p.recolor])).toString(36);
+    const id = 'mt' + hash(useImage ? m.image! : JSON.stringify([m.paths, p.recolor, p.hidden, p.colors[0]])).toString(36);
     let def: string;
     if (useImage) def = `<image x="${f(-iw / 2)}" y="${f(-ih / 2)}" width="${f(iw)}" height="${f(ih)}" preserveAspectRatio="none" href="${m.image}"/>`;
-    else def = m.paths!.map((q, i) => `<path d="${q.path}" fill="${p.recolor?.[i] ?? q.color}" fill-rule="evenodd"/>`).join('');
+    else def = m.paths!.map((q, i) => `<path d="${q.path}" fill="${isHidden(p, i) ? p.colors[0] : p.recolor?.[i] ?? q.color}" fill-rule="evenodd"/>`).join('');
     out.push(`<defs><g id="${id}">${def}</g></defs>`);
     const sz = Math.min(1, Math.max(0.2, p.motifScale ?? 0.7)) * S;
     const r = (Math.hypot(iw, ih) / 2) * sz; // turn-proof radius of the motif
@@ -454,5 +488,24 @@ function customTile(p: FabricPattern): { size: [number, number]; svg: string; bo
     }
   }
   const body = out.join('');
-  return { size: [W, H], svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${f(W)}" height="${f(H)}" viewBox="0 0 ${f(W)} ${f(H)}">${body}</svg>`, body };
+  return { size: [W, H], svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${f(W)}" height="${f(H)}" viewBox="0 0 ${f(W)} ${f(H)}">${body}</svg>`, body, ground: out[0] };
+}
+
+/** Words for the tech pack: 'opacity 60%; shifted 2 x 1 cm; hidden Navy; recoloured Red to Blue'. Empty when untouched. */
+export function patternEditsText(p: FabricPattern, name: (hex: string) => string = (h) => h): string {
+  const q = withPatternDefaults(p), out: string[] = [];
+  if (q.opacity !== undefined) out.push(`opacity ${Math.round(q.opacity * 100)}%`);
+  if (q.offsetX || q.offsetY) out.push(`shifted ${Math.round((q.offsetX ?? 0) * 10) / 10} x ${Math.round((q.offsetY ?? 0) * 10) / 10} cm`);
+  const hid = patternColours(q).filter((c) => isHidden(q, c.index)).map((c) => name(c.hex));
+  if (hid.length) out.push(`hidden ${hid.join(', ')}`);
+  const rec: string[] = [];
+  if (q.id === 'custom') {
+    const base = q.motif?.palette ?? [...new Set((q.motif?.paths ?? []).map((m) => m.color))];
+    base.forEach((b, i) => { if (q.recolor?.[i] && q.recolor[i].toLowerCase() !== b.toLowerCase() && !isHidden(q, i)) rec.push(`${name(b)} to ${name(q.recolor[i])}`); });
+  } else {
+    const d = PATTERNS[q.id].defaults.colors;
+    q.colors.forEach((c, i) => { if (i > 0 && c !== d[i] && !isHidden(q, i)) rec.push(`${name(d[i])} to ${name(c)}`); });
+  }
+  if (rec.length) out.push(`recoloured ${rec.join(', ')}`);
+  return out.join('; ');
 }

@@ -42,6 +42,10 @@ export interface PatternMotif {
   aspect: number;
   /** when the upload was already a repeating pattern: the detected repeat tile in source pixels */
   detectedTile?: { w: number; h: number };
+  /** up to 8 quantised colours of the picture (hex), most used first; hidden and recolor refer to these */
+  palette?: string[];
+  /** the picture before colours were hidden or recoloured (image holds the edited result) */
+  source?: string;
 }
 
 export interface FabricPattern {
@@ -61,6 +65,13 @@ export interface FabricPattern {
   motifScale?: number;
   /** recolour vector motifs: colours replace motif.paths colours in order */
   recolor?: string[];
+  /** how strongly the pattern shows over the base cloth colour, 0 to 1 (omitted = 1) */
+  opacity?: number;
+  /** shift of the pattern on the cloth along its own axes, cm (omitted = 0) */
+  offsetX?: number;
+  offsetY?: number;
+  /** colour indexes that are hidden so the cloth shows through (built in: index into colors, never 0; motif: index into its colours) */
+  hidden?: number[];
 }
 
 export type FabricCategory = 'shirting' | 'denim' | 'knits' | 'outerwear' | 'special';
