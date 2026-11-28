@@ -37,7 +37,7 @@ function ShapePreview({ shape, edge, onEdge }: { shape: { x: number; y: number; 
             <path d={d} fill="none" stroke={on ? 'var(--accent)' : 'transparent'} strokeWidth={on ? 5 : 0} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
             <path d={d} fill="none" stroke="transparent" strokeWidth={22} vectorEffect="non-scaling-stroke" />
             <circle cx={m.x} cy={m.y} r={r} fill={on ? 'var(--accent-fill)' : 'var(--bg-elevated)'} stroke={on ? 'var(--accent-fill)' : 'var(--label-2)'} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-            <text x={m.x} y={m.y} fontSize={r * 1.25} textAnchor="middle" dominantBaseline="central" fill={on ? '#fff' : 'var(--label)'} fontWeight={700}>{i + 1}</text>
+            <text x={m.x} y={m.y} fontSize={r * 1.25} textAnchor="middle" dominantBaseline="central" fill={on ? 'var(--on-accent)' : 'var(--label)'} fontWeight={700}>{i + 1}</text>
           </g>
         );
       })}

@@ -116,11 +116,15 @@ export function TechPackPanel() {
     { icon: 'stripes', title: 'Bands', note: `${e?.bands?.length ?? 0} across the garment, shown in the cover render` },
     { icon: 'note', title: 'Notes', note: `${project.notes?.length ?? 0} drawn on the pattern` },
   ];
-  const exportPdf = () => {
+  // Doherty: the PDF takes a while, so the button shows progress, then a brief pulse when it is done
+  const [pdf, setPdf] = useState<'idle' | 'busy' | 'done'>('idle');
+  const exportPdf = async () => {
+    if (pdf === 'busy') return;
     const canvas = document.querySelector('.viewport canvas') as HTMLCanvasElement | null;
     let shot: string | null = null;
     try { shot = canvas ? canvas.toDataURL('image/png') : null; } catch { shot = null; }
-    void exportTechPack(project, units, shot);
+    setPdf('busy');
+    try { await exportTechPack(project, units, shot); setPdf('done'); window.setTimeout(() => setPdf('idle'), 1200); } catch { setPdf('idle'); }
   };
   return (
     <section className="ws-page techpack" aria-label="Tech pack">
@@ -129,7 +133,9 @@ export function TechPackPanel() {
           <h2>Tech pack</h2>
           <p>{project.name} · what the PDF will contain</p>
         </div>
-        <button className="btn primary" onClick={exportPdf}><Icon name="share" size={16} /> Export PDF</button>
+        <button className={`btn primary ${pdf === 'done' ? 'pulse-ok' : ''}`} onClick={exportPdf} aria-busy={pdf === 'busy'} disabled={pdf === 'busy'}>
+          <Icon name={pdf === 'busy' ? 'refresh' : pdf === 'done' ? 'check' : 'share'} size={16} /> {pdf === 'busy' ? 'Making the PDF…' : pdf === 'done' ? 'PDF ready' : 'Export PDF'}
+        </button>
       </header>
       <ol className="tp-list">
         {rows.map((r, i) => (
