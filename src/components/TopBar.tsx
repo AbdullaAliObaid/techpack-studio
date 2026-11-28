@@ -7,6 +7,7 @@ import { deleteProject, listProjects, saveProject } from '../lib/projects';
 import { uid } from '../lib/units';
 import { exportTechPack } from '../lib/exportPdf';
 import { piecesToDxf } from '../lib/exportDxf';
+import { realSizePdf, type Paper } from '../lib/exportPrint';
 import { flushSave, goHome, openNewFlow } from './nav';
 import { exportProjectFile, shareProjects } from './uiData';
 
@@ -47,6 +48,9 @@ export default function TopBar() {
     let shot: string | null = null;
     try { shot = canvas ? canvas.toDataURL('image/png') : null; } catch { shot = null; }
     exportTechPack(project, units, shot);
+  };
+  const exportPrint = (paper: Paper) => {
+    realSizePdf(project.pieces, project.name, paper).save(`${project.name.replace(/[^a-z0-9]+/gi, '_')}_pattern_real_size_${paper}.pdf`);
   };
   const exportDxf = () => {
     const b = project.body;
@@ -112,29 +116,6 @@ export default function TopBar() {
           )}
         </div>
         <button className="btn ghost" title="Duplicate this project" onClick={duplicate}><Icon name="copy" size={16} /> Duplicate</button>
-        <div className="menu-wrap">
-          <button className="btn ghost" aria-haspopup="menu" aria-expanded={menu === 'export'} onClick={() => openMenu('export')}>
-            <Icon name="share" size={16} /> Export <Icon name="chevron" size={12} />
-          </button>
-          {menu === 'export' && (
-            <div className="menu wide" role="menu">
-              <div className="menu-label">Send to a factory</div>
-              <button role="menuitem" onClick={() => { exportPdf(); setMenu(null); }}>
-                <b>Tech pack (PDF)</b>
-                <small>Cover with 3D render, pattern sheet, specs, fit, seams, materials</small>
-              </button>
-              <button role="menuitem" onClick={() => { exportDxf(); setMenu(null); }}>
-                <b>Pattern (DXF)</b>
-                <small>Full size, cut and sewing lines, grain lines, in mm</small>
-              </button>
-              <div className="menu-label">Share with people</div>
-              <button role="menuitem" onClick={() => { exportProjectFile([project]); setMenu(null); }}>
-                <b>Project file (.techit)</b>
-                <small>Others can import it into their tech-it and keep editing</small>
-              </button>
-            </div>
-          )}
-        </div>
       </div>
 
       <input className="proj-name" aria-label="Project name" value={project.name} onChange={(e) => rename(e.target.value)} />
@@ -142,6 +123,38 @@ export default function TopBar() {
 
       <div className="spacer" />
 
+      <div className="menu-wrap export-as">
+        <button className="btn primary export-btn" aria-haspopup="menu" aria-expanded={menu === 'export'} onClick={() => openMenu('export')}>
+          <Icon name="share" size={16} /> Export as <Icon name="chevron" size={12} />
+        </button>
+        {menu === 'export' && (
+          <div className="menu wide right" role="menu">
+            <div className="menu-label">Send to a factory</div>
+            <button role="menuitem" onClick={() => { exportPdf(); setMenu(null); }}>
+              <b>Tech pack (PDF)</b>
+              <small>Cover with 3D render, pattern sheet, specs, fit, seams, materials, close ups</small>
+            </button>
+            <button role="menuitem" onClick={() => { exportDxf(); setMenu(null); }}>
+              <b>Real size pattern (DXF)</b>
+              <small>For pattern software and cutting machines: full size, cut and sewing lines, grain, in mm</small>
+            </button>
+            <div className="menu-label">Print it yourself</div>
+            <button role="menuitem" onClick={() => { exportPrint('a4'); setMenu(null); }}>
+              <b>Real size pattern to print (A4)</b>
+              <small>Every piece at full size over A4 pages with a 5 cm test square. Print at 100%</small>
+            </button>
+            <button role="menuitem" onClick={() => { exportPrint('letter'); setMenu(null); }}>
+              <b>Real size pattern to print (Letter)</b>
+              <small>The same on US Letter pages</small>
+            </button>
+            <div className="menu-label">Share with people</div>
+            <button role="menuitem" onClick={() => { exportProjectFile([project]); setMenu(null); }}>
+              <b>Project copy (.techit)</b>
+              <small>Others import it into tech-it and keep editing</small>
+            </button>
+          </div>
+        )}
+      </div>
       <button className="icon-btn drawer-toggle" title="Show or hide the panel" aria-label="Show or hide the panel" aria-pressed={drawer} onClick={() => set({ drawer: !drawer })}><Icon name="sidebar" /></button>
       <button className="icon-btn" disabled={!past.length} onClick={undo} title="Undo (Ctrl+Z)" aria-label="Undo"><Icon name="undo" /></button>
       <button className="icon-btn" disabled={!future.length} onClick={redo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><Icon name="redo" /></button>

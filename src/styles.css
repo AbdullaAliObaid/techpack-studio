@@ -1843,3 +1843,7 @@ body.band-freehand .editor-svg [data-kind="edge"], body.band-freehand .editor-sv
 .pt-save .txt { flex: 1; min-width: 120px; min-height: 44px; }
 @media (prefers-color-scheme: dark) { .pt-chip, .pt-way-prev { box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.16); } }
 :root[data-theme="dark"] .pt-chip, :root[data-theme="dark"] .pt-way-prev { box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.16); }
+/* Export as: the one prominent action in the top bar */
+.export-as { margin-right: 8px; }
+.export-btn { min-height: 36px; padding: 0 14px; font-weight: 600; }
+.menu.right { right: 0; left: auto; }
