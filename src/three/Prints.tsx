@@ -6,7 +6,8 @@ import { useStore } from '../store';
 import type { Attachment, ShapeLayer } from '../data/edits';
 import { outlinePolygon } from '../lib/shapes';
 import { attachmentAllRings } from '../lib/trims';
-import { registerHitCloth, type ClothHit } from './hitCloth';
+import { registerHitCloth, focusHitMember, type ClothHit } from './hitCloth';
+import { memberOfVertex } from '../lib/outfitMember';
 import { NONE, type VertexPattern } from './printsAdapter';
 import { fabricHex as hexOf } from './fabricAdapter';
 import { patternFill, isPlain } from './detailsPattern';
@@ -806,6 +807,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
         const panel = pat.vPanel ? pat.panels?.[pat.vPanel[a]] : undefined;
         return {
           pieceId: pid,
+          projectId: memberOfVertex(pat.members, a),
           instance: panel?.instance ?? 0,
           copies: pat.copies?.[p] ?? 1,
           x: W.x * pat.vUV[a * 2] + W.y * pat.vUV[b * 2] + W.z * pat.vUV[c * 2],
@@ -825,7 +827,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
   useEffect(() => {
     const el = gl.domElement;
     const orbit = controls as unknown as { enabled: boolean } | null;
-    let drag: { id: string; pid: string; ox: number; oy: number; pointer: number } | null = null;
+    let drag: { id: string; pid: string; pj?: string; ox: number; oy: number; pointer: number } | null = null;
     let tap: { x: number; y: number } | null = null;
     let frame = 0;
     let last: PointerEvent | null = null;
@@ -839,11 +841,12 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
       const h = hit(e.clientX, e.clientY, false);
       const a = h ? attachmentAt(listRef.current, h.pieceId, h.instance, h.x, h.y) : null;
       if (!h || !a) { tap = { x: e.clientX, y: e.clientY }; return; }
+      focusHitMember(h);
       const st = useStore.getState();
       if (st.selAttachment !== a.id) st.set({ selAttachment: a.id });
       st.commit();
       const onOwn = h.pieceId === a.id;
-      drag = { id: a.id, pid: onOwn ? a.pieceId : h.pieceId, ox: onOwn ? 0 : a.x - h.x, oy: onOwn ? 0 : a.y - h.y, pointer: e.pointerId };
+      drag = { id: a.id, pj: h.projectId, pid: onOwn ? a.pieceId : h.pieceId, ox: onOwn ? 0 : a.x - h.x, oy: onOwn ? 0 : a.y - h.y, pointer: e.pointerId };
       if (orbit) orbit.enabled = false;
       try { el.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
       e.preventDefault();
@@ -856,7 +859,8 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
         frame = 0;
         if (!drag || !last) return;
         const h = hit(last.clientX, last.clientY, true);
-        if (!h) return;
+        // in an outfit a design stays on its own garment
+        if (!h || (drag.pj && h.projectId !== drag.pj)) return;
         const same = h.pieceId === drag.pid;
         const x = h.x + (same ? drag.ox : 0), y = h.y + (same ? drag.oy : 0);
         const cur = listRef.current.find((a) => a.id === drag!.id);
@@ -885,6 +889,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
       e.preventDefault();
       const h = hit(e.clientX, e.clientY, true);
       if (!h) return;
+      focusHitMember(h);
       try {
         const p = JSON.parse(raw) as Omit<Attachment, 'id' | 'pieceId' | 'x' | 'y'>;
         if (typeof p.w !== 'number' || typeof p.h !== 'number' || !p.kind) return;

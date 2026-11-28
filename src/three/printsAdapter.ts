@@ -17,6 +17,8 @@ export interface VertexPattern {
   vPanel?: Uint16Array;
   /** per pieceIds entry: how many placed copies of that piece there are (cloth attachment panels count as one) */
   copies?: number[];
+  /** outfits: the particle range of each garment (src/lib/outfitMember.ts) */
+  members?: { projectId: string; start: number; count: number }[];
 }
 
 export interface PanelInfo {
@@ -48,6 +50,7 @@ interface BuiltMsg {
   pieceIds?: string[];
   panels?: { start: number; count: number; pieceIndex: number; instance: number; mirror: boolean }[];
   attachmentPanels?: { attachmentId: string; start: number; count: number; hostPieceId: string; hostInstance: number }[];
+  garments?: { projectId: string; start: number; count: number }[];
   /** +1 / -1 per panel: outward side relative to the mesh triangle order (not the mirrored render order) */
   panelSign?: number[];
 }
@@ -100,6 +103,7 @@ function fallback(m: BuiltMsg, pieces: Piece[]): VertexPattern {
 }
 
 function withPanels(v: VertexPattern, m: BuiltMsg): VertexPattern {
+  if (m.garments) v = { ...v, members: m.garments.map((g) => ({ projectId: g.projectId, start: g.start, count: g.count })) };
   if (!m.panels) return v;
   const att = new Map((m.attachmentPanels ?? []).map((a) => [a.start, a]));
   const hostMirror = (pieceId: string, instance: number) => {
