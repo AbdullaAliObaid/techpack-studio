@@ -344,7 +344,16 @@ export function warmStart(next: Garment3D, prev: Garment3D) {
     const a = next.panels[k], b = prev.panels[k];
     if (a.piece.role !== b.piece.role || a.mirror !== b.mirror) return false;
   }
+  // the collar turned up or down: the collar (and whatever is sewn on it) starts from its new arrangement, not from
+  // the old drape. Copying the popped collar into a build whose fold rest shape is folded (or the other way round)
+  // left the collar where it was and the fold constraints fighting it.
+  const collarMoved = next.collar !== prev.collar;
+  const fresh = (k: number): boolean => {
+    const p = next.panels[k];
+    return p.piece.role === 'collar' || (!!p.attach && fresh(p.attach.host));
+  };
   next.panels.forEach((a, k) => {
+    if (collarMoved && fresh(k)) return;
     const b = prev.panels[k];
     const buv = b.mesh.uv;
     a.mesh.uv.forEach((p, i) => {
@@ -364,10 +373,13 @@ export function warmStart(next: Garment3D, prev: Garment3D) {
     next.sim.frames = Math.min(prev.sim.frames, next.sim.sewFrames);
     return true;
   }
-  next.sim.sewFrames = 4; // already sewn, just settle
+  // already sewn, just settle; a collar placed afresh is sewn back on to the draped neckline first
+  next.sim.sewFrames = collarMoved ? COLLAR_RESEW : 4;
   next.sim.frames = 0;
   return true;
 }
+/** frames a collar placed afresh (turned up or down) takes to sew back on to the draped neckline */
+const COLLAR_RESEW = 24;
 
 /** How a piece behaves in the solver: fabric properties, adjusted for its role (rib trims, elastic, stiff brims). */
 interface Mech {
