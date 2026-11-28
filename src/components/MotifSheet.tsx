@@ -27,7 +27,7 @@ function PatternCanvas({ pattern, ground, cm, size, label }: { pattern: FabricPa
   return <canvas ref={ref} role="img" aria-label={label ?? 'Preview'} style={{ width: size, height: size }} />;
 }
 
-export default function MotifSheet({ value, onClose }: { value: PieceFabric; onClose: () => void }) {
+export default function MotifSheet({ value, onClose, target }: { value: PieceFabric; onClose: () => void; /** where the Fabric panel is dressing: one Apply button instead of the three scopes */ target?: { label: string; apply: (f: PieceFabric) => void } }) {
   const existing = value.pattern?.id === 'custom' && value.pattern.motif ? value.pattern : null;
   const [stage, setStage] = useState<Stage>(existing ? 'work' : 'start');
   const [busy, setBusy] = useState(false);
@@ -73,6 +73,7 @@ export default function MotifSheet({ value, onClose }: { value: PieceFabric; onC
     if (!pattern) return;
     const st = useStore.getState();
     const fab: PieceFabric = { ...value, pattern };
+    if (target) { target.apply(fab); onClose(); return; }
     if (where === 'inside') {
       const f = { id: fab.id, color: fab.color, hex: fab.hex, pattern };
       if (selPiece) st.setInsideFabric(selPiece, f); else st.setInsideAll(f);
@@ -143,11 +144,11 @@ export default function MotifSheet({ value, onClose }: { value: PieceFabric; onC
         <div className="motif-apply">
           <button className="btn ghost" onClick={() => { setMotif(null); setStage('start'); }}><Icon name="refresh" size={16} /> Change motif</button>
           <span className="spacer" />
-          <div className="apply-group" role="group" aria-label="Apply to">
+          {target ? <button className="btn primary" onClick={() => apply('all')}>Apply to {target.label.toLowerCase()}</button> : <div className="apply-group" role="group" aria-label="Apply to">
             <button className="btn" disabled={!selPiece} title={selPiece ? '' : 'Select a piece on the chart first'} onClick={() => apply('piece')}>{pieceName ? `Piece: ${pieceName}` : 'Selected piece'}</button>
             <button className="btn" onClick={() => apply('inside')}>{selPiece ? 'Inside of piece' : 'Inside'}</button>
             <button className="btn primary" onClick={() => apply('all')}>Apply to garment</button>
-          </div>
+          </div>}
         </div>
       )}
     </Sheet>

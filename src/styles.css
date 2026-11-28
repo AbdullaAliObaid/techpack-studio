@@ -594,6 +594,21 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .mat-head p { margin: 2px 0 0; color: var(--text-2); font-size: 12px; }
 .mat-kicker { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-2); }
 .swatch-img { border-radius: 14px; box-shadow: inset 0 0 0 0.5px var(--separator), 0 2px 6px rgba(0, 0, 0, 0.15); flex: none; display: block; }
+.dress-target { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: var(--radius-panel); background: var(--bg-elevated); box-shadow: 0 0 0 0.5px var(--separator); }
+.dress-head { display: flex; align-items: center; gap: 12px; }
+.dress-words { min-width: 0; }
+.dress-words h2 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+.dress-words p { margin: 2px 0 0; font-size: 12px; color: var(--text-2); }
+.dress-pick select { width: 100%; min-height: 44px; padding: 0 10px; border: 0; border-radius: var(--radius-control); background: var(--fill-2); color: var(--label); font: inherit; font-size: 13px; }
+.dress-pick select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dress-diff { display: flex; flex-direction: column; gap: 6px; }
+.dress-diff h3 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-2); }
+.dress-diff ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.dress-diff li { display: flex; align-items: center; gap: 6px; }
+.dress-row { flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 8px; border: 0; border-radius: var(--radius-control); background: var(--fill-2); text-align: left; color: var(--label); }
+.dress-row span { display: flex; flex-direction: column; min-width: 0; font-size: 13px; }
+.dress-row small { font-size: 11px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dress-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .faces-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: var(--radius-panel); background: var(--bg-elevated); box-shadow: 0 0 0 2px var(--accent); }
 .faces-card h3 { font-size: 15px; font-weight: 700; margin: 0; }
 .faces-card header p { color: var(--text-2); font-size: 12px; margin-top: 2px; }

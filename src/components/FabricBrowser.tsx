@@ -3,6 +3,7 @@
 // It edits one PieceFabric and knows nothing about where it goes: the caller decides (whole garment, one piece, the
 // inside face, an attachment).
 import { useMemo, useState } from 'react';
+import type React from 'react';
 import { FABRICS, fabricById, stretchLabel, type FabricPattern } from '../data/fabrics';
 import type { PieceFabric } from '../data/presets';
 import { fabricDataUrl } from '../lib/textures';
@@ -31,7 +32,10 @@ export const fabricLabel = (fb: PieceFabric) => {
   return `${f.name}, ${col}${fb.pattern && fb.pattern.id !== 'solid' ? `, ${patternList().find((p) => p.id === fb.pattern!.id)?.name ?? fb.pattern.id}` : ''}`;
 };
 
-export default function FabricBrowser({ value, onChange, idKey }: { value: PieceFabric; onChange: (f: PieceFabric) => void; idKey: string }) {
+/** `part` shows one third of the browser (the Fabric | Colour | Pattern control of the Fabric panel); without it everything shows. `targetLabel` names where a motif goes. */
+export type FabricPart = 'fabric' | 'colour' | 'pattern';
+export default function FabricBrowser({ value, onChange, idKey, part, targetLabel }: { value: PieceFabric; onChange: (f: PieceFabric) => void; idKey: string; part?: FabricPart; targetLabel?: string }) {
+  const showFab = !part || part === 'fabric', showCol = !part || part === 'colour', showPat = !part || part === 'pattern';
   const [cat, setCat] = useState('all');
   const [q, setQ] = useState('');
   const cats = useMemo(() => fabricCategories(), []);
@@ -52,6 +56,7 @@ export default function FabricBrowser({ value, onChange, idKey }: { value: Piece
 
   return (
     <div className="fabbrowser">
+      {showFab && <>
       <label className="fb-search">
         <Icon name="search" size={14} />
         <input type="search" aria-label="Search fabrics" placeholder="Search fabrics" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -73,14 +78,18 @@ export default function FabricBrowser({ value, onChange, idKey }: { value: Piece
         })}
         {!list.length && <p className="group-note fb-none">No fabric matches. Try another word or category.</p>}
       </div>
+      </>}
 
       <div className="fb-detail">
+        {showFab && <>
         <div className="fb-detail-head">
           <b>{cur.name}</b>
           <span className={`chip s${cur.stretch < 0.05 ? 0 : cur.stretch < 0.15 ? 1 : 2}`}>{stretchLabel(cur.stretch)}</span>
           <span className="fb-weight">{cur.weight}, {cur.gsm} gsm</span>
         </div>
         <p className="fabric-blurb">{cur.blurb}</p>
+        </>}
+        {showCol && <>
         <div className="sublabel">Colour</div>
         <div className="fb-colors" role="group" aria-label="Fabric colour">
           {cur.colors.map((c, i) => {
@@ -109,15 +118,16 @@ export default function FabricBrowser({ value, onChange, idKey }: { value: Piece
               onBlur={() => setHexText('')} />
           </div>
         )}
+        </>}
       </div>
 
-      <FinishRow value={value} onChange={onChange} />
-      <PatternSection value={value} onChange={onChange} idKey={idKey} />
+      {showFab && <FinishRow value={value} onChange={onChange} />}
+      {showPat && <PatternSection value={value} onChange={onChange} idKey={idKey} bare={!!part} targetLabel={targetLabel} />}
     </div>
   );
 }
 
-function PatternSection({ value, onChange, idKey }: { value: PieceFabric; onChange: (f: PieceFabric) => void; idKey: string }) {
+function PatternSection({ value, onChange, idKey, bare, targetLabel }: { value: PieceFabric; onChange: (f: PieceFabric) => void; idKey: string; bare?: boolean; targetLabel?: string }) {
   const pats = useMemo(() => patternList(), []);
   const cur = value.pattern && value.pattern.id !== 'solid' ? value.pattern : null;
   const ground = fabricHex(value);
@@ -139,8 +149,8 @@ function PatternSection({ value, onChange, idKey }: { value: PieceFabric; onChan
     const info = pats.find((p) => p.id === id)!;
     return cur && cur.id === id ? cur : { id: id as FabricPattern['id'], colors: [ground, ...info.colors.slice(1)], scale: info.scale, rotation: 0, method: 'printed' };
   };
-  return (
-    <Disclosure id={`fab-pattern-${idKey}`} title="Pattern" icon="stripes" count={cur ? 1 : undefined}>
+  const body = (
+    <>
       <div className="pat-live" aria-label="Live preview of the fabric" role="img" style={cur?.id === 'custom' ? { backgroundImage: `url(${customPatternUrl(cur, value.id, ground, 220)})`, backgroundSize: 'cover' } : swatchStyle(fabricDataUrl(f, ground), cur ?? undefined, 220)} />
       <div className="pat-grid" role="list" aria-label="Patterns">
         <button role="listitem" className={`pat-tile motif-tile ${cur?.id === 'custom' ? 'on' : ''}`} aria-pressed={cur?.id === 'custom'} onClick={() => setSheet(true)}>
@@ -158,7 +168,7 @@ function PatternSection({ value, onChange, idKey }: { value: PieceFabric; onChan
           );
         })}
       </div>
-      {sheet && <MotifSheet value={value} onClose={() => setSheet(false)} />}
+      {sheet && <MotifSheet value={value} onClose={() => setSheet(false)} target={targetLabel ? { label: targetLabel, apply: onChange } : undefined} />}
       {cur?.id === 'custom' && (
         <button className="btn wide" onClick={() => setSheet(true)}><Icon name="draw" size={16} /> Edit your motif</button>
       )}
@@ -186,8 +196,9 @@ function PatternSection({ value, onChange, idKey }: { value: PieceFabric; onChan
           </div>
         </>
       )}
-    </Disclosure>
+    </>
   );
+  return bare ? <div className="fb-pattern">{body}</div> : <Disclosure id={`fab-pattern-${idKey}`} title="Pattern" icon="stripes" count={cur ? 1 : undefined}>{body}</Disclosure>;
 }
 
 const FINISHES: { id: NonNullable<PF['sheen']>; note: string }[] = [

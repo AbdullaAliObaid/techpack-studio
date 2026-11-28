@@ -18,42 +18,14 @@ import AttachmentEditor from './AttachmentEditor';
 import PosePanel from './PosePanel';
 import { BodyFields, BodyType } from './BodyPanel';
 import { SavedBodies } from './BodyPresets';
-import { FacesSection, FitPick, PieceNumbers, PointCard, ReviewSections } from './Inspector';
+import FabricDress from './FabricDress';
+import { FitPick, PieceNumbers, PointCard, ReviewSections } from './Inspector';
 import FinishPanel from './FinishPanel';
 import { DesignModeSeg } from './DesignSide';
 import { byLayer, useOutfit } from './uiData';
 import Icon from './Icon';
 
-function FabricPanel() {
-  const { project, selPiece, fabricScope, set, applyFabric } = usePick('project', 'selPiece', 'fabricScope', 'set', 'applyFabric');
-  const style = CATALOG.find((s) => s.id === migrateGarment(project.garment));
-  const piece = project.pieces.find((p) => p.id === selPiece);
-  const scope = piece ? fabricScope : 'all';
-  const current = (piece ?? project.pieces[0]).fabric;
-  const cf = fabricById(current.id);
-  return (
-    <>
-      <div className="mat-head">
-        <FabricSwatch fabric={current} size={72} label={`${cf.name} swatch`} />
-        <div>
-          <span className="mat-kicker">Material</span>
-          <h2>{style?.name ?? 'Garment'}</h2>
-          <p>{fabricLabel(current)}{piece ? ` on ${piece.name}` : ', whole garment'}</p>
-        </div>
-      </div>
-      <FacesSection />
-      <Disclosure id="gar-fabric" title="Fabric, colour and pattern" icon="grid" openFirst>
-        <div className="seg full">
-          <button className={scope === 'all' ? 'on' : ''} onClick={() => set({ fabricScope: 'all' })}>Whole garment</button>
-          <button className={scope === 'piece' ? 'on' : ''} disabled={!piece} onClick={() => set({ fabricScope: 'piece' })}>
-            {piece ? piece.name : 'Select a piece'}
-          </button>
-        </div>
-        <FabricBrowser idKey="outside" value={current} onChange={applyFabric} />
-      </Disclosure>
-    </>
-  );
-}
+function FabricPanel() { return <FabricDress />; }
 
 function PaintPanel() {
   const { paintTab, set } = usePick('paintTab', 'set');

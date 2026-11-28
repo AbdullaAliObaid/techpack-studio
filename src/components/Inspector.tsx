@@ -39,66 +39,6 @@ export function CollarControl() {
   );
 }
 
-/** Outside and inside of the garment: a two face preview of the selected piece, a default for the whole garment, and the chart face. */
-export function FacesSection() {
-  const { project, selPiece, viewFace, set, setInsideFabric, setInsideAll, commit, updatePiece } = usePick('project', 'selPiece', 'viewFace', 'set', 'setInsideFabric', 'setInsideAll', 'commit', 'updatePiece');
-  const piece = project.pieces.find((p) => p.id === selPiece);
-  /** outside fabric of one piece, or of every piece (null) */
-  const setOutside = (pieceId: string | null, f: PieceFabric) => {
-    commit();
-    if (pieceId) updatePiece(pieceId, { fabric: { ...f } });
-    else useStore.setState((s) => ({ project: { ...s.project, pieces: s.project.pieces.map((p) => ({ ...p, fabric: { ...f } })), updatedAt: Date.now() } }));
-  };
-  const inside = project.edits?.insideFabric ?? {};
-  const collar = project.edits?.collar;
-  const show = piece ?? project.pieces[0];
-  const own = inside[show.id];
-  const insideFab = own ?? show.fabric;
-  const outName = faceName(project.garment, show, 'outside', collar), inName = faceName(project.garment, show, 'inside', collar);
-  const all = project.pieces.every((p) => inside[p.id]);
-  const first = inside[project.pieces[0].id];
-  return (
-    <section className="faces-card" aria-label="Inside and outside">
-      <header>
-        <h3>Inside and outside</h3>
-        <p>Each piece has two faces. Press a face to turn the pattern over to it. The inside can be a different fabric or colour.</p>
-      </header>
-      <div className="faces-pair" role="group" aria-label={`${show.name}, both faces`}>
-        <button className={`face ${viewFace === 'outside' ? 'on' : ''}`} onClick={() => set({ viewFace: 'outside', designFace: 'outside' })} aria-pressed={viewFace === 'outside'}>
-          <FabricSwatch fabric={show.fabric} size={64} />
-          <b>{outName}</b><small>{fabricById(show.fabric.id).name}</small>
-        </button>
-        <button className={`face ${viewFace === 'inside' ? 'on' : ''}`} onClick={() => set({ viewFace: 'inside', designFace: 'inside' })} aria-pressed={viewFace === 'inside'}>
-          <FabricSwatch fabric={insideFab} size={64} />
-          <b>{inName}</b><small>{own ? fabricById(own.id).name : 'Same as outside'}</small>
-        </button>
-      </div>
-      <p className="faces-for">
-        {piece ? <>Editing the <b>{viewFace === 'inside' ? inName.toLowerCase() : outName.toLowerCase()}</b> of <b>{piece.name}</b></> : `Select a piece on the pattern to change only that piece. Below changes the ${viewFace === 'inside' ? 'inside' : 'outside'} of the whole garment.`}
-      </p>
-      {/* the pickers follow the face chosen above: Outside edits the outside fabric, Inside edits the inside fabric */}
-      {viewFace === 'outside' ? (
-        <>
-          {piece && <FabricPick key={`out-${piece.id}`} id="outside-fab" canReset={false} value={piece.fabric} onChange={(f) => f && setOutside(piece.id, f)} />}
-          <div className="faces-all">
-            <SubLabel>Whole garment, outside</SubLabel>
-            <FabricPick key="out-all" id="outside-all" canReset={false} value={project.pieces[0].fabric} onChange={(f) => f && setOutside(null, f)} />
-          </div>
-        </>
-      ) : (
-        <>
-          {piece && <FabricPick key={`in-${piece.id}`} id="inside-fab" sameLabel="Same as outside" value={own} host={piece.fabric} onChange={(f) => setInsideFabric(piece.id, f ?? null)} />}
-          <div className="faces-all">
-            <SubLabel>Whole garment, inside</SubLabel>
-            <FabricPick key="in-all" id="inside-all" sameLabel="Same as outside" host={project.pieces[0].fabric} value={all ? first : undefined} onChange={(f) => setInsideAll(f ?? null)} />
-          </div>
-        </>
-      )}
-    </section>
-  );
-}
-
-
 /** Hooks for the numbers you can type into: a measurement field when the pattern has something to move, a plain number otherwise. */
 function useField() {
   const { project, units } = usePick('project', 'units');
