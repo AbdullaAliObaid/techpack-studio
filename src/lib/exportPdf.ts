@@ -485,7 +485,7 @@ export async function buildTechPack(p: Project, units: Units, snapshot: string |
   }
 
   // ================= 3b. wash and distress =================
-  const wash = finishRows(p.garment, p.pieces, edits?.finish);
+  const wash = finishRows(p.garment, p.pieces, edits?.finish, edits?.attachments ?? []);
   if (wash.length) {
     sh.page('Wash and distress');
     table(sh, [{ title: 'No', w: 9 }, { title: 'Process', w: 84 }, { title: 'Location', w: 100 }, { title: 'Area', w: 36 }, { title: 'Strength', w: 18 }], wash.map((r) => [

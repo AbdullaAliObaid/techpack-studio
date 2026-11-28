@@ -287,6 +287,7 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
         )}
         {att.kind !== 'embroidery' && att.kind !== 'print' && <SheenPick metal={!!hw} value={hw?.sheen ?? att.sheen} onChange={(sheen) => (hw ? setHw({ sheen }) : patch({ sheen }))} />}
         {(att.kind === 'embroidery' || att.kind === 'print') && <SheenPick value={att.sheen} onChange={(sheen) => patch({ sheen })} />}
+        {att.kind !== 'hardware' && <Row label="Not washed (added after wash)"><Switch on={!!att.afterWash} onChange={(afterWash) => patch({ afterWash })} label="Not washed, added after wash" /></Row>}
         {att.kind === 'print' && (
           <>
             <Row label="Blend with fabric"><Switch on={att.blend !== false} onChange={(blend) => patch({ blend })} label="Blend with fabric" /></Row>
