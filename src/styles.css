@@ -152,7 +152,7 @@
 
 /* ---------- base ---------- */
 * { box-sizing: border-box; }
-html, body, #root { margin: 0; height: 100%; overflow: hidden; background: var(--bg-grouped); color: var(--label); }
+html, body, #root { margin: 0; height: 100%; overflow: hidden; overflow: clip; background: var(--bg-grouped); color: var(--label); }
 button { font: inherit; color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 button:disabled { opacity: 0.35; cursor: default; }
 input { font: inherit; color: inherit; }
@@ -174,7 +174,7 @@ b { font-weight: 600; }
   .material { background: var(--bg-elevated); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 
-.app { position: relative; overflow: hidden; display: flex; flex-direction: column; height: 100%; background: var(--bg-grouped); }
+.app { position: relative; overflow: hidden; overflow: clip; display: flex; flex-direction: column; height: 100%; background: var(--bg-grouped); }
 
 /* ---------- shared controls ---------- */
 .btn {

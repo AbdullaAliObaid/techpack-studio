@@ -38,6 +38,18 @@ export default function App() {
   useApplyTheme();
   // press and drag (or wheel) to roll through every sideways row of options
   useEffect(() => installDragScroll(), []);
+  // the app never scrolls as a whole: a focus or scrollIntoView deep inside used to scroll the root and push the top
+  // bar (Export as, project name) out of sight above the window
+  useEffect(() => {
+    // any element that holds the top bar must stay at scroll 0
+    const pin = (e: Event) => {
+      const t = e.target instanceof Document ? document.documentElement : (e.target as HTMLElement);
+      const bar = document.querySelector('.topbar');
+      if (t && bar && t.contains(bar) && (t.scrollTop || t.scrollLeft)) { t.scrollTop = 0; t.scrollLeft = 0; }
+    };
+    window.addEventListener('scroll', pin, true);
+    return () => window.removeEventListener('scroll', pin, true);
+  }, []);
   const STACK = '(max-width: 960px) and (orientation: portrait)';
   const [stacked, setStacked] = useState(() => window.matchMedia(STACK).matches);
   const [split, setSplit] = useState(() => (window.matchMedia(STACK).matches ? 52 : window.innerWidth < 1300 ? 56 : 52));
