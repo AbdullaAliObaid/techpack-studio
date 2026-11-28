@@ -64,6 +64,14 @@ const cases: [string, Act[], unknown[]?][] = [
   ['movement picked while sewing', [{ at: 2, msg: { type: 'mode', mode: 'walk' } }, { at: 3, msg: { type: 'mode', mode: 'stand' } }]],
   ['edit while sewing (warm start)', [{ at: 5, msg: (p: ReturnType<typeof makePreset>) => ({ type: 'build', garment: style, pieces: p.map((pc, k) => (k ? pc : { ...pc, points: pc.points.map((pt, i) => (i === 1 ? { ...pt, x: pt.x + 0.5 } : pt)) })), body, warm: true, spacing: 1.8, edits: styleEdits(style, p, body) }) }]],
 ];
+// a different under collar fabric is the collar's other ply: it must not stiffen the collar and lift the shirt
+{
+  const st: StyleId = 'polo';
+  const r0 = await run(st, []);
+  const poly = (p: ReturnType<typeof makePreset>) => { const e = styleEdits(st, p, body); const col = p.find((q) => q.role === 'collar')!; return { type: 'build', garment: st, pieces: p, body, warm: true, spacing: 1.8, edits: { ...e, insideFabric: { ...(e.insideFabric ?? {}), [col.id]: { ...col.fabric, id: 'poly', color: 0 } } } }; };
+  const r1 = await run(st, [{ at: 300, msg: poly }]);
+  verdict(r1.bad === 0 && Math.abs(r1.hi - r0.hi) < 2 && Math.abs(r1.lo - r0.lo) < 2, `polo, polyester under collar: y ${r1.lo.toFixed(1)}..${r1.hi.toFixed(1)} vs ${r0.lo.toFixed(1)}..${r0.hi.toFixed(1)}`);
+}
 for (const [name, acts, before] of cases) {
   // the first case: show the body once the hidden drape has frozen
   let r: { lo: number; hi: number; bad: number; frames: number };

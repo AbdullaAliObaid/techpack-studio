@@ -387,6 +387,9 @@ const SEAT_SPEED = 20;
 /** frames a collar placed afresh (turned up or down) takes to sew back on to the draped neckline */
 const COLLAR_RESEW = 24;
 
+/** folded double layer trims: their inside fabric is the other ply, not a bagged lining */
+const TRIM_ROLES = new Set(['collar', 'cuff', 'placket', 'neckband', 'waistband', 'headband', 'strap', 'facing', 'flyFacing', 'flyShield', 'pocketFacing']);
+
 /** How a piece behaves in the solver: fabric properties, adjusted for its role (rib trims, elastic, stiff brims). */
 interface Mech {
   stretch: number; // safe stretch, also the strain limit
@@ -1343,7 +1346,10 @@ export function assemble(type: GarmentType, pieces0: Piece[], body: Body, spacin
   const bandGather = band ? Math.min(1, band.elastic! / (Math.max(...band.points.map((q) => q.x)) * 2)) : 1;
   for (const pi of insts) {
     // a pattern piece with a different cloth inside: the two bend, weigh and stretch as one stack
-    if (!pi.attach) { const S = stackOf(pi.piece, edits); if (S.plies.length > 1) pi.stack = S; }
+    // a trim (collar, cuff, placket, bands) is already a folded double layer: a different inside fabric is its other
+    // ply, not an extra lining on top, so it keeps its own handling. Stacking it made a polyester under collar stand
+    // stiff and lift the whole shirt.
+    if (!pi.attach && !TRIM_ROLES.has(pi.piece.role)) { const S = stackOf(pi.piece, edits); if (S.plies.length > 1) pi.stack = S; }
     const M = mechanics(pi.piece, style, { collarUp: collarIs === 'up', legacyCollar, ...(pi.mech ?? {}), ...(pi.stack ? { stack: pi.stack } : {}) });
     const bend0 = bend.length;
     const { uv, tris } = pi.mesh;
