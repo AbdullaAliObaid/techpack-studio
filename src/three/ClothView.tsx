@@ -1,5 +1,5 @@
 import { subscribeArt } from './detailsArt';
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { GarmentType, Piece } from '../data/presets';
@@ -10,6 +10,8 @@ import { useStore } from '../store';
 import Details, { type DetailUpdater } from './Details';
 import type { DetailsMsg } from '../sim/details';
 import Prints from './Prints';
+import FinishBrush from './FinishBrush';
+import { holesVersion, subscribeHoles, withHoles } from './detailsFinish';
 import { clothMaterials } from './detailsCloth';
 import Hardware from './Hardware';
 import Pull from './Pull';
@@ -330,12 +332,19 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [topo, insideFabric, labelKey],
   );
+  // holes and rips of the Finish workspace are cut out of the cloth through an alpha map per panel (detailsFinish.ts)
+  const holesV = useSyncExternalStore(subscribeHoles, holesVersion);
+  const clothH = useMemo(() => (cloth ? { ...cloth, outside: withHoles(cloth.outside), inside: withHoles(cloth.inside) } : null), [cloth, holesV]);
+  useEffect(() => () => {
+    if (!cloth || !clothH) return;
+    for (const m of [...clothH.outside, ...clothH.inside]) if (!cloth.outside.includes(m) && !cloth.inside.includes(m)) m.dispose();
+  }, [cloth, clothH]);
   // satin, glossy and metallic finishes reflect the studio environment a little stronger than plain cloth
   useEffect(() => {
-    if (!cloth) return;
-    for (const m of [...cloth.outside, ...cloth.inside]) if (m.userData.finishEnv) { (m as THREE.MeshStandardMaterial).envMap = sceneRef.environment; m.needsUpdate = true; }
+    if (!clothH) return;
+    for (const m of [...clothH.outside, ...clothH.inside]) if (m.userData.finishEnv) { (m as THREE.MeshStandardMaterial).envMap = sceneRef.environment; m.needsUpdate = true; }
     invalidate();
-  }, [cloth, sceneRef, invalidate]);
+  }, [clothH, sceneRef, invalidate]);
   return (
     <group ref={rootRef}>
       {showBody && skinned && <primitive object={skinned} material={skinMat} />}
@@ -343,11 +352,12 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
         <mesh key={i} ref={(el) => { if (el) jointRefs.current[i] = el; }} geometry={jointGeo} material={jointMat} renderOrder={10} />
       ))}
       {showGarment && !loading && topo && (
-        <mesh geometry={topo.geo} material={stretch || !cloth ? topo.fabrics.map(() => stretchMat) : cloth.outside} castShadow receiveShadow frustumCulled={false} />
+        <mesh geometry={topo.geo} material={stretch || !clothH ? topo.fabrics.map(() => stretchMat) : clothH.outside} castShadow receiveShadow frustumCulled={false} />
       )}
-      {showGarment && !loading && topo && cloth?.twoSided && !stretch && (
-        <mesh geometry={topo.geo} material={cloth.inside} receiveShadow frustumCulled={false} />
+      {showGarment && !loading && topo && clothH?.twoSided && !stretch && (
+        <mesh geometry={topo.geo} material={clothH.inside} receiveShadow frustumCulled={false} />
       )}
+      {showGarment && !loading && topo && <FinishBrush />}
       {showGarment && !loading && topo && <Prints geo={topo.geo} pat={topo.pat} visible={!stretch} all={allAttachments} />}
       {showGarment && !loading && topo && hardware && <Hardware data={hardware} geo={topo.geo} visible={!stretch} updater={hardwareUpdater} />}
       {showGarment && !loading && topo && attachDetails && <Details data={attachDetails} geo={topo.geo} visible={!stretch} updater={attachUpdater} />}

@@ -19,7 +19,7 @@ import PosePanel from './PosePanel';
 import { BodyFields, BodyType } from './BodyPanel';
 import { SavedBodies } from './BodyPresets';
 import { FacesSection, FitPick, PieceNumbers, PointCard, ReviewSections } from './Inspector';
-import { FinishCard } from './Workspaces';
+import FinishPanel from './FinishPanel';
 import { DesignModeSeg } from './DesignSide';
 import { byLayer, useOutfit } from './uiData';
 import Icon from './Icon';
@@ -198,7 +198,7 @@ function Body({ ws }: { ws: string }) {
     case 'trims': return <AttachPanel mode="trims" />;
     case 'fit': return <FitPanel />;
     case 'outfit': return <OutfitPanel />;
-    case 'finish': return <FinishCard />;
+    case 'finish': return <FinishPanel />;
     case 'review': return <><ProductionChecks /><CloseUps /><NotesList /><ReviewSections /></>;
     default: return null;
   }

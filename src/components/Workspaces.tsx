@@ -1,4 +1,4 @@
-// The workspace bar, plus the two simple workspaces: Finish (coming) and Tech pack (preview + export).
+// The workspace bar, plus the Tech pack workspace (preview + export).
 import { useEffect, useRef, useState } from 'react';
 import { useStore, usePick } from '../store';
 import { visibleWorkspaces, type Workspace } from './designDoc';
@@ -6,6 +6,7 @@ import { useOutfit } from './uiData';
 import { exportTechPack } from '../lib/exportPdf';
 import { CATALOG, migrateGarment } from '../data/catalog';
 import Icon from './Icon';
+import { finishRows, hasFinish } from '../data/finish';
 
 const fitSoon = () => requestAnimationFrame(() => window.dispatchEvent(new Event('tps-fit')));
 
@@ -96,24 +97,6 @@ export function useWorkspaceKeys() {
   }, []);
 }
 
-export function FinishCard() {
-  return (
-    <div className="finish-wrap">
-      <div className="ws-card">
-        <span className="ws-card-ico" aria-hidden="true"><Icon name="sparkle" size={22} /></span>
-        <h2>Finish is coming</h2>
-        <p>Wash and distressing are next: fades, whiskering, abrasion and garment dye, previewed live on the 3D garment.</p>
-        <ul className="ws-soon">
-          <li><Icon name="refresh" size={16} />Wash and fade</li>
-          <li><Icon name="scissors" size={16} />Distressing and wear</li>
-          <li><Icon name="tag" size={16} />Dye and coating</li>
-        </ul>
-        <p className="ws-note">Your garment stays in the 3D view while you switch workspaces, so nothing re-simulates.</p>
-      </div>
-    </div>
-  );
-}
-
 export function TechPackPanel() {
   const { project, units } = usePick('project', 'units');
   const e = project.edits;
@@ -128,6 +111,8 @@ export function TechPackPanel() {
     { icon: 'seams', title: 'Seam report', note: 'Every seam with matched lengths' },
     { icon: 'garment', title: 'Materials', note: 'Fabric and colour of each piece, thread and trims' },
     { icon: 'patch', title: 'Detail sheets', note: `${designs} ${designs === 1 ? 'design' : 'designs'}, ${trims} ${trims === 1 ? 'trim or tag' : 'trims and tags'}` },
+    ...(hasFinish(e?.finish) ? [{ icon: 'sparkle', title: 'Wash and distress', note: `${finishRows(project.garment, project.pieces, e?.finish).length} processes with locations and process names` }] : []),
+    ...((e?.edgeTrims?.length ?? 0) > 0 ? [{ icon: 'seams', title: 'Edge trims', note: `${e!.edgeTrims!.length} contrast thread, binding or piping runs in the materials list` }] : []),
     { icon: 'stripes', title: 'Bands', note: `${e?.bands?.length ?? 0} across the garment, shown in the cover render` },
     { icon: 'note', title: 'Notes', note: `${project.notes?.length ?? 0} drawn on the pattern` },
   ];

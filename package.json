@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "tsx tests/accuracy.ts && tsx tests/fabrics.ts && tsx tests/snap.ts && tsx tests/share.ts && tsx tests/measure.ts && tsx tests/designs.ts && tsx tests/artwork.ts && tsx tests/bands.ts && tsx tests/edges.ts",
+    "test": "tsx tests/accuracy.ts && tsx tests/fabrics.ts && tsx tests/snap.ts && tsx tests/share.ts && tsx tests/measure.ts && tsx tests/designs.ts && tsx tests/artwork.ts && tsx tests/bands.ts && tsx tests/edges.ts && tsx tests/finish.ts",
     "test:drape": "tsx tests/drape.ts",
     "test:motion": "tsx tests/motion.ts && tsx tests/worker.ts",
     "test:clip": "tsx tests/clip.ts",

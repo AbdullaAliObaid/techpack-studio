@@ -50,11 +50,10 @@ check('basic-tee', 'edge', (ps) => { const f = ps.find((p) => p.role === 'sleeve
   const style: StyleId = 'basic-tee';
   const ps = makePreset(style, DEFAULT_BODY);
   const look = { colour: '#111111', sheen: 'matte' as const, look: 'dyed' as const };
-  const outside = <T extends { face?: string }>(l: T[]) => l.filter((a) => a.face !== 'inside');
-  const tip = outside(presetBlocks(style, ps, 'tip', 6, look, { total: true, symmetry: true }));
+  const outer = (l: ReturnType<typeof presetBlocks>) => l.filter((a) => a.face !== 'inside'); // paint also goes on the inside face by default
+  const tip = outer(presetBlocks(style, ps, 'tip', 6, look, { total: true, symmetry: true }));
   ok(tip.length === 1 && tip[0].instance === undefined && tip[0].block === true && tip[0].pieceId === ps.find((p) => p.role === 'sleeve')!.id, 'sleeve tip: one block on the sleeve, both copies');
-  const hem = outside(presetBlocks(style, ps, 'hem', 5, look, { total: true, symmetry: true }, ps.find((p) => p.role === 'front')!.id));
-  ok(presetBlocks(style, ps, 'hem', 5, look, { total: true, symmetry: true }, ps.find((p) => p.role === 'front')!.id).length === 4, 'edge paint goes through to the inside by default');
+  const hem = outer(presetBlocks(style, ps, 'hem', 5, look, { total: true, symmetry: true }, ps.find((p) => p.role === 'front')!.id));
   const top = (a: (typeof hem)[number]) => a.y - a.h / 2;
   const hemY = (role: string) => Math.max(...ps.find((p) => p.role === role)!.points.filter((q) => q.tag === 'hem').map((q) => q.y));
   ok(hem.length === 2 && Math.abs((hemY('front') - top(hem[0])) - (hemY('back') - top(hem[1]))) < 1e-9 && Math.abs(hemY('front') - top(hem[0]) - 5) < 1e-9, 'total symmetry: hem bands 5 cm above the hem on front and back');

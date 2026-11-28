@@ -22,6 +22,7 @@ import { bbox, centroid, offsetInward, samplePoly, type Pt } from './geometry';
 import { constructionReport, seamReport, cutList, fabricBom, fabricText, fitTable, garmentSpecs, hardwareMarks, noteRows, pieceSpecs, placementMarks, trimDetails, trimsReport, type TrimDetail, FABRIC_WIDTH, MARKER_WASTE } from './specs';
 import { pathRings, shapePolygon } from './shapes';
 import { edgeTrimRows } from '../data/edgeTrim';
+import { finishRows } from '../data/finish';
 import { includedPois, POI_KIND_LABEL, type Poi } from './poi';
 import { bandRanges } from '../components/designDoc';
 import { captureShots, type ShotProvider, type ShotRequest } from './detailShots';
@@ -458,6 +459,16 @@ export async function buildTechPack(p: Project, units: Units, snapshot: string |
       String(t.qty),
     ]), { title: 'Every item to place, numbered' });
     doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(MUTED).text('Numbers match the photos, the placement drawings and the callouts on the pattern sheet. Positions are to the centre of the item, measured flat on the pattern piece, outside face unless noted.', M, sh.y);
+  }
+
+  // ================= 3b. wash and distress =================
+  const wash = finishRows(p.garment, p.pieces, edits?.finish);
+  if (wash.length) {
+    sh.page('Wash and distress');
+    table(sh, [{ title: 'No', w: 9 }, { title: 'Process', w: 84 }, { title: 'Location', w: 100 }, { title: 'Area', w: 36 }, { title: 'Strength', w: 18 }], wash.map((r) => [
+      { t: String(r.no), bold: true }, r.process, r.where, r.area, r.strength,
+    ]), { title: 'Wash and distress: processes and where they go' });
+    doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(MUTED).text(doc.splitTextToSize('Positions are measured on the flat pattern piece, outside face. Marks on a piece cut twice are listed per side. Confirm every process on a sample with the laundry before bulk: wash results vary with the cloth and the batch.', W - 2 * M), M, sh.y);
   }
 
   // ================= 4. detail sheets =================

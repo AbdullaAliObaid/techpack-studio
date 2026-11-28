@@ -12,7 +12,7 @@ export const WS_TOOLS: Record<Workspace, Tool[]> = {
   trims: ['select', 'pan'],
   fit: ['select', 'pan'],
   outfit: ['select', 'pan'],
-  finish: ['select', 'pan'],
+  finish: ['brush', 'select', 'pan'],
   review: ['select', 'note', 'pan'],
   techpack: ['select'],
 };

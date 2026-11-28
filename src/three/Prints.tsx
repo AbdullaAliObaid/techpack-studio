@@ -17,6 +17,7 @@ import { blendOf, hostLook, shadeTile, fillWeave, DEFAULT_BLEND } from './detail
 import { heightTile } from './detailsWeave';
 import { drawBinding, drawEdgeThread } from './detailsEdge';
 import { showsOn } from '../data/edgeTrim';
+import { cutOpenings, drawFinishInk, drawFrayThreads, openings, pieceFin, setHoles } from './detailsFinish';
 import { applyLook, cottonTile, grainTile, labelLook, sheenLook, weaveTile, type LabelLook } from './detailsLook';
 
 // Attachment artwork on the draped cloth, plus picking and dragging in 3D.
@@ -418,6 +419,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
   const attachments = all ?? own;
   const bands = useStore((s) => s.project.edits?.bands);
   const edgeTrims = useStore((s) => s.project.edits?.edgeTrims);
+  const finish = useStore((s) => s.project.edits?.finish);
   const pieces = useStore((s) => s.project.pieces);
   const sel = useStore((s) => s.selAttachment);
   const list = useMemo(() => attachments ?? [], [attachments]);
@@ -452,6 +454,8 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
     g.setAttribute('position', geo.getAttribute('position'));
     g.setAttribute('normal', geo.getAttribute('normal'));
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    // the cloth reads the same piece uv as its second set (hole maps, see detailsFinish.ts)
+    geo.setAttribute('uv1', new THREE.BufferAttribute(uv, 2));
     g.setIndex(geo.index);
     const pos = geo.getAttribute('position') as THREE.BufferAttribute;
     const idx = geo.index!.array;
@@ -509,7 +513,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
     mesh.receiveShadow = true;
     const ink = new Map<number, Slot>();
     const thread = new Map<number, ThreadSlot>();
-    return { mesh, g, mats, inkMats, threadMats, panelOf, faceOf, ink, thread };
+    return { mesh, g, mats, inkMats, threadMats, panelOf, faceOf, ink, thread, holeSig: new Map<number, string>(), holeCanvas: new Map<number, HTMLCanvasElement>() };
   }, [geo, pat, bounds]);
 
   useEffect(() => () => {
@@ -517,6 +521,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
     rig.thread.forEach((c) => { c.colTex.dispose(); c.hgtTex.dispose(); });
     rig.mats.forEach((m) => m.dispose());
     rig.g.dispose();
+    rig.holeCanvas.forEach((_, panel) => setHoles(panel, null, [], { x0: 0, y0: 0, w: 1, h: 1 }));
   }, [rig]);
 
   // repaint panels whose artwork changed
@@ -565,12 +570,30 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
       const edgeThread = myEdges;
       const edgeKey = myEdges.length ? [myEdges, pieceDef!.points.map((q) => [q.x, q.y])] : 0;
 
+      // wash and distress of this piece copy: colour in the ink pass, openings cut, frayed threads in the thread pass
+      const myFin = !own && pieceDef ? pieceFin(finish, pid, instance) : null;
+      const finHex = pieceDef ? hexOf(pieceDef.fabric) : '#808080';
+      const finThread = !!myFin?.strokes.some((q) => q.k === 'hole' || q.k === 'rip' || q.k === 'fray');
+      const finKey = myFin ? [myFin, finHex] : 0;
+      if (face === 'outside') {
+        const cuts = myFin ? openings(myFin.strokes).length > 0 : false;
+        const hsig = cuts ? JSON.stringify(myFin!.strokes) : '';
+        if (rig.holeSig.get(panel) !== hsig) {
+          rig.holeSig.set(panel, hsig);
+          if (!cuts) setHoles(panel, null, [], b);
+          else {
+            const kh = Math.min(8, 1024 / Math.max(b.w, b.h));
+            setHoles(panel, rig.holeCanvas.get(panel) ?? (() => { const c = mkCanvas(b.w * kh, b.h * kh); rig.holeCanvas.set(panel, c); return c; })(), myFin!.strokes, b);
+          }
+        }
+      }
+
       /* ink */
       const asyncInk = inkArt.some((a) => hasPictures(a.layers) || (a.fabric?.pattern && !isPlain(a.fabric.pattern)));
       const hostL = pieceDef && !own && inkArt.some((a) => blendOf(a) > 0) ? hostLook(pieceDef.fabric.id) : null;
-      const sig = JSON.stringify([inkArt, myBands, sel, accent, flip, own, asyncInk ? artTick : 0, hostL ? pieceDef!.fabric.id : '', edgeKey]);
+      const sig = JSON.stringify([inkArt, myBands, sel, accent, flip, own, asyncInk ? artTick : 0, hostL ? pieceDef!.fabric.id : '', edgeKey, finKey]);
       let slot = rig.ink.get(slotKey);
-      if (inkArt.length || myBands.length || edgeInk.length || slot) {
+      if (inkArt.length || myBands.length || edgeInk.length || myFin || slot) {
         // pictures need more pixels than flat ink: up to 24 px per cm, never more than 2048 px a side
         const pics = inkArt.some((a) => hasPictures(a.layers));
         const kWant = Math.min(pics ? PICTURE_PX_CM : PX_PER_CM, (pics ? PICTURE_PX_MAX : MAX_PX) / Math.max(b.w, b.h));
@@ -603,6 +626,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
           ctx.clearRect(0, 0, slot.canvas.width, slot.canvas.height);
           ctx.setTransform(k, 0, 0, k, -b.x0 * k, -b.y0 * k);
           for (const bd of myBands) for (const q of bd.stripes) { ctx.fillStyle = q.color; fillStripe(ctx, q, b.x0 - 1, b.x0 + b.w + 1); }
+          if (myFin) drawFinishInk(ctx, finHex, myFin, b);
           const bl = hostL ? Math.max(0, ...inkArt.map(blendOf)) : 0;
           for (const a of inkArt) {
             const s = hostL ? blendOf(a) : 0;
@@ -616,8 +640,9 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
             if (!alone) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(sc.canvas, 0, 0); ctx.restore(); }
           }
           if (edgeInk.length) drawBinding(ctx, pieceDef!, edgeInk);
+          if (myFin?.strokes.length) cutOpenings(ctx, myFin.strokes);
           slot.tex.needsUpdate = true;
-          inkMat.visible = inkArt.length > 0 || myBands.length > 0 || edgeInk.length > 0;
+          inkMat.visible = inkArt.length > 0 || myBands.length > 0 || edgeInk.length > 0 || !!myFin;
           // gloss: the print's own sheen, else the host cloth's (leather and satin shine, knits and twills stay matte)
           applyLook(inkMat, sh ? { ...sheenLook(sh, false) } : bl ? hostL!.look : { ...sheenLook(sh, false), roughness: 0.85 });
           inkMat.opacity = bl ? 1 - (1 - hostL!.opacity) * (bl / DEFAULT_BLEND) : 1;
@@ -652,9 +677,9 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
       }
 
       /* thread */
-      const tsig = JSON.stringify([threadArt, edgeKey, flip, own, threadArt.some((a) => hasPictures(a.layers)) ? artTick : 0]);
+      const tsig = JSON.stringify([threadArt, edgeKey, finThread ? finKey : 0, flip, own, threadArt.some((a) => hasPictures(a.layers)) ? artTick : 0]);
       let ts = rig.thread.get(slotKey);
-      if (threadArt.length || edgeThread.length || ts) {
+      if (threadArt.length || edgeThread.length || finThread || ts) {
         const k = Math.min(THREAD_PX_CM, THREAD_PX_MAX / Math.max(b.w, b.h));
         if (!ts) {
           const col = mkCanvas(b.w * k, b.h * k), hgt = mkCanvas(b.w * k, b.h * k);
@@ -679,9 +704,10 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
             else drawThread(cc, hc, a, a.id === own, flip, kk);
           }
           if (edgeThread.length) drawEdgeThread(cc, hc, pieceDef!, edgeThread);
+          if (finThread) drawFrayThreads(cc, hc, finHex, myFin!.strokes);
           ts.colTex.needsUpdate = true;
           ts.hgtTex.needsUpdate = true;
-          threadMat.visible = threadArt.length > 0 || edgeThread.length > 0;
+          threadMat.visible = threadArt.length > 0 || edgeThread.length > 0 || finThread;
           // material look: a tag by its type, thread by its sheen (default satin stitch)
           const lab = threadArt.find((a) => a.kind === 'label');
           if (lab) {
@@ -697,7 +723,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
         }
       }
     });
-  }, [rig, pat, bounds, list, sel, artTick, bands, pieces, edgeTrims]);
+  }, [rig, pat, bounds, list, sel, artTick, bands, pieces, edgeTrims, finish]);
 
   /* ---- picking ---- */
   const hit = useMemo(() => {
@@ -750,7 +776,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
     const down = (e: PointerEvent) => {
       if (!visible || (e.pointerType === 'mouse' && e.button !== 0)) return;
       // Camera mode: a drag only moves the view, nothing on the garment is picked up
-      if (useStore.getState().view3dMode === 'camera') { tap = { x: e.clientX, y: e.clientY }; return; }
+      if (useStore.getState().view3dMode === 'camera' || useStore.getState().workspace === 'finish') { tap = { x: e.clientX, y: e.clientY }; return; }
       const h = hit(e.clientX, e.clientY, false);
       const a = h ? attachmentAt(listRef.current, h.pieceId, h.instance, h.x, h.y) : null;
       if (!h || !a) { tap = { x: e.clientX, y: e.clientY }; return; }

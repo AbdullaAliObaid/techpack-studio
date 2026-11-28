@@ -20,6 +20,7 @@ const TOOL: Record<Tool, { label: string; tip: string; icon: string }> = {
   seams: { label: 'Join seam', tip: 'Join seam: sew one stretch of a piece to another (J)', icon: 'seams' },
   pleat: { label: 'Pleats', tip: 'Pleats: click an edge to add one (L)', icon: 'pleat' },
   note: { label: 'Notes', tip: 'Notes: draw, add arrows and text on the chart (N)', icon: 'note' },
+  brush: { label: 'Brush', tip: 'Brush: paint wash and wear on the pattern or the 3D garment', icon: 'draw' },
   block: { label: 'Edge paint', tip: 'Edge paint: draw a shape of colour on a piece, like black sleeve tips (B)', icon: 'block' },
 };
 
@@ -31,6 +32,7 @@ const RAIL: Record<string, Item[]> = {
   paint: ['select', 'block', 'bands', 'pan'],
   review: ['select', 'note', 'measure', 'pan'],
   fit: ['select', 'measure', 'pan'],
+  finish: ['brush', 'select', 'pan'],
 };
 
 export default function Toolbar() {

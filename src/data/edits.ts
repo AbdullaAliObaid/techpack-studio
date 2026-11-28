@@ -266,6 +266,19 @@ export interface EdgeTrim {
   name?: string;
 }
 
+/** wash and wear processes painted as a colour and texture change (src/data/finish.ts) */
+export type WashKind = 'acid' | 'bleach' | 'fade' | 'stone';
+/** distressing: fray (edges and hems), whiskers (hip creases), honeycomb (behind the knee), abrasion, rip, hole (cut through) */
+export type DistressKind = 'fray' | 'whiskers' | 'honeycomb' | 'abrasion' | 'rip' | 'hole';
+export type FinishKind = WashKind | DistressKind;
+/** one brush stroke in a piece's own pattern space. Compact: flat x,y pairs in cm, rounded to 0.1 */
+export interface FinishStroke { k: FinishKind; p: number[]; /** brush radius (cm) */ r: number; /** strength 0..1 */ s: number }
+/** the strokes on one piece; omitted instance = every copy (a stroke on a mirrored pair mirrors with it) */
+export interface PieceFinish { pieceId: string; instance?: number; strokes: FinishStroke[] }
+export type WashPreset = 'none' | 'light' | 'mid' | 'dark' | 'vintage';
+/** wash and distress of the whole garment: a global wash plus strokes per piece (masks in pattern space, not bitmaps) */
+export interface GarmentFinish { preset: WashPreset; presetStrength?: number; pieces: PieceFinish[] }
+
 export type WashSequence = 'prewash' | 'garment' | 'none';
 
 export interface Edits {
@@ -283,6 +296,8 @@ export interface Edits {
   insideFabric?: Record<string, { id: string; color: number; hex?: string; pattern?: import('./fabrics').FabricPattern }>;
   /** ids of points of interest (src/lib/poi.ts) the designer left out of the tech pack's close-up pages */
   techpackSkip?: string[];
+  /** wash and distressing (Finish workspace). Omitted in older projects: none. */
+  finish?: GarmentFinish;
   /** contrast thread, binding and piping along piece edges (see EdgeTrim). Omitted in older projects: none. */
   edgeTrims?: EdgeTrim[];
   /** a front that buttons: worn buttoned (default) or open (buttonholes left unbuttoned, the fronts hang free) */

@@ -15,6 +15,8 @@ import { targetKey, type MeasureTarget } from '../data/measureEdit';
 import { fmt } from '../lib/units';
 import { pointInPoly } from '../lib/geometry';
 import { edgePolyline, insetPolyline, showsOn } from '../data/edgeTrim';
+import { KIND as FINISH_KIND, strokePts, strokesFor } from '../data/finish';
+import { openings } from '../three/detailsFinish';
 import { builtinSeams } from '../sim/seams';
 import type { Attachment, EdgeRef, Pleat } from '../data/edits';
 import { symmetryGroups } from '../data/symmetry';
@@ -48,6 +50,7 @@ type Drag =
   | { mode: 'ghost'; pieceId: string; key: string; grab: Pt; start: Pt; committed: boolean }
   | { mode: 'pen'; startClient: Pt; smoothed: boolean }
   | { mode: 'block' }
+  | { mode: 'finish'; en: Entry }
   | { mode: 'pan'; startClient: Pt; startView: View }
   | { mode: 'pinch'; startDist: number; startMid: Pt; startView: View };
 
@@ -460,6 +463,16 @@ export default function PatternEditor() {
       return panNow();
     }
 
+    // ---- finish brush: paint wash or distress on the piece under the pointer
+    if (st.tool === 'brush') {
+      const en = ent ?? entryAt(w);
+      if (!en) return panNow();
+      const l = toSource(en, w);
+      st.paintFinish(en.src.id, en.copies > 1 ? en.inst : undefined, l.x, l.y, true);
+      drag.current = { mode: 'finish', en };
+      return;
+    }
+
     // ---- colour block: drag a rectangle, or click the corners of a polygon, on a piece
     if (st.tool === 'block') {
       const en = ent ?? entryAt(w);
@@ -694,6 +707,11 @@ export default function PatternEditor() {
     }
     if (d.mode === 'pan') {
       setView({ ...d.startView, x: d.startView.x + e.clientX - d.startClient.x, y: d.startView.y + e.clientY - d.startClient.y });
+      return;
+    }
+    if (d.mode === 'finish') {
+      const l = toSource(d.en, toWorld(e.clientX, e.clientY));
+      st.paintFinish(d.en.src.id, d.en.copies > 1 ? d.en.inst : undefined, l.x, l.y, false);
       return;
     }
     if (d.mode === 'block') {
@@ -1017,6 +1035,7 @@ const HUD: Record<string, string> = {
   seams: 'Click a start point, then an end point, to pick a range to sew. Escape to stop.',
   pleat: 'Click an edge of a piece to place a pleat. Escape to stop.',
   note: 'Draw, add arrows or text notes on the chart. Notes print on the tech pack. Two fingers pan and zoom.',
+  brush: 'Drag on a piece to paint the chosen wash or wear. It also paints on the 3D garment.',
   block: 'Drag a rectangle on a piece, or click the corners of a shape. It goes on both sides and on matching pieces when symmetry is on. Escape cancels.',
   pen: 'Click to add corners. Drag for a curve. Click the first point to close. Backspace removes the last point. Escape cancels.',
 };
@@ -1114,6 +1133,7 @@ function PieceView(props: {
   const allAtts = useStore((st) => st.project.edits?.attachments);
   const viewFace = useStore((st) => st.chartFace);
   const edgeTrims = useStore((st) => st.project.edits?.edgeTrims);
+  const finishEdit = useStore((st) => st.project.edits?.finish);
   const garment = useStore((st) => st.project.garment);
   const linkedHot = useStore((st) => st.linkedHot);
   const everyAtt = allAtts ?? [];
@@ -1353,6 +1373,16 @@ function PieceView(props: {
       {/* attachments sit on their host in the host's own coordinates; designs on a pocket or tag sit inside it */}
       <defs><clipPath id={`blk-${p.id}-${inst}`}><path d={geo.d} /></clipPath></defs>
       {attachments.filter((a) => a.block).length > 0 && <g clipPath={`url(#blk-${p.id}-${inst})`}>{attachments.filter((a) => a.block).map((a) => renderAtt(a, true))}</g>}
+      {finishEdit && (finishEdit.preset !== 'none' || finishEdit.pieces.length > 0) && (
+        <g clipPath={`url(#blk-${p.id}-${inst})`} pointerEvents="none">
+          {finishEdit.preset !== 'none' && <path d={geo.d} fill={finishEdit.preset === 'dark' ? '#0a0f1c' : '#ffffff'} opacity={(finishEdit.preset === 'dark' ? 0.22 : finishEdit.preset === 'light' ? 0.45 : finishEdit.preset === 'vintage' ? 0.35 : 0.22) * (finishEdit.presetStrength ?? 1)} />}
+          {strokesFor(finishEdit, p.id, inst).map((st, i) => {
+            const pts = strokePts(st);
+            if (st.k === 'hole' || st.k === 'rip') return <path key={i} d={openings([st]).map((o) => polyD(o)).join('')} fill="var(--viewport, #1b1b1f)" stroke={FINISH_KIND.fray.tone} strokeWidth={0.12} strokeDasharray="0.25 0.15" />;
+            return <path key={i} d={pts.length > 1 ? polyD(pts).replace(/Z$/, '') : `M${pts[0].x},${pts[0].y}l0.01,0`} fill="none" stroke={FINISH_KIND[st.k].tone} strokeWidth={Math.max(0.3, st.r * 2)} strokeLinecap="round" strokeLinejoin="round" opacity={0.18 + 0.4 * st.s} style={{ mixBlendMode: 'screen' }} />;
+          })}
+        </g>
+      )}
       {(edgeTrims ?? []).filter((t) => t.edge.pieceId === p.id && (t.edge.instance === undefined || t.edge.instance === inst) && showsOn(t, viewFace === 'inside' ? 'inside' : 'outside')).map((t) => {
         const line = edgePolyline(p, t.edge);
         if (line.length < 2) return null;

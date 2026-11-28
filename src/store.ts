@@ -15,6 +15,7 @@ import { setMeasurement, targetKey, type MeasureTarget } from './data/measureEdi
 import { fitTable, garmentSpecs, pieceSpecs } from './lib/specs';
 import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorkspaceMap, defaultBand } from './components/designDoc';
 import type { Band } from './data/edits';
+import { addStroke, extendStroke, newStroke, removeLast, EMPTY_FINISH } from './data/finish';
 import { deleteOutfit as removeSavedOutfit, listOutfits, listProjects, saveOutfit, saveProject } from './lib/projects';
 import { buttonholeSet, regradeBuiltins, styleEdits, upgradeFront, withBuiltins, type ButtonholeOpts } from './data/construction';
 
@@ -94,7 +95,9 @@ export interface OutfitItem {
 }
 export interface Outfit { id: string; name: string; body: Body; items: OutfitItem[]; updatedAt: number }
 
-export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen' | 'note' | 'block';
+export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen' | 'note' | 'block' | 'brush';
+/** Finish workspace brush: the process, radius (cm) and strength 0..1 */
+export interface FinishBrush { k: import('./data/edits').FinishKind; r: number; s: number }
 /** Edge paint tool settings (src/data/colourBlock.ts) */
 export interface BlockSettings { colour: string; sheen: import('./data/edits').Sheen; look: 'dyed' | 'printed'; h: number; mode: 'rect' | 'poly'; /** how the edge gets its colour (paint is the default) */ method: import('./data/edits').EdgeMethod; /** binding width or piping cord (cm) */ width: number; /** thread weight, Tex */ tex: number; /** paint (and thread) on both faces */ bothFaces: boolean }
 /** a block being drawn: world points, on the copy it started on */
@@ -294,6 +297,12 @@ export interface State {
   blockDraft: BlockDraft | null;
   /** add edge paint blocks (one undo step) and select the first */
   addColourBlocks: (list: Omit<Attachment, 'id'>[]) => void;
+  finishBrush: FinishBrush;
+  /** start (begin) or extend a brush stroke on a piece copy, at pattern cm (x, y) */
+  paintFinish: (pieceId: string, instance: number | undefined, x: number, y: number, begin: boolean) => void;
+  setWashPreset: (preset: import('./data/edits').WashPreset, strength?: number) => void;
+  undoFinishStroke: () => void;
+  clearFinish: () => void;
   addEdgeTrims: (list: Omit<import('./data/edits').EdgeTrim, 'id'>[]) => void;
   removeEdgeTrim: (id: string) => void;
   movePiece: (pieceId: string, offset: Pt) => void;
@@ -679,6 +688,15 @@ export const useStore = create<State>((set, get) => {
       setEdits((e) => ({ ...e, attachments: [...e.attachments, ...added] }));
       set({ selAttachment: added[0].id, blockDraft: null });
     },
+    finishBrush: { k: 'fade', r: 8, s: 0.7 },
+    paintFinish: (pieceId, instance, x, y, begin) => {
+      const b = get().finishBrush;
+      if (begin) { get().commit(); setEdits((e) => ({ ...e, finish: addStroke(e.finish, pieceId, instance, newStroke(b.k, b.r, b.s, x, y)) })); }
+      else setEdits((e) => { const next = extendStroke(e.finish, pieceId, instance, x, y); return next === e.finish ? e : { ...e, finish: next }; });
+    },
+    setWashPreset: (preset, strength) => { get().commit(); setEdits((e) => ({ ...e, finish: { ...(e.finish ?? EMPTY_FINISH), preset, ...(strength !== undefined ? { presetStrength: strength } : {}) } })); },
+    undoFinishStroke: () => { get().commit(); setEdits((e) => ({ ...e, finish: removeLast(e.finish) })); },
+    clearFinish: () => { get().commit(); setEdits((e) => ({ ...e, finish: undefined })); },
     addEdgeTrims: (list) => {
       if (!list.length) return;
       get().commit();
