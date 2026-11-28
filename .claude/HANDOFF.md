@@ -58,3 +58,4 @@ components use `usePick(...)` selectors, keep that), `npx tsc --noEmit`, `npm ru
 - In flight: agent/textcut (wt-textcut: real font outlines + clip design layers to tag/patch outline), agent/notify (wt-notify: i notices, artwork under/over trims, trims panel shows patterns/motifs, tag pictures).
 - Queued next: realistic wash that also affects prints/designs; distressing for tops as rich as for pants (every tool works on any garment, top specific: collar/cuff fray, neckline wear, hem fray, sun fade on shoulders, armpit/underarm fade, pilling, holes on body).
 - Merged wash rework (detailsWash.ts), notices, under/over trims, tag pictures, Export as button, real size print PDF, root scroll pin. Queue empty apart from DESIGN.md craft sweep and small issues (outfit drop target, outfit speed, right click in 3D).
+- In flight: agent/polish (wt-polish: outfit drop target, 3D right click menu, DESIGN.md craft sweep), agent/ofast (wt-ofast: outfit sim speed, 2x target).
