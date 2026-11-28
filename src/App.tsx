@@ -20,6 +20,7 @@ import NewFlow from './components/NewFlow';
 import { nudgePatch } from './components/editHelpers';
 import { OutfitBar } from './components/Outfits';
 import { ContextMenuHost } from './components/ContextMenu';
+import Notices from './components/Notices';
 import { installOutfitFallback } from './components/uiData';
 import DesignCanvas from './components/DesignCanvas';
 import DesignLibrary from './components/DesignLibrary';
@@ -193,6 +194,7 @@ export default function App() {
       <PieceFlow />
       <PhotoSheet />
       <ContextMenuHost />
+      <Notices />
       </div>
       <div className="layer home-layer" data-state={screen === 'home' ? 'active' : screen === 'new' && newFrom === 'home' ? 'under' : 'gone'} {...inertIf(screen !== 'home')}>
         <Home />

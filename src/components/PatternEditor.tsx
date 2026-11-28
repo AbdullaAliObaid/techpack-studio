@@ -1,3 +1,4 @@
+import { notify } from './notify';
 import BandStripes from './BandStripes';
 import { inspectAttachment, inspectPiece } from './inspect';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -936,7 +937,7 @@ export default function PatternEditor() {
       e.preventDefault();
       const w = toWorld(e.clientX, e.clientY);
       const en = entryAt(w);
-      if (!en) { setNote('Drop the picture on a piece of the pattern.'); setTimeout(() => setNote(null), 2500); return; }
+      if (!en) { notify({ id: 'drop-miss', title: 'The picture was not added', body: 'It landed outside every piece, so nothing was added. Drop the picture on a piece of the pattern.', tone: 'warn' }); return; }
       const l = toSource(en, w);
       const inst = instanceFor(en);
       useStore.getState().set({ selPiece: en.src.id, selInstance: en.both ? en.inst : null, selPoint: null });
@@ -947,7 +948,7 @@ export default function PatternEditor() {
     e.preventDefault();
     const w = toWorld(e.clientX, e.clientY);
     const en = entryAt(w);
-    if (!en) { setNote('Drop it on a piece of the pattern.'); setTimeout(() => setNote(null), 2500); return; }
+    if (!en) { notify({ id: 'drop-miss-trim', title: 'Nothing was added', body: 'It landed outside every piece. Drop it on a piece of the pattern.', tone: 'warn' }); return; }
     try {
       const t = JSON.parse(raw) as Partial<Attachment>;
       if (!isAttachment(t)) return;

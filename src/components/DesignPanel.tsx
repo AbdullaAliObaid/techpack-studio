@@ -1,5 +1,6 @@
 // Design library: every tile is one simple thing (a shape, a word, a trim, a tag) that is cut and sewn on, stitched in
 // thread, printed, or fixed on as hardware. Tiles drag onto the 2D chart or the 3D model, or are added to the selection.
+import { notify } from './notify';
 import { useRef, useState } from 'react';
 import { useStore, usePick } from '../store';
 import type { Attachment, HardwareType } from '../data/edits';
@@ -77,7 +78,7 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
   const withFace = (t: AttachTemplate): AttachTemplate => (t.face ? t : designFace === 'inside' ? { ...t, face: 'inside' } : t);
 
   const addTo = (t0: AttachTemplate, at?: { x: number; y: number }): boolean => {
-    if (!host) { setNotice('Tap a piece on the pattern first, or drag this onto one.'); window.setTimeout(() => setNotice(null), 3500); return false; }
+    if (!host) { notify({ id: 'pick-piece', title: 'Pick a piece first', body: 'Tap a piece on the pattern, then add this to it. You can also drag it straight onto a piece.' }); return false; }
     setNotice(null);
     const t = withFace(t0);
     // a new design lands at the middle of its target, nudged so repeats do not hide each other
@@ -99,7 +100,7 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
     return btn.count > 1 ? { ...t, rotation: 90, name: `Buttons, ${btn.count}` } : t;
   };
   const addButtons = () => {
-    if (!piece || host?.attachment) { setNotice('Tap a piece on the pattern first, then add buttons to it.'); window.setTimeout(() => setNotice(null), 3500); return; }
+    if (!piece || host?.attachment) { notify({ id: 'pick-piece-buttons', title: 'Pick a piece first', body: 'Tap a piece on the pattern, then add buttons to it.' }); return; }
     const c = centroid(samplePoly(piece.points));
     // on the centre line of a piece cut twice (centre front) or a symmetric one; else at the middle of the piece
     const onCentre = copies === 2 || piece.symmetric;

@@ -235,6 +235,8 @@ export interface State {
   /** a garment was just picked and its first drape frame has not arrived: the 3D view hides the old garment and shows the loading scissors */
   garmentLoading: boolean;
   simStatus: string;
+  /** important notices waiting for the person to read them (src/components/notify.ts); the first is on screen */
+  notices: import('./components/notify').Notice[];
   drapePeak: { ratio: number; strain: number; where: string; over?: number };
   redrapeToken: number;
   mode: import('./sim/pose').Mode;
@@ -644,6 +646,7 @@ export const useStore = create<State>((set, get) => {
     draping: false,
     garmentLoading: false,
     simStatus: '',
+    notices: [],
     drapePeak: { ratio: 0, strain: 0, where: '' },
     redrapeToken: 0,
     mode: 'stand',

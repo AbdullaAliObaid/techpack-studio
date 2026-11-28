@@ -2,6 +2,7 @@
 // pattern's colours (hide or recolour each) and Match garment colours with suggested colourways.
 // Everything is stored on the fabric's `pattern` (optional fields), so the 2D chart, the 3D cloth and the tech pack
 // read the same values through patternTile.
+import { notify } from './notify';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FabricPattern } from '../data/fabrics';
 import { fabricHex } from '../data/fabrics';
@@ -204,7 +205,7 @@ export function YourMotifs({ cur, ground, fabricId, onApply }: { cur: FabricPatt
     let motif = cur.motif;
     if (motif.image) { try { motif = { ...motif, image: await shrinkMotifImage(motif.image) }; } catch { /* keep */ } }
     const r = saveMotif(name || `Motif ${list.length + 1}`, { ...cur, motif });
-    if (r.ok) { setList(listMotifs()); setName(''); setMsg('Saved to Your motifs.'); } else setMsg(r.message);
+    if (r.ok) { setList(listMotifs()); setName(''); setMsg('Saved to Your motifs.'); } else { setMsg(null); notify({ id: 'motif-save-failed', title: 'The motif was not saved', body: r.message, tone: 'error' }); }
   };
   if (!list.length && !canSave) return null;
   return (
@@ -219,7 +220,7 @@ export function YourMotifs({ cur, ground, fabricId, onApply }: { cur: FabricPatt
               </button>
               {rename?.id === m.id ? (
                 <input className="txt" aria-label={`Rename ${m.name}`} autoFocus value={rename.name} maxLength={60} onChange={(e) => setRename({ id: m.id, name: e.target.value })}
-                  onBlur={() => { const e = renameMotif(m.id, rename.name); setMsg(e); setList(listMotifs()); setRename(null); }}
+                  onBlur={() => { const e = renameMotif(m.id, rename.name); setMsg(null); if (e) notify({ id: 'motif-rename-failed', title: 'The name was not saved', body: e, tone: 'error' }); setList(listMotifs()); setRename(null); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setRename(null); }} />
               ) : <span className="fb-name">{m.name}</span>}
               <span className="pt-motif-act">
