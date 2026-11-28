@@ -1770,9 +1770,9 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 @media (prefers-reduced-motion: reduce) { .gl-a, .gl-b, .gl-dots { animation: none; } }
 @media (prefers-reduced-transparency: reduce) { .gl-card { background: var(--bg-elevated); -webkit-backdrop-filter: none; backdrop-filter: none; } .gl-wrap { background: var(--viewport); } }
 
-/* Camera | Edit switch, top centre of the 3D view */
-.vp-mode { position: absolute; top: 106px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 2px; padding: 3px; border-radius: 13px; border: 0.5px solid var(--material-border); box-shadow: var(--shadow); }
-.vp-mode button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; min-width: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--label-2); font-size: 12px; font-weight: 600; }
+/* Camera | Edit switch: a column on the left edge of the 3D view, against the divider */
+.vp-mode { position: absolute; top: 50%; left: 12px; transform: translateY(-50%); z-index: 3; display: flex; flex-direction: column; gap: 2px; padding: 3px; border-radius: 13px; border: 0.5px solid var(--material-border); box-shadow: var(--shadow); }
+.vp-mode button { display: inline-flex; flex-direction: column; justify-content: center; align-items: center; gap: 2px; min-height: 52px; min-width: 56px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--label-2); font-size: 11px; font-weight: 600; }
 .vp-mode button:hover { background: var(--fill-2); color: var(--label); }
 .vp-mode button.on { background: var(--accent-soft); color: var(--accent-text); }
 @media (prefers-reduced-transparency: reduce) { .vp-mode { background: var(--bg-elevated); -webkit-backdrop-filter: none; backdrop-filter: none; } }

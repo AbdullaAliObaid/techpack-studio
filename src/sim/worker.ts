@@ -214,7 +214,11 @@ function loopFrame(myGen: number) {
 // messages are handled in order; a build may wait for the body cache (IndexedDB) first
 let queue: Promise<void> = Promise.resolve();
 self.onmessage = (e: MessageEvent<BuildMsg>) => {
-  queue = queue.then(() => handle(e.data)).catch((err) => console.warn('worker message failed', err));
+  queue = queue.then(() => handle(e.data)).catch((err) => {
+    console.warn('worker message failed', err);
+    // tell the page, so it can stop the loading screen and say what went wrong instead of waiting forever
+    (self as unknown as Worker).postMessage({ type: 'error', of: (e.data as { type?: string })?.type, text: String((err as Error)?.message ?? err) });
+  });
 };
 
 const copyMesh = (m: BodyMesh): BodyMesh => ({

@@ -97,7 +97,7 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
   useLayoutEffect(() => { wantFrame.current = true; if (!seq.current.phantom && seq.current.posted === seq.current.built) { seq.current.posted++; seq.current.phantom = true; } useStore.getState().set({ garmentLoading: true }); invalidate(); }, [type, projectId]);
   useEffect(() => {
     if (!loading) return;
-    const t = setTimeout(() => { wantFrame.current = false; useStore.getState().set({ garmentLoading: false }); }, 20000); // never stuck
+    const t = setTimeout(() => { wantFrame.current = false; useStore.getState().set({ garmentLoading: false }); }, 12000); // never stuck
     return () => clearTimeout(t);
   }, [loading]);
   const redrape = useStore((s) => s.redrapeToken);
@@ -116,8 +116,13 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
   };
 
   useEffect(() => {
+    worker.onerror = (ev) => { ev.preventDefault?.(); wantFrame.current = false; setIf({ garmentLoading: false, draping: false, simStatus: 'The simulation stopped. Press Re-drape to try again.' }); };
     worker.onmessage = (e) => {
       const m = e.data;
+      if (m.type === 'error') {
+        if (m.of === 'build') { wantFrame.current = false; seq.current.built = seq.current.posted; setIf({ garmentLoading: false, draping: false, simStatus: `Could not simulate this garment: ${m.text}` }); }
+        return;
+      }
       if (m.type === 'status') {
         setIf({ draping: true, simStatus: m.text });
       } else if (m.type === 'body') {
