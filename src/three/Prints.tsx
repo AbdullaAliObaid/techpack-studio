@@ -112,6 +112,31 @@ function drawInk(ctx: CanvasRenderingContext2D, a: Attachment, local: boolean, o
   ctx.restore();
 }
 
+/**
+ * Layer order of artwork against cloth trims: artwork with Attachment.order 'under' is cut away wherever a pocket, patch,
+ * applique, strap or tag with its own cloth panel sits on the same piece, so the trim covers the design like real cloth.
+ * 'over' (and old projects, where it is unset) lets the design run across the trim.
+ */
+const underScratch: HTMLCanvasElement[] = [];
+function underCut(ctxs: CanvasRenderingContext2D[], occ: Attachment[], draw: (...c: CanvasRenderingContext2D[]) => void) {
+  if (!occ.length) { draw(...ctxs); return; }
+  const scs = ctxs.map((ctx, i) => {
+    const c = (underScratch[i] = sizedCanvas(underScratch[i], ctx.canvas.width, ctx.canvas.height));
+    const sc = c.getContext('2d')!;
+    sc.setTransform(1, 0, 0, 1, 0, 0); sc.clearRect(0, 0, c.width, c.height); sc.setTransform(ctx.getTransform());
+    return sc;
+  });
+  draw(...scs);
+  scs.forEach((sc, i) => {
+    sc.globalCompositeOperation = 'destination-out';
+    for (const o of occ) { sc.save(); sc.translate(o.x, o.y); sc.rotate(rad(o.rotation)); sc.fill(outlinePath(o)); sc.restore(); }
+    sc.globalCompositeOperation = 'source-over';
+    const ctx = ctxs[i];
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(sc.canvas, 0, 0); ctx.restore();
+  });
+}
+const TRIM_CLOTH = ['pocket', 'patch', 'applique', 'strap', 'label'];
+
 let blendScratch: HTMLCanvasElement | undefined;
 const sizedCanvas = (c: HTMLCanvasElement | undefined, w: number, h: number) => {
   if (!c) c = document.createElement('canvas');
@@ -554,6 +579,9 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
         if (a.kind === 'hardware') return a.id === sel;
         return !hasPanel.has(a.id);
       });
+      // trims with their own cloth on this piece copy: artwork set to go 'under' is cut away beneath them
+      const occ = own ? [] : list.filter((o) => o.pieceId === pid && hasPanel.has(o.id) && TRIM_CLOTH.includes(o.kind) && (o.face ?? 'outside') === face && (o.instance === undefined || o.instance === instance));
+      const cutFor = (a: Attachment) => (a.order === 'under' && occ.length ? occ.filter((o) => o.id !== a.id) : []);
       const art = mine.filter((a) => a.layers.length > 0 || a.id === sel || (a.kind === 'print' && a.fabric) || a.kind === 'label' || (a.id !== own && a.kind !== 'print' && a.kind !== 'embroidery' && a.kind !== 'hardware'));
       const b = bounds[pi];
       if (!b || !isFinite(b.x0)) return;
@@ -591,7 +619,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
       /* ink */
       const asyncInk = inkArt.some((a) => hasPictures(a.layers) || (a.fabric?.pattern && !isPlain(a.fabric.pattern)));
       const hostL = pieceDef && !own && inkArt.some((a) => blendOf(a) > 0) ? hostLook(pieceDef.fabric.id) : null;
-      const sig = JSON.stringify([inkArt, myBands, sel, accent, flip, own, asyncInk ? artTick : 0, hostL ? pieceDef!.fabric.id : '', edgeKey, finKey]);
+      const sig = JSON.stringify([inkArt, occ.length ? occ.map((o) => [o.id, o.x, o.y, o.rotation, o.w, o.h, o.outline, o.points, o.shape]) : 0, myBands, sel, accent, flip, own, asyncInk ? artTick : 0, hostL ? pieceDef!.fabric.id : '', edgeKey, finKey]);
       let slot = rig.ink.get(slotKey);
       if (inkArt.length || myBands.length || edgeInk.length || myFin || slot) {
         // pictures need more pixels than flat ink: up to 24 px per cm, never more than 2048 px a side
@@ -630,14 +658,18 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
           const bl = hostL ? Math.max(0, ...inkArt.map(blendOf)) : 0;
           for (const a of inkArt) {
             const s = hostL ? blendOf(a) : 0;
-            if (s <= 0) { drawInk(ctx, a, a.id === own, a.id !== own && a.kind !== 'print', a.id === sel ? accent : null, flip); continue; }
+            const cuts = cutFor(a);
+            if (s <= 0) { underCut([ctx], cuts, (c) => drawInk(c, a, a.id === own, a.id !== own && a.kind !== 'print', a.id === sel ? accent : null, flip)); continue; }
             // blended: the weave darkens the ink in its grooves (its own pass so it never shades other artwork)
-            const alone = inkArt.length === 1 && !myBands.length;
+            const alone = inkArt.length === 1 && !myBands.length && !cuts.length;
             const sc = alone ? ctx : (blendScratch = sizedCanvas(blendScratch, slot.canvas.width, slot.canvas.height)).getContext('2d')!;
             if (!alone) { sc.setTransform(1, 0, 0, 1, 0, 0); sc.clearRect(0, 0, sc.canvas.width, sc.canvas.height); sc.setTransform(k, 0, 0, k, -b.x0 * k, -b.y0 * k); }
             drawInk(sc, a, false, false, a.id === sel ? accent : null, flip);
             fillWeave(sc, shadeTile(hostL!.kind, s), hostL!.periodCm, b.x0, b.y0, k, 'source-atop');
-            if (!alone) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(sc.canvas, 0, 0); ctx.restore(); }
+            if (!alone) {
+              if (cuts.length) { sc.save(); sc.globalCompositeOperation = 'destination-out'; for (const o of cuts) { sc.save(); sc.translate(o.x, o.y); sc.rotate(rad(o.rotation)); sc.fill(outlinePath(o)); sc.restore(); } sc.restore(); }
+              ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(sc.canvas, 0, 0); ctx.restore();
+            }
           }
           if (edgeInk.length) drawBinding(ctx, pieceDef!, edgeInk);
           if (myFin?.strokes.length) cutOpenings(ctx, myFin.strokes);
@@ -677,7 +709,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
       }
 
       /* thread */
-      const tsig = JSON.stringify([threadArt, edgeKey, finThread ? finKey : 0, flip, own, threadArt.some((a) => hasPictures(a.layers)) ? artTick : 0]);
+      const tsig = JSON.stringify([threadArt, occ.length ? occ.map((o) => [o.id, o.x, o.y, o.rotation, o.w, o.h, o.outline, o.points, o.shape]) : 0, edgeKey, finThread ? finKey : 0, flip, own, threadArt.some((a) => hasPictures(a.layers)) ? artTick : 0]);
       let ts = rig.thread.get(slotKey);
       if (threadArt.length || edgeThread.length || finThread || ts) {
         const k = Math.min(THREAD_PX_CM, THREAD_PX_MAX / Math.max(b.w, b.h));
@@ -701,7 +733,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
           for (const x of [cc, hc]) x.setTransform(kk, 0, 0, kk, -b.x0 * kk, -b.y0 * kk);
           for (const a of threadArt) {
             if (a.kind === 'label') drawLabel(cc, hc, a, a.id === own, a.id !== own, flip);
-            else drawThread(cc, hc, a, a.id === own, flip, kk);
+            else underCut([cc, hc], cutFor(a), (c1, c2) => drawThread(c1, c2, a, a.id === own, flip, kk));
           }
           if (edgeThread.length) drawEdgeThread(cc, hc, pieceDef!, edgeThread);
           if (finThread) drawFrayThreads(cc, hc, finHex, myFin!.strokes);

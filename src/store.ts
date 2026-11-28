@@ -19,6 +19,7 @@ import { fitTable, garmentSpecs, pieceSpecs } from './lib/specs';
 import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorkspaceMap, defaultBand } from './components/designDoc';
 import type { Band } from './data/edits';
 import { addStroke, extendStroke, newStroke, removeLast, EMPTY_FINISH } from './data/finish';
+import { noticeCoveredArtwork, withOrder } from './components/layerOrder';
 import { deleteOutfit as removeSavedOutfit, listOutfits, listProjects, saveOutfit, saveProject } from './lib/projects';
 import { builtinKey, buttonholeSet, matchingTrim, regradeBuiltins, restoreBuiltins, styleEdits, upgradeFront, withBuiltins, type ButtonholeOpts } from './data/construction';
 
@@ -236,6 +237,8 @@ export interface State {
   /** a garment was just picked and its first drape frame has not arrived: the 3D view hides the old garment and shows the loading scissors */
   garmentLoading: boolean;
   simStatus: string;
+  /** important notices waiting for the person to read them (src/components/notify.ts); the first is on screen */
+  notices: import('./components/notify').Notice[];
   drapePeak: { ratio: number; strain: number; where: string; over?: number };
   redrapeToken: number;
   mode: import('./sim/pose').Mode;
@@ -647,6 +650,7 @@ export const useStore = create<State>((set, get) => {
     draping: false,
     garmentLoading: false,
     simStatus: '',
+    notices: [],
     drapePeak: { ratio: 0, strain: 0, where: '' },
     redrapeToken: 0,
     mode: 'stand',
@@ -1002,8 +1006,9 @@ export const useStore = create<State>((set, get) => {
       // chosen. Saved attachments without an instance keep meaning "every copy".
       const host = get().project.pieces.find((p) => p.id === a.pieceId);
       const inst = a.instance === undefined && host && host.cut > 1 ? { instance: 0 } : {};
-      setEdits((e) => ({ ...e, attachments: [...e.attachments, { ...a, ...inst, id }] }));
+      setEdits((e) => ({ ...e, attachments: [...e.attachments, { ...withOrder(a), ...inst, id }] }));
       set({ selAttachment: id });
+      noticeCoveredArtwork(id);
       return id;
     },
     addButtonholes: (o) => {

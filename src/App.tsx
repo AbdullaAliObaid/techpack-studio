@@ -20,6 +20,7 @@ import NewFlow from './components/NewFlow';
 import { nudgePatch } from './components/editHelpers';
 import { OutfitBar } from './components/Outfits';
 import { ContextMenuHost } from './components/ContextMenu';
+import Notices from './components/Notices';
 import { installOutfitFallback } from './components/uiData';
 import DesignCanvas from './components/DesignCanvas';
 import DesignLibrary from './components/DesignLibrary';
@@ -212,6 +213,7 @@ export default function App() {
       <div className="layer new-layer" data-state={screen === 'new' ? 'active' : screen === 'home' ? 'right' : 'gone'} data-from={newFrom} {...inertIf(screen !== 'new')}>
         <NewFlow />
       </div>
+      <Notices />
     </div>
   );
 }

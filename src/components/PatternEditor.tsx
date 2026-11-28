@@ -1,3 +1,5 @@
+import { notify } from './notify';
+import { layerRank } from './layerOrder';
 import BandStripes from './BandStripes';
 import { inspectAttachment, inspectPiece } from './inspect';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -936,7 +938,7 @@ export default function PatternEditor() {
       e.preventDefault();
       const w = toWorld(e.clientX, e.clientY);
       const en = entryAt(w);
-      if (!en) { setNote('Drop the picture on a piece of the pattern.'); setTimeout(() => setNote(null), 2500); return; }
+      if (!en) { notify({ id: 'drop-miss', title: 'The picture was not added', body: 'It landed outside every piece, so nothing was added. Drop the picture on a piece of the pattern.', tone: 'warn' }); return; }
       const l = toSource(en, w);
       const inst = instanceFor(en);
       useStore.getState().set({ selPiece: en.src.id, selInstance: en.both ? en.inst : null, selPoint: null });
@@ -947,7 +949,7 @@ export default function PatternEditor() {
     e.preventDefault();
     const w = toWorld(e.clientX, e.clientY);
     const en = entryAt(w);
-    if (!en) { setNote('Drop it on a piece of the pattern.'); setTimeout(() => setNote(null), 2500); return; }
+    if (!en) { notify({ id: 'drop-miss-trim', title: 'Nothing was added', body: 'It landed outside every piece. Drop it on a piece of the pattern.', tone: 'warn' }); return; }
     try {
       const t = JSON.parse(raw) as Partial<Attachment>;
       if (!isAttachment(t)) return;
@@ -1440,7 +1442,7 @@ function PieceView(props: {
         if (t.method === 'binding') return <path key={t.id} d={polyD(insetPolyline(p, line, t.width / 2)).replace(/Z$/, '')} fill="none" stroke={t.colour} strokeWidth={t.width} strokeLinejoin="round" opacity={0.92} pointerEvents="none" />;
         return <path key={t.id} d={polyD(line).replace(/Z$/, '')} fill="none" stroke={t.colour} strokeWidth={t.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />;
       })}
-      {attachments.filter((a) => !a.block).map((a) => renderAtt(a, true))}
+      {[...attachments.filter((a) => !a.block)].sort((a, b) => layerRank(a) - layerRank(b)).map((a) => renderAtt(a, true))}
 
       {/* drawn pieces that are patched on: dashed placement, draggable */}
       {ghosts.map((g) => {

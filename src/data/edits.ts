@@ -178,6 +178,11 @@ export interface Attachment {
   instance?: number;
   /** a colour block (src/data/colourBlock.ts): a print the chart clips to the piece outline */
   block?: boolean;
+  /**
+   * prints and embroidery: whether the artwork sits 'under' pockets, patches and tags sewn on the same piece (they cover
+   * it) or 'over' them (it runs across them). Unset on old projects, which behave as 'over'; new artwork is 'under'.
+   */
+  order?: 'under' | 'over';
   /** prints: take on the host fabric (weave shows through the ink, gloss follows the cloth). Omitted: on. */
   blend?: boolean;
   /** how strongly the print blends with the fabric, 0..1. Omitted: 0.7. */

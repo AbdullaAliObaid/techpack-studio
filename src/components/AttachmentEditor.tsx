@@ -11,6 +11,8 @@ import { clean, textWidth } from './designLibrary';
 import { FabricPick, FinishPick, SheenPick, ZipperFields } from './TrimFields';
 import { DEFAULT_ZIPPER } from './Artwork';
 import { copiesOf } from './sides';
+import TrimCloth from './TrimCloth';
+import TagPicture from './TagPicture';
 import DrawSheet from './DrawSheet';
 import EmblemEditor from './EmblemEditor';
 import { MethodPicker } from './Insert';
@@ -135,6 +137,15 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
         <span className="group-note" style={{ padding: 0 }}>{face === 'inside' ? 'On the side against the body. Shown dotted on the chart.' : 'On the side people see.'}</span>
       </div>
 
+      {(att.kind === 'print' || att.kind === 'embroidery') && !att.block && (
+        <div className="frow stack">
+          <span className="lbl">Layer</span>
+          <Seg label="Layer order against pockets and trims" value={att.order ?? 'over'} onChange={(order) => patch({ order })}
+            options={[{ id: 'under', label: 'Under pockets and trims' }, { id: 'over', label: 'Over pockets and trims' }]} />
+          <span className="group-note" style={{ padding: 0 }}>{(att.order ?? 'over') === 'under' ? 'Pockets, patches and tags sewn on this piece cover the design where they meet.' : 'The design runs across any pocket, patch or tag on this piece.'}</span>
+        </div>
+      )}
+
       <Disclosure id="att-placement" title="Placement" icon="target">
         {parent ? (
           <p className="group-note">Sewn onto {parent.name}. Drag it on the chart to move it inside the {KIND_LABEL[parent.kind].toLowerCase()}.</p>
@@ -239,6 +250,7 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
               options={(['ends', 'all-round', 'folded-loop'] as const).map((id) => ({ id, label: SEWN_LABEL[id] }))} />
           </div>
           <div className="frow stack"><span className="lbl">Tag colour</span><ColorField label="Tag colour" value={att.label.color} onChange={(color) => patch({ label: { ...att.label!, color } })} /></div>
+          <TagPicture att={att} patch={patch} />
           {tagTextLayer && (
             <Row label="Tag text" htmlFor="tag-text"><input id="tag-text" className="txt" maxLength={24} value={tagTextLayer.text ?? ''} onChange={(e) => patch({ layers: att.layers.map((l) => (l.id === tagTextLayer.id ? { ...l, text: e.target.value } : l)) })} /></Row>
           )}
@@ -246,6 +258,7 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
       )}
 
       <Disclosure id="att-material" title="Material and look" icon="garment">
+        {cloth && <TrimCloth att={att} host={hostFab} onChange={(fabric) => patch({ fabric })} />}
         {cloth && <FabricPick value={att.fabric} host={hostFab} onChange={(fabric) => patch({ fabric })} />}
         {(cloth || att.kind === 'label') && <div className="frow stack"><span className="lbl">Stitch thread</span><ColorField label="Stitch thread" value={att.thread ?? '#f2f2f2'} onChange={(c) => patch({ thread: c })} /></div>}
         {att.kind === 'embroidery' && <div className="frow stack"><span className="lbl">Thread colour</span><ColorField label="Thread colour" value={colour} onChange={recolour} /></div>}

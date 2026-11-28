@@ -1,3 +1,4 @@
+import { notify } from '../components/notify';
 import { subscribeArt } from './detailsArt';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
@@ -116,11 +117,11 @@ function ClothView({ type, pieces, body, stretch, showBody, showGarment, skin, m
   };
 
   useEffect(() => {
-    worker.onerror = (ev) => { ev.preventDefault?.(); wantFrame.current = false; setIf({ garmentLoading: false, draping: false, simStatus: 'The simulation stopped. Press Re-drape to try again.' }); };
+    worker.onerror = (ev) => { ev.preventDefault?.(); wantFrame.current = false; setIf({ garmentLoading: false, draping: false, simStatus: 'The simulation stopped. Press Re-drape to try again.' }); notify({ id: 'sim-stopped', title: 'The simulation stopped', body: 'The 3D drape stopped working, so the garment on the body may be out of date. Press Re-drape to try again.', tone: 'error' }); };
     worker.onmessage = (e) => {
       const m = e.data;
       if (m.type === 'error') {
-        if (m.of === 'build') { wantFrame.current = false; seq.current.built = seq.current.posted; setIf({ garmentLoading: false, draping: false, simStatus: `Could not simulate this garment: ${m.text}` }); }
+        if (m.of === 'build') { wantFrame.current = false; seq.current.built = seq.current.posted; setIf({ garmentLoading: false, draping: false, simStatus: `Could not simulate this garment: ${m.text}` }); notify({ id: 'sim-failed', title: 'This garment could not be simulated', body: `${m.text}. The 3D view shows the last good result. Change the pattern or fabric and press Re-drape.`, tone: 'error' }); }
         return;
       }
       if (m.type === 'status') {
