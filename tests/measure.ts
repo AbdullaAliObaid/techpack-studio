@@ -8,6 +8,7 @@ import { presetBlocks, shapeBlocks } from '../src/data/colourBlock';
 import type { StyleId } from '../src/data/catalog';
 import { angleDeg, arcBetween, lengthOf, nearestOnArc, niceStep } from '../src/components/rulerMath';
 import { outlineLength } from '../src/lib/geometry';
+import { withLinked } from '../src/components/multi';
 
 let fails = 0;
 const ok = (c: boolean, m: string) => { if (!c) { fails++; console.error('FAIL', m); } else console.log('ok  ', m); };
@@ -89,5 +90,15 @@ check('basic-tee', 'edge', (ps) => { const f = ps.find((p) => p.role === 'sleeve
     ok(nearestOnArc(p.points, on).d < 0.01, `${style}: nearest outline spot to a point on it is itself`);
   }
   ok(niceStep(10, 8) === 1 && niceStep(3, 8) === 5 && niceStep(100, 8) === 0.1, 'rulers pick nice steps');
+}
+// total symmetry, several points dragged together: each mate follows its own partner, not the mirror of another
+{
+  const ps = makePreset('polo', DEFAULT_BODY); const bk = ps.find((p) => p.role === 'back')!, fr = ps.find((p) => p.role === 'front')!;
+  const hemY = Math.max(...bk.points.map((r) => r.y));
+  const hem = bk.points.filter((q) => q.y > hemY - 0.5);
+  const right = withLinked(ps, hem.map((q) => ({ pieceId: bk.id, pointId: q.id, x: q.x + 3, y: q.y })), true, 'polo').filter((m) => m.pieceId === fr.id);
+  ok(right.length > 0 && right.every((m) => Math.abs(m.x - fr.points.find((r) => r.id === m.pointId)!.x - 3) < 1e-6), 'total symmetry group drag: front hem points all follow the same way');
+  const down = withLinked(ps, hem.map((q) => ({ pieceId: bk.id, pointId: q.id, x: q.x, y: q.y + 3 })), true, 'polo').filter((m) => m.pieceId === fr.id);
+  ok(down.every((m) => { const q = fr.points.find((r) => r.id === m.pointId)!; return Math.abs(m.x - q.x) < 1e-6 && Math.abs(m.y - q.y - 3) < 1e-6; }), 'total symmetry group drag down: front hem moves straight down');
 }
 if (fails) { console.error(fails + ' failed'); process.exit(1); }

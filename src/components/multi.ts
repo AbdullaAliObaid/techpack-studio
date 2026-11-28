@@ -69,18 +69,25 @@ export function withLinked(pieces: Piece[], moves: GroupMove[], total: boolean, 
   // total symmetry: each moved point drives its mates through src/data/symmetry.ts (same rules as a single drag,
   // including seam re-walking); points the user moved directly keep their exact positions
   const have = new Set(moves.map(itemId));
-  const extra = new Map<string, GroupMove>();
+  // a point can be reached from several moved points (from its own partner and, through the partner's mirror, from the
+  // moved point on the other side). The one on the same side wins, else every mate gets the mirrored move of the
+  // first point and both sides pull the wrong way. Side: left, centre or right of the piece's centre line.
+  const side = (x: number) => (Math.abs(x) < 0.05 ? 0 : Math.sign(x));
+  const extra = new Map<string, { m: GroupMove; score: number }>();
   for (const m of moves) {
     const q = pieces.find((x) => x.id === m.pieceId)?.points.find((x) => x.id === m.pointId);
     if (!q) continue;
     for (const l of linkedMoves(style, pieces, m.pieceId, m.pointId, m.x - q.x, m.y - q.y)) {
       const id = itemId(l);
-      if (have.has(id) || extra.has(id)) continue;
+      if (have.has(id)) continue;
       const lp = pieces.find((x) => x.id === l.pieceId)?.points.find((x) => x.id === l.pointId);
-      if (lp) extra.set(id, { pieceId: l.pieceId, pointId: l.pointId, x: lp.x + l.dx, y: lp.y + l.dy });
+      if (!lp) continue;
+      const score = Math.abs(side(lp.x) - side(q.x));
+      const prev = extra.get(id);
+      if (!prev || score < prev.score) extra.set(id, { m: { pieceId: l.pieceId, pointId: l.pointId, x: lp.x + l.dx, y: lp.y + l.dy }, score });
     }
   }
-  return [...moves, ...extra.values()];
+  return [...moves, ...[...extra.values()].map((e) => e.m)];
 }
 
 /** stored positions that put each placed point at a new chart position */
