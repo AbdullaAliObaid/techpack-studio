@@ -171,6 +171,21 @@ async function main() {
     const m = migrateProject(old);
     ok('old project: missing edit lists are filled in', Array.isArray(m.edits?.pleats) && Array.isArray(m.edits?.detachedSeams));
   }
+  console.log('== pocket with a motif ==');
+  {
+    const q = freshProject('button-up', 'Motif pocket');
+    const front = q.pieces.find((x) => x.role === 'front')!;
+    const motif = { aspect: 1, paths: [{ color: '#112233', path: 'M-0.4 -0.4L0.4 -0.4L0.4 0.4L-0.4 0.4Z' }, { color: '#cc3344', path: 'M-0.2 -0.2L0.2 -0.2L0.2 0.2L-0.2 0.2Z' }], palette: undefined };
+    const pocket: Attachment = { id: 'pk1', kind: 'pocket', name: 'Front pocket', pieceId: front.id, x: 0, y: 0, rotation: 0, w: 10, h: 12, outline: 'rect', layers: [], alignPattern: true,
+      fabric: { id: 'cotton', color: 0, pattern: { id: 'custom', colors: ['#eeeeee'], scale: 6, rotation: 0, method: 'printed', motif, layout: 'block', motifScale: 0.7, opacity: 0.6, hidden: [1] } } };
+    q.edits = { ...(q.edits ?? { attachments: [], customSeams: [], detachedSeams: [], pleats: [] }), attachments: [pocket] };
+    const sf2 = await readShareFile(await exportShareFile([q]));
+    const back = importShareFile(sf2, { fileName: 'pocket.techit' }).projects[0].edits!.attachments[0];
+    ok('pocket keeps its motif, opacity, hidden colour and alignment through share', JSON.stringify(back.fabric?.pattern) === JSON.stringify(pocket.fabric!.pattern) && back.alignPattern === true);
+    const rows = fabricBom(q.pieces, q.edits, q.garment);
+    const row = rows.find((r) => r.pattern === 'Your motif');
+    ok('the BOM lists the pocket motif with its opacity and hidden colour', !!row && /opacity 60%/.test(row.adjust ?? '') && /hidden/.test(row.adjust ?? ''), JSON.stringify(row && { p: row.pattern, a: row.adjust }));
+  }
   console.log('\nall share and tech pack checks passed');
 }
 if (process.argv[1]?.endsWith("share.ts")) main();

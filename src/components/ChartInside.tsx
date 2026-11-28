@@ -15,7 +15,7 @@ import type { Entry } from './sides';
 const tileHref = (p: FabricPattern) => { const t = patternTile(p); return { href: `data:image/svg+xml;utf8,${encodeURIComponent(t.svg)}`, w: t.size[0], h: t.size[1] }; };
 
 /** the cloth of one face: weave texture, pattern on top when there is one */
-function cloth(id: string, fb: PieceFabric, withPattern: boolean) {
+function cloth(id: string, fb: PieceFabric, withPattern: boolean, lead = '') {
   const f = fabricById(fb.id);
   const tex = fabricDataUrl(f, fabricHex(fb));
   const pat = withPattern && fb.pattern && fb.pattern.id !== 'solid' ? fb.pattern : null;
@@ -28,7 +28,7 @@ function cloth(id: string, fb: PieceFabric, withPattern: boolean) {
   }
   const t = tileHref(pat);
   return (
-    <pattern key={id} id={id} width={t.w} height={t.h} patternUnits="userSpaceOnUse" patternTransform={`rotate(${pat.rotation || 0})`}>
+    <pattern key={id} id={id} width={t.w} height={t.h} patternUnits="userSpaceOnUse" patternTransform={`${lead}${lead ? ' ' : ''}rotate(${pat.rotation || 0})`}>
       {/* the weave under the pattern, tiled in 6 cm squares */}
       {Array.from({ length: Math.ceil(t.w / 6) * Math.ceil(t.h / 6) }, (_, i) => {
         const nx = Math.ceil(t.w / 6);
@@ -37,6 +37,14 @@ function cloth(id: string, fb: PieceFabric, withPattern: boolean) {
       <image href={t.href} width={t.w} height={t.h} preserveAspectRatio="none" style={{ mixBlendMode: 'multiply' }} />
     </pattern>
   );
+}
+
+/**
+ * The cloth of a pocket, patch or applique as an SVG fill (`attfab-<id>`), drawn like the piece cloth. `align` lays the
+ * pattern out in the host piece's frame (the attachment's position and turn on it) so the body's repeat continues.
+ */
+export function AttachmentCloth({ id, fabric, align }: { id: string; fabric: PieceFabric; align?: { x: number; y: number; rotation: number } }) {
+  return <defs>{cloth('attfab-' + id, fabric, true, align ? `rotate(${-align.rotation}) translate(${-align.x} ${-align.y})` : '')}</defs>;
 }
 
 /** outside fill `fab-<piece>` and inside fill `fab-in-<piece>` for every piece */

@@ -100,12 +100,14 @@ export function patternTexture(p: FabricPattern): THREE.CanvasTexture {
 }
 
 /** A pattern as a canvas fill in cm space (attachment art and prints that carry a fabric), rotation applied. */
-export function patternFill(ctx: CanvasRenderingContext2D, p: FabricPattern): CanvasPattern | null {
+export function patternFill(ctx: CanvasRenderingContext2D, p: FabricPattern, host?: { x: number; y: number; rotation: number }): CanvasPattern | null {
   const r = patternRaster(p);
   const pat = ctx.createPattern(r.canvas, 'repeat');
   if (!pat) return null;
   // canvas y runs down, like the piece: rotate(+deg) turns it clockwise, the same way as patternTexture
-  pat.setTransform(new DOMMatrix().rotate(p.rotation || 0).scale(r.size[0] / r.canvas.width, r.size[1] / r.canvas.height));
+  // `host`: the attachment sits at (x, y) turned by rotation on its piece; laying the pattern out in the piece's frame continues the body's repeat
+  const lead = host ? new DOMMatrix().rotate(-host.rotation).translate(-host.x, -host.y) : new DOMMatrix();
+  pat.setTransform(lead.rotate(p.rotation || 0).scale(r.size[0] / r.canvas.width, r.size[1] / r.canvas.height));
   return pat;
 }
 
