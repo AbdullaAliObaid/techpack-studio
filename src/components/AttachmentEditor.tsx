@@ -11,6 +11,7 @@ import { clean, textWidth } from './designLibrary';
 import { FabricPick, FinishPick, SheenPick, ZipperFields } from './TrimFields';
 import { DEFAULT_ZIPPER } from './Artwork';
 import { copiesOf } from './sides';
+import TrimCloth from './TrimCloth';
 import DrawSheet from './DrawSheet';
 import EmblemEditor from './EmblemEditor';
 import { MethodPicker } from './Insert';
@@ -255,6 +256,7 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
       )}
 
       <Disclosure id="att-material" title="Material and look" icon="garment">
+        {cloth && <TrimCloth att={att} host={hostFab} onChange={(fabric) => patch({ fabric })} />}
         {cloth && <FabricPick value={att.fabric} host={hostFab} onChange={(fabric) => patch({ fabric })} />}
         {(cloth || att.kind === 'label') && <div className="frow stack"><span className="lbl">Stitch thread</span><ColorField label="Stitch thread" value={att.thread ?? '#f2f2f2'} onChange={(c) => patch({ thread: c })} /></div>}
         {att.kind === 'embroidery' && <div className="frow stack"><span className="lbl">Thread colour</span><ColorField label="Thread colour" value={colour} onChange={recolour} /></div>}

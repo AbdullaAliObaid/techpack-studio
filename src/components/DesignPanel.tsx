@@ -21,6 +21,7 @@ import { copiesOf, instanceName } from './sides';
 import { imageFileOf, openPhoto } from './editHelpers';
 import DrawSheet from './DrawSheet';
 import Icon from './Icon';
+import { FabricSwatch } from './FabricBrowser';
 
 export { ATTACHMENT_MIME };
 
@@ -381,7 +382,7 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
             return (
               <li key={a.id} className={a.id === selAttachment ? 'on' : ''}>
                 <button className="att-row" aria-pressed={a.id === selAttachment} onClick={() => { set({ selAttachment: a.id, selLayer: null, selPiece: hostPiece?.id ?? null, selInstance: a.instance ?? null }); openDesign('edit'); }}>
-                  <span className="att-ico"><Icon name={KIND_ICON[a.kind]} size={18} /></span>
+                  <span className="att-ico">{a.fabric && ['pocket', 'patch', 'strap', 'applique'].includes(a.kind) ? <FabricSwatch fabric={a.fabric} size={28} /> : <Icon name={KIND_ICON[a.kind]} size={18} />}</span>
                   <span className="att-text"><span className="att-name">{a.name}</span><small>{KIND_LABEL[a.kind]} on {where}{a.face === 'inside' ? ', inside' : ''}</small></span>
                 </button>
                 <button className="icon-btn sm danger" aria-label={`Delete ${a.name}`} title="Delete" onClick={() => useStore.getState().removeAttachment(a.id)}><Icon name="trash" size={16} /></button>
