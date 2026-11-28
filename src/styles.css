@@ -1890,3 +1890,9 @@ body.band-freehand .editor-svg [data-kind="edge"], body.band-freehand .editor-sv
 .trim-cloth-name { display: flex; flex-direction: column; min-width: 0; font-size: 13px; }
 .trim-cloth-name small { font-size: 11px; color: var(--label-2); }
 .att-ico .fab-swatch { border-radius: 6px; box-shadow: 0 0 0 0.5px var(--separator); }
+
+/* ---- pictures on a tag ---- */
+.tag-pic { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--bg-elevated); box-shadow: 0 0 0 0.5px var(--separator); }
+.tag-pic-head { display: flex; align-items: center; gap: 8px; }
+.tag-pic-head b { flex: 1; font-size: 13px; font-weight: 600; }
+.tag-pic-head img { object-fit: contain; border-radius: 4px; background: var(--fill); }

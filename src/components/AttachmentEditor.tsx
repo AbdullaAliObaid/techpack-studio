@@ -12,6 +12,7 @@ import { FabricPick, FinishPick, SheenPick, ZipperFields } from './TrimFields';
 import { DEFAULT_ZIPPER } from './Artwork';
 import { copiesOf } from './sides';
 import TrimCloth from './TrimCloth';
+import TagPicture from './TagPicture';
 import DrawSheet from './DrawSheet';
 import EmblemEditor from './EmblemEditor';
 import { MethodPicker } from './Insert';
@@ -249,6 +250,7 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
               options={(['ends', 'all-round', 'folded-loop'] as const).map((id) => ({ id, label: SEWN_LABEL[id] }))} />
           </div>
           <div className="frow stack"><span className="lbl">Tag colour</span><ColorField label="Tag colour" value={att.label.color} onChange={(color) => patch({ label: { ...att.label!, color } })} /></div>
+          <TagPicture att={att} patch={patch} />
           {tagTextLayer && (
             <Row label="Tag text" htmlFor="tag-text"><input id="tag-text" className="txt" maxLength={24} value={tagTextLayer.text ?? ''} onChange={(e) => patch({ layers: att.layers.map((l) => (l.id === tagTextLayer.id ? { ...l, text: e.target.value } : l)) })} /></Row>
           )}
