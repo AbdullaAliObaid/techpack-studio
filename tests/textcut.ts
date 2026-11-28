@@ -73,3 +73,34 @@ const shapes = attachmentShapes(st);
 ok(shapes.length === 1 && shapes[0].holes.length === 1 && Math.abs(shapes[0].outer[1].x - 6) < 1e-6, 'stored rings are scaled by w and h and used as they are');
 
 if (fails) { console.error(`${fails} failed`); process.exit(1); }
+
+// ---- clip to the outline ----
+import { clipAttachmentLayers, artworkExtent, layerArea, layerRings, shownBox } from '../src/lib/clipLayers';
+import { attachmentPatch, droppedLayers, newDesign, newLayer } from '../src/components/designDoc';
+{
+  // a 6 x 3 tag with a hexagon (4 cm) centred on its bottom left corner: only the quarter-ish inside stays
+  const tag = { kind: 'label', outline: 'rect', w: 6, h: 3, layers: [] } as unknown as Attachment;
+  const hex = { id: 'h', shape: 'hexagon', x: -3, y: 1.5, w: 4, h: 4, rotation: 0, color: '#f00' } as never;
+  const far = { id: 'f', shape: 'rect', x: 9, y: 0, w: 2, h: 2, rotation: 0, color: '#0f0' } as never;
+  const inner = { id: 'i', shape: 'rect', x: 0, y: 0, w: 1, h: 1, rotation: 0, color: '#00f' } as never;
+  const pic = { id: 'p', shape: 'image', image: 'x', x: 3, y: 0, w: 4, h: 2, rotation: 0, color: '#000' } as never;
+  const r = clipAttachmentLayers({ ...tag, layers: [hex, far, inner, pic] });
+  const full = layerArea(hex);
+  const h2 = r.layers.find((l) => l.id === 'h')!;
+  ok(r.dropped === 1 && !r.layers.some((l) => l.id === 'f'), 'a layer wholly outside is dropped');
+  ok(r.layers.find((l) => l.id === 'i') === inner, 'a layer inside is untouched');
+  const kept = layerArea(h2);
+  ok(kept > 0 && kept < full * 0.5, `hexagon half outside keeps only the inside part (${kept.toFixed(2)} of ${full.toFixed(2)} cm2)`);
+  const bb = shownBox(h2);
+  ok(bb.x0 >= -3.001 && bb.y1 <= 1.501 && bb.x1 <= 3 && bb.y0 >= -1.5, 'hexagon box lies inside the tag');
+  ok(!!r.layers.find((l) => l.id === 'p')?.clip, 'a picture sticking out gets a clip path');
+  ok(artworkExtent({ w: 6, h: 3, layers: r.layers }) <= 6.01, 'tech pack artwork stays inside the tag');
+  ok(layerRings(h2)!.flat().every((q) => Math.abs(q.x) <= 3.001 && Math.abs(q.y) <= 1.501), 'every clipped vertex is inside the tag');
+  // design doc: the doc keeps the original, the placed attachment is cut
+  const d = { ...newDesign(), makeAs: 'patch' as const, layers: [newLayer('rect', { w: 6, h: 3 }), newLayer('hexagon', { x: -3, y: 1.5, w: 4, h: 4 }), newLayer('rect', { x: 20, y: 0, w: 1, h: 1 })] };
+  const ap = attachmentPatch(d);
+  ok(ap.layers.length === 1 && droppedLayers(d) === 1, 'design: base is the outline, hexagon cut, far layer dropped');
+  ok(layerArea(ap.layers[0]) < layerArea(d.layers[1]) * 0.5, 'design: stored hexagon is the inside part only');
+}
+console.log(fails ? `${fails} failed` : 'all ok');
+process.exit(fails ? 1 : 0);

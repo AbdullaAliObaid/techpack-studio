@@ -163,6 +163,18 @@ export function HardwareRow({ a }: { a: Pick<Attachment, 'hardware' | 'w' | 'h'>
 export function LayerShape({ l, pointer = true, ...rest }: { l: ShapeLayer; pointer?: boolean } & React.SVGProps<SVGGElement>) {
   const op = l.opacity ?? 1;
   if (op <= 0 && pointer === false) return null;
+  if (l.clip?.length) {
+    // cut to its outline: clip in the attachment's frame, then draw the layer as usual
+    const id = `lc-${l.id}`;
+    const { clip: _c, ...bare } = l;
+    void _c;
+    return (
+      <g>
+        <clipPath id={id}><path d={l.clip.map((r) => 'M' + r.map((q) => `${q.x} ${q.y}`).join('L') + 'Z').join('')} clipRule="evenodd" /></clipPath>
+        <g clipPath={`url(#${id})`}><LayerShape l={bare} pointer={pointer} {...rest} /></g>
+      </g>
+    );
+  }
   const flip = l.flipX ? -1 : 1;
   return (
     <g transform={`translate(${l.x},${l.y}) rotate(${l.rotation})`} opacity={op} {...rest}>

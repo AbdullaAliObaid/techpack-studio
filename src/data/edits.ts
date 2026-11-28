@@ -36,6 +36,8 @@ export interface ShapeLayer {
   font?: string;
   /** embroidery stitch style */
   stitch?: string;
+  /** cut to the outline it is drawn on (src/lib/clipLayers.ts): the outline rings (attachment coords, cm, even-odd) outside of which nothing shows */
+  clip?: { x: number; y: number }[][];
 }
 
 /**

@@ -95,6 +95,11 @@ export const fillRuleOf = (l: ShapeLayer): CanvasFillRule => (l.shape === 'path'
  */
 export function drawLayer(ctx: CanvasRenderingContext2D, l: ShapeLayer, fill: string | CanvasPattern, pass: 'color' | 'height' = 'color') {
   ctx.save();
+  if (l.clip?.length) { // cut to its outline: nothing outside shows
+    const cp = new Path2D();
+    for (const r of l.clip) { r.forEach((q, i) => (i ? cp.lineTo(q.x, q.y) : cp.moveTo(q.x, q.y))); cp.closePath(); }
+    ctx.clip(cp, 'evenodd');
+  }
   ctx.translate(l.x, l.y);
   ctx.rotate(rad(l.rotation));
   if (l.flipX) ctx.scale(-1, 1);

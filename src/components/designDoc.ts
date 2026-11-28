@@ -6,6 +6,7 @@ import type { Piece } from '../data/presets';
 import { uid } from '../lib/units';
 import { bandSlope } from '../data/bandGeom';
 import { outlinePolygon, pathPolygon, shapePolygon } from '../lib/shapes';
+import { clipAttachmentLayers, clipRegionOf } from '../lib/clipLayers';
 import { textKey, traceTextUnit } from '../lib/textTrace';
 
 export type Workspace = 'shape' | 'seams' | 'fabric' | 'paint' | 'design' | 'trims' | 'fit' | 'outfit' | 'finish' | 'review' | 'techpack';
@@ -133,7 +134,25 @@ const bounds = (pts: { x: number; y: number }[]) => {
   return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 };
 
-export function attachmentPatch(doc: DesignDoc): Pick<Attachment, 'kind' | 'name' | 'w' | 'h' | 'outline' | 'points' | 'layers' | 'thread' | 'sheen' | 'fabric'> & Partial<Pick<Attachment, 'shape' | 'text' | 'font' | 'outlineRings' | 'outlineKey'>> {
+/** The design as the attachment it becomes: every layer cut to the base outline (cloth), so nothing outside it is made. */
+export function attachmentPatch(doc: DesignDoc) {
+  const p = attachmentPatchRaw(doc);
+  return { ...p, layers: clipAttachmentLayers(p).layers };
+}
+/** The base outline of a cloth design as even-odd rings in the artboard's coords (what the maker cuts), else null. */
+export function docClipRings(doc: DesignDoc): { x: number; y: number }[][] | null {
+  const base = baseLayer(doc);
+  if (!base) return null;
+  const region = clipRegionOf(attachmentPatchRaw(doc));
+  return region ? region.flatMap((s) => [s.outer, ...s.holes]).map((r) => r.map((q) => ({ x: q.x + base.x, y: q.y + base.y }))) : null;
+}
+/** How many visible layers lie wholly outside the base outline and are left out when applied. */
+export function droppedLayers(doc: DesignDoc): number {
+  const p = attachmentPatchRaw(doc);
+  return clipAttachmentLayers(p).dropped;
+}
+
+function attachmentPatchRaw(doc: DesignDoc): Pick<Attachment, 'kind' | 'name' | 'w' | 'h' | 'outline' | 'points' | 'layers' | 'thread' | 'sheen' | 'fabric'> & Partial<Pick<Attachment, 'shape' | 'text' | 'font' | 'outlineRings' | 'outlineKey'>> {
   const cloth = isCloth(doc);
   const base = baseLayer(doc);
   if (cloth && base && base.shape === 'text' && base.text?.trim()) {

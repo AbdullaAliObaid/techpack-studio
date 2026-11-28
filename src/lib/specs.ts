@@ -1,6 +1,7 @@
 import type { Piece, SpecDef, GarmentType } from '../data/presets';
 import { bbox, bezAt, bezTangent, dist, offsetInward, outlineLength, samplePoly, signedArea, sliceSpan, toBeziers, type Pt } from './geometry';
 import type { Attachment, Edits, Face, Hardware, Pleat, WashSequence } from '../data/edits';
+import { shownBox } from './clipLayers';
 import { attachmentPolygons, attachmentShapes, outlinePolygon, SHAPES } from './shapes';
 import { builtinSeams, faceLabel, faceOf, instanceLabel, crownCount } from '../sim/seams';
 import { buttonholeSlots } from '../data/construction';
@@ -1178,7 +1179,7 @@ function layerRows(layers: Attachment['layers']): TrimDetail['layers'] {
   return layers.map((l) => ({
     label: l.shape === 'text' ? `Text "${l.text ?? ''}"` : l.shape === 'image' ? 'Picture' : l.shape === 'path' ? 'Drawn shape' : SHAPES[l.shape]?.name ?? l.shape,
     color: l.color,
-    size: `${round1(l.w)} x ${round1(l.h)} cm`,
+    size: l.clip ? (() => { const b = shownBox(l); return `${round1(b.x1 - b.x0)} x ${round1(b.y1 - b.y0)} cm`; })() : `${round1(l.w)} x ${round1(l.h)} cm`,
   }));
 }
 
