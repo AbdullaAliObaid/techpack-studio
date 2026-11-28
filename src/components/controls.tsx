@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { addColour, loadColours, moveColour, removeColour, subscribeColours } from '../lib/savedColours';
 import { fromUnit, toUnit, type Units } from '../lib/units';
 import { PALETTE } from './editHelpers';
 import { useStore } from '../store';
@@ -65,9 +66,49 @@ export function Seg<T extends string>({ value, options, onChange, label, full = 
   );
 }
 
+/** The colours the user saved (shared by every project on this device): click one to use it, "+" saves the current colour. */
+export function SavedColours({ value, onChange, label }: { value: string; onChange: (hex: string) => void; label: string }) {
+  const list = useSyncExternalStore(subscribeColours, loadColours, loadColours);
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+  const [drag, setDrag] = useState<number | null>(null);
+  const valid = /^#[0-9a-f]{6}$/i.test(value);
+  const saved = valid && list.some((c) => c.hex === value.toLowerCase());
+  const save = () => { addColour(value, name); setNaming(false); setName(''); };
+  return (
+    <div className="saved-colours" role="group" aria-label={`${label}, saved colours`}>
+      <span className="sc-head">Saved colours</span>
+      <div className="swatches">
+        {list.map((c, i) => (
+          <span key={c.hex} className="sc-item" draggable onDragStart={(e) => { setDrag(i); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', c.hex); }}
+            onDragOver={(e) => { if (drag !== null) e.preventDefault(); }} onDrop={(e) => { e.preventDefault(); if (drag !== null) moveColour(drag, i); setDrag(null); }} onDragEnd={() => setDrag(null)}>
+            <button aria-label={`${label}, use saved colour ${c.name ?? c.hex}`} title={`${c.name ? `${c.name}, ` : ''}${c.hex}. Right click to delete, drag to reorder.`} aria-pressed={value.toLowerCase() === c.hex}
+              className={value.toLowerCase() === c.hex ? 'on' : ''} style={{ background: c.hex }} onClick={() => onChange(c.hex)}
+              onContextMenu={(e) => { e.preventDefault(); removeColour(c.hex); }}
+              onKeyDown={(e) => { if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeColour(c.hex); } else if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); moveColour(i, i - 1); } else if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); moveColour(i, i + 1); } }} />
+            <button className="sc-x" aria-label={`Delete saved colour ${c.name ?? c.hex}`} title="Delete" onClick={() => removeColour(c.hex)}>x</button>
+          </span>
+        ))}
+        <button className="sc-add" aria-label={`Save this colour for later`} title={saved ? 'Already saved' : 'Save this colour for later'} disabled={!valid || saved} onClick={() => setNaming(true)}>+</button>
+      </div>
+      {list.length === 0 && !naming && <small className="sc-empty">Press + to keep this colour for other garments.</small>}
+      {naming && (
+        <div className="sc-name">
+          <span className="sc-chip" style={{ background: value }} aria-hidden="true" />
+          <input className="txt" aria-label="Name for this colour (optional)" placeholder="Name (optional)" maxLength={24} value={name} autoFocus
+            onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save(); else if (e.key === 'Escape') { setNaming(false); setName(''); } }} />
+          <button className="btn small" onClick={save}>Save</button>
+          <button className="btn small" onClick={() => { setNaming(false); setName(''); }}>Cancel</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Swatches plus a colour picker for artwork colours. */
 export function ColorField({ value, onChange, label, colors = PALETTE }: { value: string; onChange: (hex: string) => void; label: string; colors?: string[] }) {
   return (
+    <div className="color-wrap">
     <div className="swatches color-field" role="group" aria-label={label}>
       {colors.map((c) => (
         <button key={c} aria-label={`${label} ${c}`} title={c} aria-pressed={value.toLowerCase() === c} className={value.toLowerCase() === c ? 'on' : ''} style={{ background: c }} onClick={() => onChange(c)} />
@@ -75,6 +116,8 @@ export function ColorField({ value, onChange, label, colors = PALETTE }: { value
       <label className="picker" title="Pick any colour">
         <input type="color" aria-label={`${label}, custom colour`} value={/^#[0-9a-f]{6}$/i.test(value) ? value : '#ffffff'} onChange={(e) => onChange(e.target.value)} />
       </label>
+    </div>
+    <SavedColours value={value} onChange={onChange} label={label} />
     </div>
   );
 }
