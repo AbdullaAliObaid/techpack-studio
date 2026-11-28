@@ -96,7 +96,7 @@ export interface Outfit { id: string; name: string; body: Body; items: OutfitIte
 
 export type Tool = 'select' | 'add' | 'pan' | 'seams' | 'pleat' | 'pen' | 'note' | 'block';
 /** Edge paint tool settings (src/data/colourBlock.ts) */
-export interface BlockSettings { colour: string; sheen: import('./data/edits').Sheen; look: 'dyed' | 'printed'; h: number; mode: 'rect' | 'poly' }
+export interface BlockSettings { colour: string; sheen: import('./data/edits').Sheen; look: 'dyed' | 'printed'; h: number; mode: 'rect' | 'poly'; /** how the edge gets its colour (paint is the default) */ method: import('./data/edits').EdgeMethod; /** binding width or piping cord (cm) */ width: number; /** thread weight, Tex */ tex: number; /** paint (and thread) on both faces */ bothFaces: boolean }
 /** a block being drawn: world points, on the copy it started on */
 export interface BlockDraft { key: string; pts: Pt[]; rect: boolean }
 export type NoteKind = Note['kind'];
@@ -294,6 +294,8 @@ export interface State {
   blockDraft: BlockDraft | null;
   /** add edge paint blocks (one undo step) and select the first */
   addColourBlocks: (list: Omit<Attachment, 'id'>[]) => void;
+  addEdgeTrims: (list: Omit<import('./data/edits').EdgeTrim, 'id'>[]) => void;
+  removeEdgeTrim: (id: string) => void;
   movePiece: (pieceId: string, offset: Pt) => void;
   insertPoint: (pieceId: string, seg: number, t: number) => string | null;
   deletePoint: (pieceId: string, pointId: string) => void;
@@ -668,7 +670,7 @@ export const useStore = create<State>((set, get) => {
     select: (piece, point = null) => set({ selPiece: piece, selPoint: point, selMulti: [], ...(piece === null ? { selInstance: null, fabricScope: 'all' } : {}) }),
 
     measureFlash: null,
-    colourBlock: { colour: '#111111', sheen: 'matte', look: 'dyed', h: 6, mode: 'rect' },
+    colourBlock: { colour: '#111111', sheen: 'matte', look: 'dyed', h: 6, mode: 'rect', method: 'paint', width: 0.8, tex: 45, bothFaces: true },
     blockDraft: null,
     addColourBlocks: (list) => {
       if (!list.length) return;
@@ -677,6 +679,13 @@ export const useStore = create<State>((set, get) => {
       setEdits((e) => ({ ...e, attachments: [...e.attachments, ...added] }));
       set({ selAttachment: added[0].id, blockDraft: null });
     },
+    addEdgeTrims: (list) => {
+      if (!list.length) return;
+      get().commit();
+      const added = list.map((t) => ({ ...t, id: uid() }));
+      setEdits((e) => ({ ...e, edgeTrims: [...(e.edgeTrims ?? []), ...added] }));
+    },
+    removeEdgeTrim: (id) => { get().commit(); setEdits((e) => ({ ...e, edgeTrims: (e.edgeTrims ?? []).filter((t) => t.id !== id) })); },
     setMeasure: (target, value, unit) => {
       const { project, totalSymmetry, units } = get();
       const cm = fromUnit(value, unit ?? units);

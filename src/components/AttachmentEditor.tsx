@@ -4,7 +4,7 @@ import { useStore, usePick } from '../store';
 import type { Attachment, Hardware, HardwareType, LabelType } from '../data/edits';
 import { shapePolygon } from '../lib/shapes';
 import { ArtworkGroup, outlineD } from './Artwork';
-import { ColorField, Disclosure, LenInput, NumInput, Row, Seg } from './controls';
+import { ColorField, Disclosure, LenInput, NumInput, Row, Seg, Switch } from './controls';
 import { canHostDesigns, faceName, KIND_ICON, KIND_LABEL, LABEL_TYPES, normaliseOutline, OUTLINE_LIST, rootPiece, scaleAttachment, scaleOutline, SEWN_LABEL } from './editHelpers';
 import { drawnHardware, hardwareAttachment, HARDWARE, hwDefaults, type DrawDraft } from './designLibrary';
 import { clean, textWidth } from './designLibrary';
@@ -274,6 +274,18 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
         )}
         {att.kind !== 'embroidery' && att.kind !== 'print' && <SheenPick metal={!!hw} value={hw?.sheen ?? att.sheen} onChange={(sheen) => (hw ? setHw({ sheen }) : patch({ sheen }))} />}
         {(att.kind === 'embroidery' || att.kind === 'print') && <SheenPick value={att.sheen} onChange={(sheen) => patch({ sheen })} />}
+        {att.kind === 'print' && (
+          <>
+            <Row label="Blend with fabric"><Switch on={att.blend !== false} onChange={(blend) => patch({ blend })} label="Blend with fabric" /></Row>
+            {att.blend !== false && (
+              <div className="frow stack">
+                <label htmlFor="att-blend">Blend strength <b className="val">{Math.round((att.blendStrength ?? 0.7) * 100)}%</b></label>
+                <input id="att-blend" type="range" min={0} max={100} step={5} value={Math.round((att.blendStrength ?? 0.7) * 100)} onChange={(e) => patch({ blendStrength: Number(e.target.value) / 100 })} />
+              </div>
+            )}
+            <p className="group-note">On, the print takes on the cloth under it: the weave shows through, leather keeps its shine and cloth soaks up a little ink. Off, it stays flat like a sticker.</p>
+          </>
+        )}
         {hw && (
           <div className="hw-preview" aria-hidden="true">
             <svg viewBox={`${-Math.max(att.w, att.h) * 0.8} ${-Math.max(att.w, att.h) * 0.8} ${Math.max(att.w, att.h) * 1.6} ${Math.max(att.w, att.h) * 1.6}`}><ArtworkGroup a={att} /></svg>

@@ -13,6 +13,10 @@ import { patternFill, isPlain } from './detailsPattern';
 import { artVersion, drawLayer, drawText, fillRuleOf, hasPictures, subscribeArt, unitPath } from './detailsArt';
 import { stripeCorners } from '../data/bandGeom';
 import { bandRanges, type BandStripe } from '../components/designDoc';
+import { blendOf, hostLook, shadeTile, fillWeave, DEFAULT_BLEND } from './detailsBlend';
+import { heightTile } from './detailsWeave';
+import { drawBinding, drawEdgeThread } from './detailsEdge';
+import { showsOn } from '../data/edgeTrim';
 import { applyLook, cottonTile, grainTile, labelLook, sheenLook, weaveTile, type LabelLook } from './detailsLook';
 
 // Attachment artwork on the draped cloth, plus picking and dragging in 3D.
@@ -107,6 +111,12 @@ function drawInk(ctx: CanvasRenderingContext2D, a: Attachment, local: boolean, o
   ctx.restore();
 }
 
+let blendScratch: HTMLCanvasElement | undefined;
+const sizedCanvas = (c: HTMLCanvasElement | undefined, w: number, h: number) => {
+  if (!c) c = document.createElement('canvas');
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  return c;
+};
 const mkCanvas = (w: number, h: number) => {
   const c = document.createElement('canvas');
   c.width = Math.max(2, Math.ceil(w));
@@ -407,6 +417,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
   const own = useStore((s) => s.project.edits?.attachments);
   const attachments = all ?? own;
   const bands = useStore((s) => s.project.edits?.bands);
+  const edgeTrims = useStore((s) => s.project.edits?.edgeTrims);
   const pieces = useStore((s) => s.project.pieces);
   const sel = useStore((s) => s.selAttachment);
   const list = useMemo(() => attachments ?? [], [attachments]);
@@ -548,11 +559,18 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
       const pieceDef = pieces.find((q) => q.id === pid);
       const myBands = !own && face === 'outside' && pieceDef ? (bands ?? []).flatMap((bd) => { const r = bandRanges(bd, pieceDef); return r ? [{ method: bd.method, sheen: bd.sheen, stripes: r }] : []; }) : [];
 
+      // contrast edges (thread, binding, piping) of this piece copy that show on this face
+      const myEdges = !own && pieceDef ? (edgeTrims ?? []).filter((t) => t.edge.pieceId === pid && (t.edge.instance === undefined || t.edge.instance === instance) && showsOn(t, face)) : [];
+      const edgeInk = myEdges.filter((t) => t.method === 'binding');
+      const edgeThread = myEdges;
+      const edgeKey = myEdges.length ? [myEdges, pieceDef!.points.map((q) => [q.x, q.y])] : 0;
+
       /* ink */
       const asyncInk = inkArt.some((a) => hasPictures(a.layers) || (a.fabric?.pattern && !isPlain(a.fabric.pattern)));
-      const sig = JSON.stringify([inkArt, myBands, sel, accent, flip, own, asyncInk ? artTick : 0]);
+      const hostL = pieceDef && !own && inkArt.some((a) => blendOf(a) > 0) ? hostLook(pieceDef.fabric.id) : null;
+      const sig = JSON.stringify([inkArt, myBands, sel, accent, flip, own, asyncInk ? artTick : 0, hostL ? pieceDef!.fabric.id : '', edgeKey]);
       let slot = rig.ink.get(slotKey);
-      if (inkArt.length || myBands.length || slot) {
+      if (inkArt.length || myBands.length || edgeInk.length || slot) {
         // pictures need more pixels than flat ink: up to 24 px per cm, never more than 2048 px a side
         const pics = inkArt.some((a) => hasPictures(a.layers));
         const kWant = Math.min(pics ? PICTURE_PX_CM : PX_PER_CM, (pics ? PICTURE_PX_MAX : MAX_PX) / Math.max(b.w, b.h));
@@ -585,10 +603,24 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
           ctx.clearRect(0, 0, slot.canvas.width, slot.canvas.height);
           ctx.setTransform(k, 0, 0, k, -b.x0 * k, -b.y0 * k);
           for (const bd of myBands) for (const q of bd.stripes) { ctx.fillStyle = q.color; fillStripe(ctx, q, b.x0 - 1, b.x0 + b.w + 1); }
-          for (const a of inkArt) drawInk(ctx, a, a.id === own, a.id !== own && a.kind !== 'print', a.id === sel ? accent : null, flip);
+          const bl = hostL ? Math.max(0, ...inkArt.map(blendOf)) : 0;
+          for (const a of inkArt) {
+            const s = hostL ? blendOf(a) : 0;
+            if (s <= 0) { drawInk(ctx, a, a.id === own, a.id !== own && a.kind !== 'print', a.id === sel ? accent : null, flip); continue; }
+            // blended: the weave darkens the ink in its grooves (its own pass so it never shades other artwork)
+            const alone = inkArt.length === 1 && !myBands.length;
+            const sc = alone ? ctx : (blendScratch = sizedCanvas(blendScratch, slot.canvas.width, slot.canvas.height)).getContext('2d')!;
+            if (!alone) { sc.setTransform(1, 0, 0, 1, 0, 0); sc.clearRect(0, 0, sc.canvas.width, sc.canvas.height); sc.setTransform(k, 0, 0, k, -b.x0 * k, -b.y0 * k); }
+            drawInk(sc, a, false, false, a.id === sel ? accent : null, flip);
+            fillWeave(sc, shadeTile(hostL!.kind, s), hostL!.periodCm, b.x0, b.y0, k, 'source-atop');
+            if (!alone) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(sc.canvas, 0, 0); ctx.restore(); }
+          }
+          if (edgeInk.length) drawBinding(ctx, pieceDef!, edgeInk);
           slot.tex.needsUpdate = true;
-          inkMat.visible = inkArt.length > 0 || myBands.length > 0;
-          applyLook(inkMat, { ...sheenLook(sh, false), roughness: sh ? sheenLook(sh, false).roughness : 0.85 });
+          inkMat.visible = inkArt.length > 0 || myBands.length > 0 || edgeInk.length > 0;
+          // gloss: the print's own sheen, else the host cloth's (leather and satin shine, knits and twills stay matte)
+          applyLook(inkMat, sh ? { ...sheenLook(sh, false) } : bl ? hostL!.look : { ...sheenLook(sh, false), roughness: 0.85 });
+          inkMat.opacity = bl ? 1 - (1 - hostL!.opacity) * (bl / DEFAULT_BLEND) : 1;
           if (relief) {
             if (!slot.hgt) { slot.hgt = mkCanvas(slot.canvas.width, slot.canvas.height); slot.hgtTex = new THREE.CanvasTexture(slot.hgt); slot.hgtTex.flipY = false; }
             paintRelief(slot.hgt.getContext('2d')!, slot.hgt.width, slot.hgt.height, k, b, inkArt, own, flip, myBands);
@@ -605,15 +637,24 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
             hc.filter = 'none';
             slot.hgtTex!.needsUpdate = true;
             inkMat.bumpMap = slot.hgtTex!; inkMat.bumpScale = 2.4;
+          } else if (bl) {
+            // the weave's height shows through the ink so the knit or twill still reads
+            if (!slot.hgt) { slot.hgt = mkCanvas(slot.canvas.width, slot.canvas.height); slot.hgtTex = new THREE.CanvasTexture(slot.hgt); slot.hgtTex.flipY = false; }
+            const hc = slot.hgt.getContext('2d')!;
+            hc.setTransform(1, 0, 0, 1, 0, 0);
+            hc.fillStyle = '#808080'; hc.fillRect(0, 0, slot.hgt.width, slot.hgt.height);
+            fillWeave(hc, heightTile(hostL!.kind), hostL!.periodCm, b.x0, b.y0, k);
+            slot.hgtTex!.needsUpdate = true;
+            inkMat.bumpMap = slot.hgtTex!; inkMat.bumpScale = hostL!.bump * bl * 1.3;
           } else inkMat.bumpMap = null;
           inkMat.needsUpdate = true;
         }
       }
 
       /* thread */
-      const tsig = JSON.stringify([threadArt, flip, own, threadArt.some((a) => hasPictures(a.layers)) ? artTick : 0]);
+      const tsig = JSON.stringify([threadArt, edgeKey, flip, own, threadArt.some((a) => hasPictures(a.layers)) ? artTick : 0]);
       let ts = rig.thread.get(slotKey);
-      if (threadArt.length || ts) {
+      if (threadArt.length || edgeThread.length || ts) {
         const k = Math.min(THREAD_PX_CM, THREAD_PX_MAX / Math.max(b.w, b.h));
         if (!ts) {
           const col = mkCanvas(b.w * k, b.h * k), hgt = mkCanvas(b.w * k, b.h * k);
@@ -637,9 +678,10 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
             if (a.kind === 'label') drawLabel(cc, hc, a, a.id === own, a.id !== own, flip);
             else drawThread(cc, hc, a, a.id === own, flip, kk);
           }
+          if (edgeThread.length) drawEdgeThread(cc, hc, pieceDef!, edgeThread);
           ts.colTex.needsUpdate = true;
           ts.hgtTex.needsUpdate = true;
-          threadMat.visible = threadArt.length > 0;
+          threadMat.visible = threadArt.length > 0 || edgeThread.length > 0;
           // material look: a tag by its type, thread by its sheen (default satin stitch)
           const lab = threadArt.find((a) => a.kind === 'label');
           if (lab) {
@@ -655,7 +697,7 @@ export default function Prints({ geo, pat, visible, all }: { geo: THREE.BufferGe
         }
       }
     });
-  }, [rig, pat, bounds, list, sel, artTick, bands, pieces]);
+  }, [rig, pat, bounds, list, sel, artTick, bands, pieces, edgeTrims]);
 
   /* ---- picking ---- */
   const hit = useMemo(() => {

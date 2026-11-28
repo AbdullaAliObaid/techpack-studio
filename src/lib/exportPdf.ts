@@ -21,6 +21,7 @@ import { BODY_FIELDS, limbGirths } from '../three/body';
 import { bbox, centroid, offsetInward, samplePoly, type Pt } from './geometry';
 import { constructionReport, seamReport, cutList, fabricBom, fabricText, fitTable, garmentSpecs, hardwareMarks, noteRows, pieceSpecs, placementMarks, trimDetails, trimsReport, type TrimDetail, FABRIC_WIDTH, MARKER_WASTE } from './specs';
 import { pathRings, shapePolygon } from './shapes';
+import { edgeTrimRows } from '../data/edgeTrim';
 import { includedPois, POI_KIND_LABEL, type Poi } from './poi';
 import { bandRanges } from '../components/designDoc';
 import { captureShots, type ShotProvider, type ShotRequest } from './detailShots';
@@ -439,6 +440,7 @@ export async function buildTechPack(p: Project, units: Units, snapshot: string |
     ...styleTrims(p.garment).map((r) => [r[0], r[1], 'Per style', r[2]]),
     ['Thread', 'Polyester core-spun, colour matched to each cloth' + (cons.topstitch ? `; topstitch: ${cons.topstitch}` : ''), 'All seams', '1 cone'],
     ...tr.map((t) => [t.item, t.detail, t.placement, String(t.qty)]),
+    ...edgeTrimRows(p.garment, p.pieces, edits).map((t) => [t.item, t.detail, t.placement, String(t.qty)]),
     ['Care label', 'Woven, as per target market rules', 'Inside, centre back neck', '1'],
   ], { title: 'Trims and findings (totals)' });
 

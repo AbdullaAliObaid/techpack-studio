@@ -10,10 +10,11 @@ import {
 } from '../lib/geometry';
 import { pieceSpecs } from '../lib/specs';
 import MeasureField from './MeasureField';
-import { commitBlockDraft } from './blockDraw';
+import { commitBlockDraft, commitEdgeClick } from './blockDraw';
 import { targetKey, type MeasureTarget } from '../data/measureEdit';
 import { fmt } from '../lib/units';
 import { pointInPoly } from '../lib/geometry';
+import { edgePolyline, insetPolyline, showsOn } from '../data/edgeTrim';
 import { builtinSeams } from '../sim/seams';
 import type { Attachment, EdgeRef, Pleat } from '../data/edits';
 import { symmetryGroups } from '../data/symmetry';
@@ -463,6 +464,8 @@ export default function PatternEditor() {
     if (st.tool === 'block') {
       const en = ent ?? entryAt(w);
       const d = st.blockDraft;
+      // thread, binding and piping go along the edge nearest the click
+      if (st.colourBlock.method !== 'paint') { if (!en) return panNow(); commitEdgeClick(en, w, viewRef.current.k); drag.current = null; return; }
       if (st.colourBlock.mode === 'rect') {
         if (!en) return panNow();
         st.set({ blockDraft: { key: en.key, pts: [w, w], rect: true } });
@@ -1110,6 +1113,7 @@ function PieceView(props: {
 
   const allAtts = useStore((st) => st.project.edits?.attachments);
   const viewFace = useStore((st) => st.chartFace);
+  const edgeTrims = useStore((st) => st.project.edits?.edgeTrims);
   const garment = useStore((st) => st.project.garment);
   const linkedHot = useStore((st) => st.linkedHot);
   const everyAtt = allAtts ?? [];
@@ -1140,7 +1144,7 @@ function PieceView(props: {
     const hitR = (dx: number, dy: number) => Math.min(px(22), Math.max(px(12), Math.hypot(dx, dy) - px(10)));
     return (
       <g key={a.id} transform={`translate(${fr.x},${fr.y}) rotate(${fr.rotation})`} data-kind="attach" data-att={a.id} data-piece={p.id} data-inst={inst} style={{ cursor: 'move' }}>
-        <g opacity={dim ? 0.5 : 1}>
+        <g opacity={(dim ? 0.5 : 1) * (a.kind === 'print' && a.blend !== false ? 1 - 0.14 * (a.blendStrength ?? 0.7) : 1)}>
           {hw || letters ? <rect x={-hitW / 2} y={-hitH / 2} width={hitW} height={hitH} fill="transparent" /> : <path d={o.d} transform={o.transform} fill="transparent" />}
           {!hw && !letters && (a.w < px(18) || a.h < px(18)) && <rect x={-hitW / 2} y={-hitH / 2} width={hitW} height={hitH} fill="transparent" />}
           {hw && a.hardware?.type !== 'zipper' && Math.max(a.w, a.h) * k < 16 && (
@@ -1349,6 +1353,13 @@ function PieceView(props: {
       {/* attachments sit on their host in the host's own coordinates; designs on a pocket or tag sit inside it */}
       <defs><clipPath id={`blk-${p.id}-${inst}`}><path d={geo.d} /></clipPath></defs>
       {attachments.filter((a) => a.block).length > 0 && <g clipPath={`url(#blk-${p.id}-${inst})`}>{attachments.filter((a) => a.block).map((a) => renderAtt(a, true))}</g>}
+      {(edgeTrims ?? []).filter((t) => t.edge.pieceId === p.id && (t.edge.instance === undefined || t.edge.instance === inst) && showsOn(t, viewFace === 'inside' ? 'inside' : 'outside')).map((t) => {
+        const line = edgePolyline(p, t.edge);
+        if (line.length < 2) return null;
+        if (t.method === 'thread') return <path key={t.id} d={polyD(insetPolyline(p, line, 0.35)).replace(/Z$/, '')} fill="none" stroke={t.colour} strokeWidth={Math.max(0.08, (t.tex ?? 45) / 450)} strokeDasharray="0.35 0.2" strokeLinecap="round" pointerEvents="none" />;
+        if (t.method === 'binding') return <path key={t.id} d={polyD(insetPolyline(p, line, t.width / 2)).replace(/Z$/, '')} fill="none" stroke={t.colour} strokeWidth={t.width} strokeLinejoin="round" opacity={0.92} pointerEvents="none" />;
+        return <path key={t.id} d={polyD(line).replace(/Z$/, '')} fill="none" stroke={t.colour} strokeWidth={t.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />;
+      })}
       {attachments.filter((a) => !a.block).map((a) => renderAtt(a, true))}
 
       {/* drawn pieces that are patched on: dashed placement, draggable */}
