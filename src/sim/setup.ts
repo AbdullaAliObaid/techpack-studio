@@ -378,6 +378,8 @@ export function warmStart(next: Garment3D, prev: Garment3D) {
   next.sim.frames = 0;
   return true;
 }
+/** cm/s a hat is pulled down on to the head with once it is sewn */
+const SEAT_SPEED = 20;
 /** frames a collar placed afresh (turned up or down) takes to sew back on to the draped neckline */
 const COLLAR_RESEW = 24;
 
@@ -1625,7 +1627,31 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   maxStrain.forEach((v, i) => (sim.maxStrain[i] = v));
   sim.substeps = SUB;
   // hat pieces start in place, practically sewn: gravity and friction from the start keep them seated on the head
-  if (hat) sim.sewFrames = 6;
+  if (hat) {
+    sim.sewFrames = 6;
+    // sewn where it was placed: the crown closing round the head pushed the hat up while sewn (2 to 5 cm in 6 frames),
+    // and the speed it left with threw it up off the head once gravity came on. It came down hard and off centre, and
+    // with a label or patch on it (a cap, a five panel) slid off the head. While sewn the hat's mean height is held at
+    // its start and it may not gather speed upward.
+    let y0 = NaN;
+    sim.frameHook = () => {
+      if (sim.frames > sim.sewFrames) return;
+      const P = sim.pos, V = sim.vel;
+      let y = 0;
+      for (let i = 1; i < P.length; i += 3) y += P[i];
+      y /= sim.n;
+      if (Number.isNaN(y0)) y0 = y;
+      const up = y - y0;
+      let vy = 0;
+      for (let i = 1; i < V.length; i += 3) vy += V[i];
+      vy /= sim.n;
+      if (up > 0) for (let i = 1; i < P.length; i += 3) P[i] -= up;
+      // the last sewing frame: pulled down on to the head the way it is put on (friction on the sides holds a hat
+      // that is only set on the head a little proud of it)
+      const seat = sim.frames === sim.sewFrames ? -SEAT_SPEED : 0;
+      if (vy > seat) for (let i = 1; i < V.length; i += 3) V[i] -= vy - seat;
+    };
+  }
   // the garment can not climb the body while its seams close (see ClothSim.sewRise)
   else sim.sewRise = SEW_RISE;
   sim.pos.set(init);

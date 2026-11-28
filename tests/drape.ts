@@ -16,6 +16,7 @@ import { styleEdits } from '../src/data/construction';
 import { fabricThickness } from '../src/data/fabrics';
 import { HAT_DESIGNS } from '../src/data/designsHats';
 import { designProject } from '../src/store';
+import { pointInPoly } from '../src/lib/geometry';
 
 const DEFAULT_BODY = process.env.BODY === 'female' ? FEMALE_BODY : MALE;
 const FF = calibratedField(DEFAULT_BODY);
@@ -482,6 +483,38 @@ if (!only || only === 'hat-designs') {
     const p = designProject(d, DEFAULT_BODY);
     if (!p) { fails++; console.log(`FAIL ${d.id} does not load`); continue; }
     drape(d.style, p.pieces, p.edits, d.id.slice(0, 14));
+  }
+}
+
+// ---- woven labels on hats: a flag label on the outside of a crown panel and of the brim, a size tag inside the crown.
+// They used to throw the cap and five panel off the head (the crown closing round the head while sewn pushed the hat
+// up, and the speed it left with carried the hat off once gravity came on) ----
+if (!only || only === 'hat-labels') {
+  console.log('\n== woven labels on hats ==');
+  /** the point of a piece furthest inside its outline (a label placed there is on the cloth whatever the shape) */
+  const inner = (p: Piece) => {
+    const xs = p.points.map((q) => q.x), ys = p.points.map((q) => q.y);
+    let at = { x: 0, y: 0 }, best = -1;
+    for (let i = 0; i <= 40; i++) for (let j = 0; j <= 40; j++) {
+      const q = { x: Math.min(...xs) + (i / 40) * (Math.max(...xs) - Math.min(...xs)), y: Math.min(...ys) + (j / 40) * (Math.max(...ys) - Math.min(...ys)) };
+      if (!pointInPoly(p.points, q)) continue;
+      const d = Math.min(...p.points.map((o) => Math.hypot(o.x - q.x, o.y - q.y)));
+      if (d > best) { best = d; at = q; }
+    }
+    return at;
+  };
+  const label = (id: string, host: Piece, face: 'inside' | 'outside', instance?: number): Attachment => ({
+    id, kind: 'label', name: 'Woven label', pieceId: host.id, ...inner(host), rotation: 0, w: 4, h: 2, outline: 'rect', layers: [], face,
+    ...(instance !== undefined ? { instance } : {}), label: { type: 'woven', sewn: 'ends', color: '#f4f2ec' } });
+  for (const g of ['bucket-hat', 'cap', 'five-panel'] as StyleId[]) {
+    const pieces = makePreset(g, DEFAULT_BODY), base = styleEdits(g, pieces, DEFAULT_BODY);
+    const crown = pieces.find((p) => p.role === 'crown')!, brim = pieces.find((p) => p.role === 'brim')!;
+    const labels = [label('flag', crown, 'outside', 0), label('tag', crown, 'inside', 1), label('brimtag', brim, 'outside')];
+    const { G } = drape(g, pieces, { ...base, attachments: [...(base.attachments ?? []), ...labels] }, `${g} labels`);
+    for (const a of labels) {
+      const s = staysOn(G, a.id);
+      verdict(s.copies === 1 && s.worst < 1.5, `${g.padEnd(10)} ${a.id.padEnd(7)} stays on its piece: ${s.copies} copy, ${s.worst.toFixed(2)} cm off at most`);
+    }
   }
 }
 
