@@ -9,7 +9,7 @@ import { DEFAULT_BODY, type Body } from './three/body';
 import { draft, regradePoints, type Fit } from './data/draft';
 import { bezAt, toBeziers, type PPoint, type Pt } from './lib/geometry';
 import { fromUnit, uid, type Units } from './lib/units';
-import { pleatIntakeOf, EMPTY_EDITS, ZERO_POSE, type Face, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
+import { rowSlots, pleatIntakeOf, EMPTY_EDITS, ZERO_POSE, type Face, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
 import { FEMALE_BODY, MALE_BODY } from './three/body';
 import { applyMoves, linkedMoves } from './data/symmetry';
 import { rejoinSide, splitSide } from './data/split';
@@ -364,6 +364,10 @@ export interface State {
   /** the partner (buttonhole or button) of the trim just removed, offered for removal in the same undo step */
   removedMatch: { id: string; name: string; removed: string } | null;
   removeMatch: () => void;
+  /** takes one trim out of a row (button k of a placket), and the matching buttonhole k with it when asked; the last one removes the row */
+  removeRowItem: (id: string, k: number, withPartner?: boolean) => void;
+  /** brings back every trim taken out of a row */
+  restoreRow: (id: string) => void;
   /** brings back the style trims that were removed (Edits.removedBuiltins) */
   restoreStyleTrims: () => number;
   addCustomSeam: (s: Omit<CustomSeam, 'id'>) => string;
@@ -1095,6 +1099,21 @@ export const useStore = create<State>((set, get) => {
         ...(a0?.builtin && !replaced ? { removedBuiltins: [...(e.removedBuiltins ?? []), builtinKey(a0, pieces)] } : {}),
       }));
       set((s) => ({ selAttachment: s.selAttachment === id ? null : s.selAttachment, removedMatch: m && a0 ? { id: m.id, name: m.name, removed: a0.name } : null }));
+    },
+    removeRowItem: (id, k, withPartner) => {
+      const atts = get().project.edits?.attachments ?? [];
+      const a = atts.find((q) => q.id === id);
+      if (!a?.hardware) return;
+      const partner = withPartner ? matchingTrim(atts, a) : undefined;
+      const left = rowSlots(a.hardware).filter((s) => s !== k);
+      if (!left.length) { get().removeAttachment(id); if (partner) get().removeMatch(); return; }
+      get().commit();
+      const skipIn = (q: typeof a) => ({ ...q, hardware: { ...q.hardware!, skip: [...new Set([...(q.hardware!.skip ?? []), k])].sort((x, y) => x - y) } });
+      setEdits((e) => ({ ...e, attachments: e.attachments.map((q) => (q.id === id || (partner && q.id === partner.id) ? skipIn(q) : q)) }));
+    },
+    restoreRow: (id) => {
+      get().commit();
+      setEdits((e) => ({ ...e, attachments: e.attachments.map((q) => (q.id === id && q.hardware ? { ...q, hardware: { ...q.hardware, skip: undefined } } : q)) }));
     },
     removeMatch: () => {
       const m = get().removedMatch;

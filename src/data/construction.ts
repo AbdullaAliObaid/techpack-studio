@@ -20,7 +20,7 @@ import { uid } from '../lib/units';
 import type { Body } from '../three/body';
 import { migrateGarment, styleById, type StyleId } from './catalog';
 import { draft, isSplitFront, pocketOpening, regradePoints, splitFrontStyle, flyStyle, frontPocketStyle, type Fit } from './draft';
-import { EMPTY_EDITS, type Attachment, type EdgeRef, type Edits, type Hardware } from './edits';
+import { EMPTY_EDITS, rowSlots, type Attachment, type EdgeRef, type Edits, type Hardware } from './edits';
 import { fabricHex } from './fabrics';
 import { INSIDE_ROLES, makePreset, type Piece } from './presets';
 import { builtinSeams, instanceCount } from '../sim/seams';
@@ -167,7 +167,7 @@ export function buttonholeSlots(a: Pick<Attachment, 'hardware' | 'buttonhole' | 
   const unit = buttonholeOutline(h.size, h.holeStyle ?? 'straight');
   const along = h.holeDir === 'along';
   const r = (a.rotation * Math.PI) / 180, c = Math.cos(r), s = Math.sin(r);
-  return Array.from({ length: n }, (_, k) => unit.map((q) => {
+  return rowSlots(h).map((k) => unit.map((q) => {
     const lx = (k - (n - 1) / 2) * sp + (along ? q.x : q.y), ly = along ? q.y : q.x;
     return onPiece ? { x: a.x + lx * c - ly * s, y: a.y + lx * s + ly * c } : { x: lx, y: ly };
   }));

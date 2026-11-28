@@ -2,6 +2,7 @@
 // bands and notes, and on the Design artboard for layers. One app styled menu, keyboard driven (arrows, Enter, Escape).
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
+import { rowSlots } from '../data/edits';
 import { matchingTrim } from '../data/construction';
 import { uid } from '../lib/units';
 import { copiesOf } from './sides';
@@ -19,6 +20,7 @@ let show: ((o: Open | null) => void) | null = null;
 export const openContextMenu = (x: number, y: number, items: MenuItem[]) => show?.({ x, y, items: items.filter((i) => i.sep || i.label) });
 
 const S = () => useStore.getState();
+const HW_WORD: Record<string, string> = { button: 'button', snap: 'snap', rivet: 'rivet', eyelet: 'eyelet', stud: 'stud', grommet: 'grommet' };
 const go = (ws: Parameters<ReturnType<typeof S>['setWorkspace']>[0], extra: Record<string, unknown> = {}) => { S().setWorkspace(ws); S().set(extra as never); };
 
 /** Move an attachment one step in the stack (later is on top). */
@@ -33,7 +35,7 @@ function stack(id: string, dir: 1 | -1) {
   useStore.setState((s) => ({ project: { ...s.project, edits: { ...s.project.edits!, attachments: next }, updatedAt: Date.now() } }));
 }
 
-function attachItems(id: string): MenuItem[] {
+function attachItems(id: string, slot?: number): MenuItem[] {
   const st = S();
   const a = (st.project.edits?.attachments ?? []).find((q) => q.id === id);
   if (!a) return [];
@@ -41,6 +43,15 @@ function attachItems(id: string): MenuItem[] {
   const pair = !!host && copiesOf(st.project.garment, host) === 2 && a.instance !== undefined;
   const partner = matchingTrim(st.project.edits?.attachments ?? [], a);
   const trim = a.kind === 'hardware' || a.kind === 'label' || a.kind === 'pocket' || a.kind === 'strap';
+  // one trim of a row (a placket's buttons): the one right clicked when known, else each listed
+  const slots = a.hardware && a.hardware.type !== 'zipper' ? rowSlots(a.hardware) : [];
+  const what = a.buttonhole ? 'buttonhole' : a.hardware ? (HW_WORD[a.hardware.type] ?? 'trim') : 'trim';
+  const pw = a.buttonhole ? 'button' : 'buttonhole';
+  const one: MenuItem[] = slots.length > 1 ? (slot !== undefined && slots.includes(slot) ? [slot] : slots).flatMap((k) => [
+    { label: slot !== undefined ? `Remove this ${what}` : `Remove ${what} ${k + 1}`, icon: 'minus', danger: true, onClick: () => st.removeRowItem(id, k) },
+    ...(partner ? [{ label: slot !== undefined ? `Remove this ${what} and its ${pw}` : `Remove ${what} ${k + 1} and its ${pw}`, icon: 'minus', danger: true, onClick: () => st.removeRowItem(id, k, true) }] : []),
+  ]) : [];
+  const skipped = a.hardware?.skip?.length ?? 0;
   return [
     { label: 'Edit', icon: 'select', onClick: () => { go(trim ? 'trims' : 'design', { designMode: 'insert', designTab: 'edit', selAttachment: id, tool: 'select' }); } },
     { label: 'Duplicate', icon: 'copy', onClick: () => { const n = st.duplicateAttachment(id); if (n) st.set({ selAttachment: n }); } },
@@ -49,7 +60,8 @@ function attachItems(id: string): MenuItem[] {
     { label: 'Bring forward', icon: 'up', onClick: () => stack(id, 1) },
     { label: 'Send back', icon: 'down', onClick: () => stack(id, -1) },
     { sep: true, label: '' },
-    { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', onClick: () => { st.removeAttachment(id); st.set({ selAttachment: null }); } },
+    ...(one.length ? [...one, ...(skipped ? [{ label: `Bring back ${skipped} removed`, icon: 'plus', onClick: () => st.restoreRow(id) }] : []), { sep: true, label: '' }] : skipped ? [{ label: `Bring back ${skipped} removed`, icon: 'plus', onClick: () => st.restoreRow(id) }] : []),
+    { label: slots.length > 1 ? `Delete all ${slots.length}` : 'Delete', icon: 'trash', danger: true, hint: 'Del', onClick: () => { st.removeAttachment(id); st.set({ selAttachment: null }); } },
     ...(partner ? [{ label: a.buttonhole ? 'Delete with its button' : 'Delete with its buttonhole', icon: 'trash', danger: true, onClick: () => { st.removeAttachment(id); st.removeMatch(); } }] : []),
   ];
 }
@@ -120,7 +132,7 @@ function chartItems(t: HTMLElement): MenuItem[] | null {
   const pieceId = el?.dataset.piece;
   const inst = Number(el?.dataset.inst ?? 0);
   if (!kind || !el) return null;
-  if (kind === 'attach' || kind === 'handle') { const id = el.dataset.att!; st.set({ selAttachment: id, selPiece: pieceId ?? st.selPiece }); return attachItems(id); }
+  if (kind === 'attach' || kind === 'handle') { const id = el.dataset.att!; st.set({ selAttachment: id, selPiece: pieceId ?? st.selPiece }); const sl = (t.closest('[data-slot]') as HTMLElement | null)?.dataset.slot; return attachItems(id, sl !== undefined ? Number(sl) : undefined); }
   if (kind === 'point' && pieceId) { if (!(st.selMulti.length > 1 && st.selMulti.some((i) => i.pointId === el.dataset.point))) st.select(pieceId, el.dataset.point!); return pointItems(pieceId, el.dataset.point!); }
   if (kind === 'pleat') { const id = el.dataset.pleat!; st.set({ selPleat: id }); return [{ label: 'Delete pleat', icon: 'trash', danger: true, hint: 'Del', onClick: () => st.removePleat(id) }]; }
   if (kind === 'ghost' && pieceId) { st.select(pieceId, null); return [{ label: 'Edit in Seams', icon: 'seams', onClick: () => go('seams', { selPiece: pieceId }) }, { sep: true, label: '' }, { label: 'Delete piece', icon: 'trash', danger: true, hint: 'Del', onClick: () => st.removePiece(pieceId) }]; }

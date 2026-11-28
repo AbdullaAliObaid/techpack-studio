@@ -2,6 +2,7 @@
 // thread, printed, or fixed on as hardware. Tiles drag onto the 2D chart or the 3D model, or are added to the selection.
 import { notify } from './notify';
 import { useRef, useState } from 'react';
+import { rowSlots } from '../data/edits';
 import { useStore, usePick } from '../store';
 import type { Attachment, HardwareType } from '../data/edits';
 import { fabricById } from '../data/fabrics';
@@ -383,7 +384,7 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
               <li key={a.id} className={a.id === selAttachment ? 'on' : ''}>
                 <button className="att-row" aria-pressed={a.id === selAttachment} onClick={() => { set({ selAttachment: a.id, selLayer: null, selPiece: hostPiece?.id ?? null, selInstance: a.instance ?? null }); openDesign('edit'); }}>
                   <span className="att-ico">{a.fabric && ['pocket', 'patch', 'strap', 'applique'].includes(a.kind) ? <FabricSwatch fabric={a.fabric} size={28} /> : <Icon name={KIND_ICON[a.kind]} size={18} />}</span>
-                  <span className="att-text"><span className="att-name">{a.name}</span><small>{KIND_LABEL[a.kind]} on {where}{a.face === 'inside' ? ', inside' : ''}</small></span>
+                  <span className="att-text"><span className="att-name">{a.name}{a.hardware && a.hardware.type !== 'zipper' && rowSlots(a.hardware).length > 1 ? ` · ${rowSlots(a.hardware).length}` : ''}</span><small>{a.hardware && a.hardware.type !== 'zipper' ? `${rowSlots(a.hardware).length} ${a.buttonhole ? (rowSlots(a.hardware).length === 1 ? 'buttonhole' : 'buttonholes') : rowSlots(a.hardware).length === 1 ? a.hardware.type : `${a.hardware.type}s`}` : KIND_LABEL[a.kind]} on {where}{a.face === 'inside' ? ', inside' : ''}</small></span>
                 </button>
                 <button className="icon-btn sm danger" aria-label={`Delete ${a.name}`} title="Delete" onClick={() => useStore.getState().removeAttachment(a.id)}><Icon name="trash" size={16} /></button>
               </li>

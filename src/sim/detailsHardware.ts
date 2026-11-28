@@ -121,6 +121,7 @@ export function buildHardware(G: Garment3D, attachments: Attachment[], signs: nu
       const n = Math.max(1, Math.min(60, Math.round(hw0.count ?? 1)));
       const gap = hw0.spacing ?? hw0.size * 2.2;
       for (let i = 0; i < n && kind.length < MAX_ITEMS; i++) {
+        if (hw0.skip?.includes(i)) continue;
         // the trim drawn here: a button not in a hole, or the button buttoned into this buttonhole
         let hw = hw0, di = di0;
         if (a.buttonhole) {

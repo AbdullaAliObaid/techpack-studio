@@ -3,7 +3,7 @@
 // (down the garment when unrotated). The caller applies the attachment's translate and rotate.
 // Every entry is one SVG path string. Draw them stroked with no fill (or fill the ones that carry fillRule).
 
-import type { Attachment, Hardware } from '../data/edits';
+import { rowSlots, type Attachment, type Hardware } from '../data/edits';
 import * as shapesLib from './shapes';
 
 /** Outline rings (cm, centred) of an attachment: one ring per cut piece (an applique word gives one per letter). */
@@ -35,7 +35,7 @@ export function hardwareRow(hw: Hardware): number[] {
   if (hw.type === 'zipper') return [0];
   const n = Math.max(1, Math.min(60, Math.round(hw.count ?? 1)));
   const gap = hw.spacing ?? hw.size * 2.2;
-  return Array.from({ length: n }, (_, i) => f((i - (n - 1) / 2) * gap));
+  return rowSlots(hw).map((i) => f((i - (n - 1) / 2) * gap));
 }
 
 const poly = (pts: { x: number; y: number }[], dx = 0, dy = 0) => pts.map((p, i) => `${i ? 'L' : 'M'}${f(p.x + dx)} ${f(p.y + dy)}`).join('') + 'Z';

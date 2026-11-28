@@ -1,6 +1,6 @@
 import type { Piece, SpecDef, GarmentType } from '../data/presets';
 import { bbox, bezAt, bezTangent, dist, offsetInward, outlineLength, samplePoly, signedArea, sliceSpan, toBeziers, type Pt } from './geometry';
-import type { Attachment, Edits, Face, Hardware, Pleat, WashSequence } from '../data/edits';
+import { rowSlots, type Attachment, type Edits, type Face, type Hardware, type Pleat, type WashSequence } from '../data/edits';
 import { shownBox } from './clipLayers';
 import { attachmentPolygons, attachmentShapes, outlinePolygon, SHAPES } from './shapes';
 import { builtinSeams, faceLabel, faceOf, instanceLabel, crownCount } from '../sim/seams';
@@ -621,9 +621,9 @@ export function trimsReport(pieces: Piece[], edits?: Edits, style?: StyleId): Tr
         push({ kind: 'hardware', item: 'Zip', detail: hardwareDetail(h, a), placement: where, qty: copies });
       } else if (a.buttonhole) {
         // a buttonhole is a sewing operation, not a bought trim: as long as the button is wide, plus 3 mm
-        push({ kind: 'buttonhole', item: 'Buttonhole', detail: `${round1(h.size * 10 + 3)} mm, ${h.holeStyle === 'keyhole' ? 'keyhole' : 'straight'}, ${h.holeDir === 'along' ? 'along the row' : 'across the row'}, stitched${a.thread ? `, thread ${a.thread}` : ', thread matched'}`, placement: where, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
+        push({ kind: 'buttonhole', item: 'Buttonhole', detail: `${round1(h.size * 10 + 3)} mm, ${h.holeStyle === 'keyhole' ? 'keyhole' : 'straight'}, ${h.holeDir === 'along' ? 'along the row' : 'across the row'}, stitched${a.thread ? `, thread ${a.thread}` : ', thread matched'}`, placement: where, qty: rowSlots(h).length * copies });
       } else {
-        push({ kind: 'hardware', item: HW_NAME[h.type] ?? cap(h.type), detail: hardwareDetail(h, a), placement: where, qty: Math.max(1, Math.round(h.count ?? 1)) * copies });
+        push({ kind: 'hardware', item: HW_NAME[h.type] ?? cap(h.type), detail: hardwareDetail(h, a), placement: where, qty: rowSlots(h).length * copies });
       }
     } else if (a.kind === 'label') {
       const r = labelReport(pieces, { ...edits!, attachments: [a] }, style)[0];
@@ -893,7 +893,7 @@ export function hardwareMarks(p: Piece, edits?: Edits): { name: string; /** hard
     const T = (q: Pt): Pt => ({ x: a.x + q.x * c - q.y * s, y: a.y + q.x * s + q.y * c });
     if (h.type === 'zipper') { out.push({ name: a.name, type: h.type, points: [], line: [T({ x: 0, y: -a.h / 2 }), T({ x: 0, y: a.h / 2 })] }); continue; }
     const n = Math.max(1, Math.round(h.count ?? 1)), sp = h.spacing ?? Math.max(1.5, h.size * 2);
-    out.push({ name: a.name, type: a.buttonhole ? 'buttonhole' : h.type, points: Array.from({ length: n }, (_, k) => ({ at: T({ x: (k - (n - 1) / 2) * sp, y: 0 }), r: Math.max(0.1, h.size / 2) })), ...(a.builtin ? { builtin: true } : {}), ...(a.buttonhole ? { slots: buttonholeSlots(a, true) } : {}) });
+    out.push({ name: a.name, type: a.buttonhole ? 'buttonhole' : h.type, points: rowSlots(h).map((k) => ({ at: T({ x: (k - (n - 1) / 2) * sp, y: 0 }), r: Math.max(0.1, h.size / 2) })), ...(a.builtin ? { builtin: true } : {}), ...(a.buttonhole ? { slots: buttonholeSlots(a, true) } : {}) });
   }
   return out;
 }
@@ -1214,7 +1214,7 @@ export function trimDetails(pieces: Piece[], edits?: Edits, style?: StyleId): Tr
     const sheen = a.sheen ? SHEEN_NAME[a.sheen] ?? a.sheen : undefined;
     if (a.kind === 'hardware' && a.hardware) {
       const h = a.hardware, m = hardwareMarks({ ...host!, id: a.pieceId }, { ...edits!, attachments: [a] })[0];
-      const n = h.type === 'zipper' ? 1 : Math.max(1, Math.round(h.count ?? 1));
+      const n = h.type === 'zipper' ? 1 : rowSlots(h).length;
       out.push({
         ...base, item: HW_NAME[h.type] ?? cap(h.type), material: hwMaterial(h), finish: sheen ?? (h.sheen ? SHEEN_NAME[h.sheen] : METAL.has(h.finish) ? 'Polished metal' : 'Matte'), colour: h.color ?? (h.zipper ? `${cap(h.finish)} teeth, tape ${h.zipper.tape}` : cap(h.finish)),
         thread: h.type === 'button' ? 'Matched to the fabric' : 'None', size: h.type === 'zipper' ? `${round1(a.h)} cm long, ${mm(h.size)} tape` : n > 1 ? `${mm(h.size)} diameter, ${n} in a row, ${round1(h.spacing ?? Math.max(1.5, h.size * 2))} cm apart` : `${mm(h.size)} diameter`,

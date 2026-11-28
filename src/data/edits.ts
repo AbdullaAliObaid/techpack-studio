@@ -78,6 +78,8 @@ export interface Hardware {
   size: number;
   /** several in a row along the attachment's w (cm) direction, centre to centre spacing */
   count?: number;
+  /** positions in the row (0 = first) taken out one by one, eg a single button removed with right click */
+  skip?: number[];
   spacing?: number;
   /** zipper: open or closed (closed = the two sides are joined) */
   open?: boolean;
@@ -363,3 +365,11 @@ export interface Band {
 }
 
 export const EMPTY_EDITS: Edits = { attachments: [], customSeams: [], detachedSeams: [], pleats: [] };
+
+/** the positions of a hardware row that are still there (count minus skipped ones), in row order */
+export function rowSlots(h: { count?: number; skip?: number[] }, max = 60): number[] {
+  const n = Math.max(1, Math.min(max, Math.round(h.count ?? 1)));
+  const out: number[] = [];
+  for (let k = 0; k < n; k++) if (!h.skip?.includes(k)) out.push(k);
+  return out;
+}

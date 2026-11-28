@@ -199,6 +199,20 @@ async function main() {
     ok('restored trims are in the trims report again', trimsReport(p2.pieces, p2.edits, p2.garment).some((r) => r.kind === 'hardware' && r.item === 'Button'));
     ok('restore twice adds nothing', restoreBuiltins(p2) === p2 || restoreBuiltins(p2).edits!.attachments.length === p2.edits!.attachments.length);
   }
+  {
+    // one button of a row comes out on its own (right click), with its buttonhole, and comes back
+    const po = freshProject('polo', 'P1');
+    useStore.setState({ project: po, past: [], future: [] });
+    const btn = po.edits!.attachments.find((a) => a.name === 'Placket buttons')!;
+    useStore.getState().removeRowItem(btn.id, 0, true);
+    const p1 = useStore.getState().project;
+    const rep = trimsReport(p1.pieces, p1.edits, p1.garment);
+    ok('one button out: the report counts 1 button and 1 buttonhole', rep.filter((r) => r.kind === 'hardware' && r.item === 'Button').reduce((n, r) => n + r.qty, 0) === 1 && rep.filter((r) => r.kind === 'buttonhole').reduce((n, r) => n + r.qty, 0) === 1);
+    const plk = p1.pieces.find((q) => q.role === 'placket')!;
+    ok('one button out: the simulation sees one button', hardwareMarks(plk, p1.edits).filter((h) => h.type === 'button').reduce((n, h) => n + h.points.length, 0) === 1);
+    useStore.getState().removeRowItem(btn.id, 1, true);
+    ok('the last button out removes the row and its buttonholes', !useStore.getState().project.edits!.attachments.some((a) => a.name.startsWith('Placket button')));
+  }
   console.log('== pocket with a motif ==');
   {
     const q = freshProject('button-up', 'Motif pocket');

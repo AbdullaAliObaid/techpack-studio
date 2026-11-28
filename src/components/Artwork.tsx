@@ -1,7 +1,7 @@
 import { SHAPES, OUTLINES, outlinePolygon, attachmentShapes } from '../lib/shapes';
 import { fontOf } from '../three/detailsArt';
 import { cleanText } from '../lib/fonts';
-import type { Attachment, Finish, Hardware, ShapeLayer, ZipperDesign } from '../data/edits';
+import { rowSlots, type Attachment, type Finish, type Hardware, type ShapeLayer, type ZipperDesign } from '../data/edits';
 import { polyD } from '../lib/geometry';
 import { buttonholeSlots } from '../data/construction';
 
@@ -152,8 +152,8 @@ export function HardwareRow({ a }: { a: Pick<Attachment, 'hardware' | 'w' | 'h'>
   return (
     <>
       <SheenDefs />
-      {Array.from({ length: n }, (_, i) => (
-        <g key={i} transform={`translate(${(i - (n - 1) / 2) * sp},0)`}><HardwareMark hw={hw} w={a.w} h={a.h} /></g>
+      {rowSlots(hw).map((i) => (
+        <g key={i} data-slot={i} transform={`translate(${(i - (n - 1) / 2) * sp},0)`}><HardwareMark hw={hw} w={a.w} h={a.h} /></g>
       ))}
     </>
   );

@@ -9,7 +9,7 @@ import { isHatFamily, migrateGarment, styleById, type Style, type StyleId } from
 import { COLLAR_TIP, crownArc, derivedGirths, frontOffset, isSplitFront, RIB } from '../data/draft';
 import { bezAt, bbox, outlineLength, pointInPoly, samplePoly, sliceSpan, toBeziers, type PPoint, type Pt } from '../lib/geometry';
 import { attachmentShapes } from '../lib/shapes';
-import { EMPTY_EDITS, type EdgeRef, type Edits, type Face, type Hardware, type Pleat } from '../data/edits';
+import { EMPTY_EDITS, rowSlots, type EdgeRef, type Edits, type Face, type Hardware, type Pleat } from '../data/edits';
 import { labelMaterial, labelSewing, labelSize, type LabelMaterial } from '../data/labels';
 import { builtinSeams, collarRoll, collarState, faceOf } from './seams';
 import { foldSplits } from '../data/split';
@@ -86,7 +86,7 @@ const SNAP_REACH = 2;
 /** Centres of the trims of a hardware attachment, in its own coords (cm): count in a row along w, spacing apart. */
 export function hardwarePoints(h: Hardware): Pt[] {
   const n = Math.max(1, Math.round(h.count ?? 1)), sp = h.spacing ?? Math.max(1.5, h.size * 2);
-  return Array.from({ length: n }, (_, k) => ({ x: (k - (n - 1) / 2) * sp, y: 0 }));
+  return rowSlots(h).map((k) => ({ x: (k - (n - 1) / 2) * sp, y: 0 }));
 }
 
 export interface Garment3D {
