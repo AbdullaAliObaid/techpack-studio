@@ -16,7 +16,7 @@ import { fmt } from '../lib/units';
 import { pointInPoly } from '../lib/geometry';
 import { edgePolyline, insetPolyline, showsOn } from '../data/edgeTrim';
 import { KIND as FINISH_KIND, strokePts, strokesFor } from '../data/finish';
-import { openings } from '../three/detailsFinish';
+import { finishPreview, openings, pieceFin } from '../three/detailsFinish';
 import { builtinSeams } from '../sim/seams';
 import type { Attachment, EdgeRef, Pleat } from '../data/edits';
 import { symmetryGroups } from '../data/symmetry';
@@ -1175,6 +1175,7 @@ function PieceView(props: {
   const garment = useStore((st) => st.project.garment);
   const linkedHot = useStore((st) => st.linkedHot);
   const everyAtt = allAtts ?? [];
+  const allPieces = useStore((st) => st.project.pieces);
   const insideOwn = useStore((st) => !!st.project.edits?.insideFabric?.[p.id]);
 
   /** one attachment (and the designs sewn onto it) in its own frame */
@@ -1425,12 +1426,8 @@ function PieceView(props: {
       {attachments.filter((a) => a.block).length > 0 && <g clipPath={`url(#blk-${p.id}-${inst})`}>{attachments.filter((a) => a.block).map((a) => renderAtt(a, true))}</g>}
       {finishEdit && (finishEdit.preset !== 'none' || finishEdit.pieces.length > 0) && (
         <g clipPath={`url(#blk-${p.id}-${inst})`} pointerEvents="none">
-          {finishEdit.preset !== 'none' && <path d={geo.d} fill={finishEdit.preset === 'dark' ? '#0a0f1c' : '#ffffff'} opacity={(finishEdit.preset === 'dark' ? 0.22 : finishEdit.preset === 'light' ? 0.45 : finishEdit.preset === 'vintage' ? 0.35 : 0.22) * (finishEdit.presetStrength ?? 1)} />}
-          {strokesFor(finishEdit, p.id, inst).map((st, i) => {
-            const pts = strokePts(st);
-            if (st.k === 'hole' || st.k === 'rip') return <path key={i} d={openings([st]).map((o) => polyD(o)).join('')} fill="var(--viewport, #1b1b1f)" stroke={FINISH_KIND.fray.tone} strokeWidth={0.12} strokeDasharray="0.25 0.15" />;
-            return <path key={i} d={pts.length > 1 ? polyD(pts).replace(/Z$/, '') : `M${pts[0].x},${pts[0].y}l0.01,0`} fill="none" stroke={FINISH_KIND[st.k].tone} strokeWidth={Math.max(0.3, st.r * 2)} strokeLinecap="round" strokeLinejoin="round" opacity={0.18 + 0.4 * st.s} style={{ mixBlendMode: 'screen' }} />;
-          })}
+          {(() => { const fin = pieceFin(finishEdit, p.id, inst); if (!fin) return null; const im = finishPreview(p, allPieces, everyAtt, fin, fabricHex(p.fabric)); return <image href={im.url} x={im.x} y={im.y} width={im.w} height={im.h} preserveAspectRatio="none" />; })()}
+          {strokesFor(finishEdit, p.id, inst).filter((st) => st.k === 'hole' || st.k === 'rip' || st.k === 'pinhole').map((st, i) => <path key={i} d={openings([st]).map((o) => polyD(o)).join('')} fill="var(--viewport, #1b1b1f)" stroke={FINISH_KIND.fray.tone} strokeWidth={0.12} strokeDasharray="0.25 0.15" />)}
         </g>
       )}
       {(edgeTrims ?? []).filter((t) => t.edge.pieceId === p.id && (t.edge.instance === undefined || t.edge.instance === inst) && showsOn(t, viewFace === 'inside' ? 'inside' : 'outside')).map((t) => {

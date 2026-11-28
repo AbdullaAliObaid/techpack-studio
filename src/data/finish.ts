@@ -70,7 +70,7 @@ export function extendStroke(f: GarmentFinish | undefined, pieceId: string, inst
   if (!f) return f;
   const e = f.pieces.find((p) => p.pieceId === pieceId && p.instance === instance);
   const st = e?.strokes[e.strokes.length - 1];
-  if (!e || !st || st.k === 'hole' || st.p.length >= MAX_PTS * 2) return f;
+  if (!e || !st || st.k === 'hole' || st.k === 'pinhole' || st.p.length >= MAX_PTS * 2) return f;
   const lx = st.p[st.p.length - 2], ly = st.p[st.p.length - 1];
   if (Math.hypot(x - lx, y - ly) < Math.max(0.3, st.r * 0.35)) return f;
   const next = { ...st, p: [...st.p, q(x), q(y)] };
