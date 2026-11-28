@@ -7,6 +7,7 @@ import { LayerShape, outlineD } from './Artwork';
 import { ColorField, Disclosure, LenInput, Row, SubLabel, Switch } from './controls';
 import { PALETTE, layer, stripeLayers } from './editHelpers';
 import { fabricById } from '../data/fabrics';
+import { clipAttachmentLayers } from '../lib/clipLayers';
 import { uid } from '../lib/units';
 import Icon from './Icon';
 
@@ -28,6 +29,21 @@ export default function EmblemEditor({ att: attIn, layers: layersProp, onLayers,
   const [picking, setPicking] = useState(false);
   const [lock, setLock] = useState(true);
   const sel = layers.find((l) => l.id === selLayer) ?? null;
+  // finishing with a tag, patch or pocket (closing its editor, selecting something else) applies the cut: layers are
+  // clipped to the outline, and layers wholly outside are dropped
+  const outside = layersProp ? 0 : clipAttachmentLayers(att).dropped;
+  const attId = att.id;
+  useEffect(() => {
+    if (layersProp) return;
+    return () => {
+      const st = useStore.getState();
+      const cur = st.project.edits?.attachments.find((q) => q.id === attId);
+      if (!cur) return;
+      const r = clipAttachmentLayers(cur);
+      if (!r.changed) return;
+      st.updateAttachment(attId, { layers: r.layers });
+    };
+  }, [attId, !!layersProp]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setLayers = (next: ShapeLayer[]) => (onLayers ? onLayers(next) : updateAttachment(att.id, { layers: next }));
   const patch = (id: string, p: Partial<ShapeLayer>) => setLayers(layers.map((l) => (l.id === id ? { ...l, ...p } : l)));
@@ -63,6 +79,7 @@ export default function EmblemEditor({ att: attIn, layers: layersProp, onLayers,
   return (
     <Disclosure id={sectionId} title={title} icon="layers" count={layers.length}>
         <Preview att={att} sel={sel} onPatch={patch} onSelect={(id) => set({ selLayer: id })} lock={lock} fabricHex={fill ?? fabricHex(att, project.pieces.find((p) => p.id === att.pieceId)?.fabric)} />
+        {outside > 0 && <div className="group-note" role="status">{outside === 1 ? '1 layer is' : `${outside} layers are`} wholly outside the outline and will be removed when you finish.</div>}
         <div className="group-note" style={{ padding: '6px 0 0' }}>Drag a layer to move it. Use the corner handle to resize and the top handle to turn it.</div>
         <div className="row wrap">
           <button className="btn small" onClick={() => setPicking(!picking)} aria-expanded={picking}><Icon name="plus" size={14} /> Add shape</button>
@@ -219,6 +236,10 @@ function Preview({ att, sel, onPatch, onSelect, lock, fabricHex: fill }: {
         <clipPath id="emb-clip"><path d={o.d} transform={o.transform} /></clipPath>
       </defs>
       <path d={o.d} transform={o.transform} fill={att.kind === 'print' || att.kind === 'embroidery' ? 'var(--fill-2)' : fill} />
+      {att.kind !== 'print' && att.kind !== 'embroidery' && att.kind !== 'hardware' && (
+        // the part outside the outline is cut when you finish: shown dimmed here so it is no surprise
+        <g opacity={0.3} pointerEvents="none">{att.layers.map((l) => <LayerShape key={l.id} l={{ ...l, clip: undefined }} pointer={false} />)}</g>
+      )}
       <g clipPath={att.kind === 'print' ? undefined : 'url(#emb-clip)'}>
         {att.layers.map((l) => (
           <g key={l.id} data-layer={l.id} style={{ cursor: 'move' }}>

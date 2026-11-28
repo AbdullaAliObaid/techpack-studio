@@ -21,6 +21,8 @@ import { BODY_FIELDS, limbGirths } from '../three/body';
 import { bbox, centroid, offsetInward, samplePoly, type Pt } from './geometry';
 import { constructionReport, seamReport, cutList, fabricBom, fabricText, fitTable, garmentSpecs, hardwareMarks, noteRows, pieceSpecs, placementMarks, trimDetails, trimsReport, type TrimDetail, FABRIC_WIDTH, MARKER_WASTE } from './specs';
 import { pathRings, shapePolygon } from './shapes';
+import { artworkExtent } from './clipLayers';
+import { ringArea, scaleRings, traceTextUnit } from './textTrace';
 import { edgeTrimRows } from '../data/edgeTrim';
 import { finishRows } from '../data/finish';
 import { includedPois, POI_KIND_LABEL, type Poi } from './poi';
@@ -255,21 +257,42 @@ function placementDrawing(doc: jsPDF, t: TrimDetail, host: Project['pieces'][num
 function artwork(doc: jsPDF, t: TrimDetail, att: NonNullable<Project['edits']>['attachments'][number] | undefined, x: number, y: number, size: number) {
   doc.setFillColor('#ffffff').setDrawColor(LINE).setLineWidth(0.2).roundedRect(x, y, size, size, 1, 1, 'FD');
   if (!att?.layers.length) return;
-  let ext = Math.max(att.w, att.h, 0.5);
-  for (const l of att.layers) ext = Math.max(ext, Math.abs(l.x) * 2 + l.w, Math.abs(l.y) * 2 + l.h);
+  const ext = artworkExtent(att);
   const s = (size - 4) / ext, cx = x + size / 2, cy = y + size / 2;
   for (const l of att.layers) {
+    // a layer cut to its outline: clip to the outline rings first (nothing outside shows)
+    let clipped = false;
+    if (l.clip?.length) {
+      try {
+        const d = doc as unknown as { saveGraphicsState(): void; clip(): void; clipEvenOdd?: () => void; discardPath(): void };
+        d.saveGraphicsState();
+        for (const r of l.clip) poly(doc, r.map((q) => ({ x: cx + q.x * s, y: cy + q.y * s })), null as unknown as string);
+        (d.clipEvenOdd ?? d.clip).call(d);
+        d.discardPath();
+        clipped = true;
+      } catch { /* no clipping: draw as is */ }
+    }
+    try { artworkLayer(doc, l, cx, cy, s); } finally { if (clipped) (doc as unknown as { restoreGraphicsState(): void }).restoreGraphicsState(); }
+  }
+  doc.setFont('helvetica', 'normal').setFontSize(6).setTextColor(MUTED).text('Artwork', x + size / 2, y + size + 2.6, { align: 'center' });
+}
+
+function artworkLayer(doc: jsPDF, l: NonNullable<Project['edits']>['attachments'][number]['layers'][number], cx: number, cy: number, s: number) {
+  {
     const rot = ((l.rotation ?? 0) * Math.PI) / 180, co = Math.cos(rot), si = Math.sin(rot), fx = l.flipX ? -1 : 1;
     const T = (q: Pt) => ({ x: cx + (l.x + (q.x * fx) * co - q.y * si) * s, y: cy + (l.y + (q.x * fx) * si + q.y * co) * s });
     if (l.shape === 'image' && l.image) {
       try { doc.addImage(l.image, 'PNG', cx + (l.x - l.w / 2) * s, cy + (l.y - l.h / 2) * s, l.w * s, l.h * s, undefined, 'FAST'); } catch { /* skip */ }
-      continue;
+      return;
     }
-    const rings = l.shape === 'path' && l.path ? pathRings(l.path).map((r) => r.map((q) => ({ x: q.x * l.w, y: q.y * l.h }))) : shapePolygon(l.shape, l.w, l.h, l.text);
-    doc.setFillColor(css(l.color, '#444444'));
-    for (const r of rings) poly(doc, r.map(T), 'F');
+    // text: the letters of the layer's own font, counters (holes) knocked out in the white of the artwork box
+    const traced = l.shape === 'text' ? traceTextUnit(l.text, (l as { font?: string }).font) : null;
+    const rings = traced?.length ? scaleRings(traced, l.w, l.h) : l.shape === 'path' && l.path ? pathRings(l.path).map((r) => r.map((q) => ({ x: q.x * l.w, y: q.y * l.h }))) : shapePolygon(l.shape, l.w, l.h, l.text);
+    for (const r of [...rings].sort((a, b) => Math.abs(ringArea(b)) - Math.abs(ringArea(a)))) {
+      doc.setFillColor(traced?.length && ringArea(r) < 0 ? '#ffffff' : css(l.color, '#444444'));
+      poly(doc, r.map(T), 'F');
+    }
   }
-  doc.setFont('helvetica', 'normal').setFontSize(6).setTextColor(MUTED).text('Artwork', x + size / 2, y + size + 2.6, { align: 'center' });
 }
 
 /** Trims for the bill of materials, by style. */

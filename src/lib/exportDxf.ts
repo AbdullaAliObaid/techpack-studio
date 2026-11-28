@@ -18,7 +18,7 @@ import type { Edits } from '../data/edits';
 import type { StyleId } from '../data/catalog';
 import { bbox, centroid, offsetInward, samplePoly, type Pt } from './geometry';
 import { attachmentReport, hardwareMarks, labelReport, placementMarks } from './specs';
-import { attachmentPolygons } from './shapes';
+import { attachmentShapes } from './shapes';
 
 const MM = 10;
 
@@ -109,12 +109,14 @@ export function piecesToDxf(pieces: Piece[], meta: { project: string; size: stri
   for (const a of edits?.attachments ?? []) {
     if (a.kind !== 'pocket' && a.kind !== 'patch' && a.kind !== 'applique' && a.kind !== 'strap') continue;
     const row = rows.find((r) => r.id === a.id);
-    const rings = attachmentPolygons(a);
+    const shapes = attachmentShapes(a), rings = shapes.map((sh) => sh.outer);
     rings.forEach((ring, i) => {
       // letters of a text applique are cut one by one, side by side
       const bb = bbox(ring);
       const sew = ring.map((q) => ({ x: x - bb.minX + q.x, y: pb.minY - bb.minY + q.y }));
       cutPiece(sew, rings.length > 1 ? `${a.name} ${i + 1}` : a.name, row?.copies ?? 1);
+      // counters of letters (the hole in B, o, a ...) are cut out too
+      for (const h of shapes[i].holes) polyline(L, '14', h.map((q) => ({ x: x - bb.minX + q.x, y: pb.minY - bb.minY + q.y })), true);
       x += bb.w + (rings.length > 1 ? 6 : 12);
     });
     if (rings.length > 1) x += 6;

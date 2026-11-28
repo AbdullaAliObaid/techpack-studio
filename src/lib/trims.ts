@@ -7,13 +7,18 @@ import type { Attachment, Hardware } from '../data/edits';
 import * as shapesLib from './shapes';
 
 /** Outline rings (cm, centred) of an attachment: one ring per cut piece (an applique word gives one per letter). */
-export function attachmentRings(a: Pick<Attachment, 'kind' | 'outline' | 'w' | 'h' | 'points' | 'shape' | 'text'>): { x: number; y: number }[][] {
+export function attachmentRings(a: shapesLib.AttachShapeSrc): { x: number; y: number }[][] {
   const rings = shapesLib.attachmentPolygons(a);
   return rings.length ? rings : [shapesLib.outlinePolygon(a.outline, a.w, a.h, a.points)];
 }
 
+/** Every ring of an attachment, the counters (holes) too: for drawing the cut edge and for edge stitching. */
+export function attachmentAllRings(a: shapesLib.AttachShapeSrc): { x: number; y: number }[][] {
+  return shapesLib.attachmentShapes(a).flatMap((s) => [s.outer, ...s.holes]);
+}
+
 /** The largest outline ring of an attachment. */
-export function attachmentPolygon(a: Pick<Attachment, 'kind' | 'outline' | 'w' | 'h' | 'points' | 'shape' | 'text'>): { x: number; y: number }[] {
+export function attachmentPolygon(a: shapesLib.AttachShapeSrc): { x: number; y: number }[] {
   const area = (r: { x: number; y: number }[]) => Math.abs(r.reduce((s, p, i) => { const q = r[(i + 1) % r.length]; return s + p.x * q.y - q.x * p.y; }, 0));
   return attachmentRings(a).reduce((b, r) => (area(r) > area(b) ? r : b));
 }

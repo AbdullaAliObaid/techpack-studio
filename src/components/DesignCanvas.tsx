@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { LayerShape, outlineD } from './Artwork';
 import { fontOf } from '../three/detailsArt';
-import { isCloth, newLayer, type DLayer, type DesignDoc } from './designDoc';
+import { baseLayer, docClipRings, isCloth, newLayer, type DLayer, type DesignDoc } from './designDoc';
 import { imageFileOf, openPhoto } from './editHelpers';
 import { uid } from '../lib/units';
 import { designTargets, layerBox, snapBox, unionBox } from './designSnap';
@@ -106,6 +106,11 @@ export default function DesignCanvas() {
   const [space, setSpace] = useState(false);
   const fitted = useRef(false);
   const { layers, groups } = design;
+  const base = baseLayer(design);
+  const cutD = useMemo(() => {
+    const rings = base ? docClipRings(design) : null;
+    return rings?.length ? rings.map((r) => 'M' + r.map((q) => `${q.x} ${q.y}`).join('L') + 'Z').join('') : null;
+  }, [design, base]);
   const setSel = (ids: string[]) => set({ designSel: ids });
 
   const fit = useCallback((w = size.w, h = size.h) => {
@@ -304,6 +309,7 @@ export default function DesignCanvas() {
         <defs>
           <pattern id="dz-check" width="14" height="14" patternUnits="userSpaceOnUse"><rect width="14" height="14" fill="var(--canvas)" /><rect width="7" height="7" fill="var(--grid)" /><rect x="7" y="7" width="7" height="7" fill="var(--grid)" /></pattern>
           <clipPath id="dz-clip"><path d={o.d} transform={o.transform} /></clipPath>
+          {cutD && <clipPath id="dz-cut"><path d={cutD} clipRule="evenodd" /></clipPath>}
         </defs>
         <rect width={size.w} height={size.h} fill="var(--canvas)" />
         <g transform={`translate(${view.x},${view.y}) scale(${k})`}>
@@ -316,7 +322,14 @@ export default function DesignCanvas() {
           {/* the cloth (patch / applique): the first layer is the base and draws it. Print and embroidery get a transparent checker. */}
           {!hasBase && <path d={o.d} transform={o.transform} fill={cloth ? design.cloth : 'url(#dz-check)'} stroke="var(--label-2)" strokeWidth={1.2} vectorEffect="non-scaling-stroke" strokeDasharray={cloth ? '5 4' : '5 4'} opacity={cloth ? 0.55 : 1} pointerEvents="none" />}
           <g>
-            {layers.map((l) => <DLayerView key={l.id} l={l} doc={design} />)}
+            {cutD ? (
+              <>
+                {/* what lies outside the outline is cut when applied: show it dimmed, and the part that stays at full strength */}
+                {layers.filter((l) => l === base).map((l) => <DLayerView key={l.id} l={l} doc={design} />)}
+                <g opacity={0.3}>{layers.filter((l) => l !== base).map((l) => <DLayerView key={l.id} l={l} doc={design} />)}</g>
+                <g clipPath="url(#dz-cut)" pointerEvents="none">{layers.filter((l) => l !== base).map((l) => <DLayerView key={`c${l.id}`} l={l} doc={design} />)}</g>
+              </>
+            ) : layers.map((l) => <DLayerView key={l.id} l={l} doc={design} />)}
           </g>
           {/* centre guides */}
           <g stroke="var(--accent)" strokeWidth={px(1)} strokeDasharray={`${px(3)} ${px(4)}`} opacity={0.5} pointerEvents="none">

@@ -8,6 +8,7 @@
 
 import type { Attachment } from '../data/edits';
 import type { Pt } from '../lib/geometry';
+import { attachmentShapes } from '../lib/shapes';
 import { attachmentPolygon, attachmentRings } from '../lib/trims';
 import { DASH, Locator, outwardSigns, panelHex, threadTone, type DetailsMsg } from './details';
 import type { Garment3D, PanelInst } from './setup';
@@ -59,6 +60,24 @@ function inset(poly: Pt[], by: number): Pt[] {
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
   const sx = Math.max(0.1, (x1 - x0 - 2 * by) / ((x1 - x0) || 1)), sy = Math.max(0.1, (y1 - y0 - 2 * by) / ((y1 - y0) || 1));
   return poly.map((p) => ({ x: cx + (p.x - cx) * sx, y: cy + (p.y - cy) * sy }));
+}
+
+/**
+ * A ring moved d (cm) into the cloth. Rings follow src/lib/textTrace.ts: outer rings have a positive area and holes a
+ * negative one, so the cloth is on the left of every ring and one rule serves both (a hole's stitching moves away from
+ * the counter, never across it).
+ */
+export function offsetRing(r: Pt[], d: number): Pt[] {
+  const n = r.length;
+  const edge = r.map((p, i) => { const q = r[(i + 1) % n], dx = q.x - p.x, dy = q.y - p.y, L = Math.hypot(dx, dy) || 1; return { x: -dy / L, y: dx / L }; });
+  return r.map((p, i) => {
+    const a = edge[(i + n - 1) % n], b = edge[i];
+    let nx = a.x + b.x, ny = a.y + b.y;
+    const L = Math.hypot(nx, ny) || 1;
+    nx /= L; ny /= L;
+    const k = Math.min(1.6, 1 / Math.max(0.1, nx * b.x + ny * b.y));
+    return { x: p.x + nx * d * k, y: p.y + ny * d * k };
+  });
 }
 
 export function buildAttachmentDetails(G: Garment3D, attachments: Attachment[]): AttachDetailsMsg {
@@ -147,7 +166,21 @@ export function buildAttachmentDetails(G: Garment3D, attachments: Attachment[]):
       const poly = attachmentPolygon(a);
       const ring = inset(poly, INSET);
 
-      if (a.kind === 'applique') {
+      if (a.outline === 'shape' && a.shape === 'text' && (a.kind === 'applique' || a.kind === 'patch')) {
+        // cut letters: stitching follows each letter's outer edge and each counter, never across one
+        const cut = attachmentShapes(a);
+        const stitch = (kk: number, sh: (typeof cut)[number]) => {
+          for (const r of [sh.outer, ...sh.holes]) {
+            const o = offsetRing(r, 0.1);
+            if (a.kind === 'applique') zigzag(kk, o, col, T); else line(kk, [...o, o[0]].map(T), col);
+          }
+        };
+        if (own) {
+          const host = panels[k].attach!.host;
+          const j = targets.filter((t, i) => i < ti && panels[t.k].attach!.host === host).length;
+          stitch(k, cut[j % cut.length]);
+        } else for (const sh of cut) stitch(k, sh);
+      } else if (a.kind === 'applique') {
         // own panels: one per ring (letter) per host copy, in ring order; on the host: every ring
         if (own) {
           const host = panels[k].attach!.host;

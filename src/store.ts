@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { makePreset, GARMENT_LABEL, type Piece, type PieceFabric } from './data/presets';
+import { withTextRings } from './lib/shapes';
 import { migrateGarment, styleById, CATALOG, type StyleId } from './data/catalog';
 import { FABRICS } from './data/fabrics';
 import type { Design } from './data/designs';
@@ -491,7 +492,9 @@ export function designProject(d: Design, body: Body = DEFAULT_BODY): Project | n
  *  the style details as attachments once, the collar position stored. */
 export function migrateProject(p: Project): Project {
   // projects saved before a list was added to Edits (pleats, detached seams...) lack it: fill every list in
-  const edits = p.edits ? { ...EMPTY_EDITS, ...Object.fromEntries(Object.entries(p.edits).filter(([, v]) => v !== undefined)) } as Edits : p.edits;
+  let edits = p.edits ? { ...EMPTY_EDITS, ...Object.fromEntries(Object.entries(p.edits).filter(([, v]) => v !== undefined)) } as Edits : p.edits;
+  // cut text from before the letters were traced from the real font: trace them now (lazily, once, on the main thread)
+  if (edits?.attachments?.some((a) => a.outline === 'shape' && a.shape === 'text')) edits = { ...edits, attachments: edits.attachments.map(withTextRings) };
   return withCollar(withBuiltins(upgradeFront({ ...p, edits, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true })));
 }
 

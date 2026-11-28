@@ -10,6 +10,8 @@ export interface PanelMesh {
   boundary: number[]; // boundary vertex indices in outline order
   segStart: number[]; // boundary index where each outline segment starts (= that outline point)
   pointIds: string[]; // outline point ids, segStart[i] belongs to pointIds[i]
+  /** vertex indices round each hole cut out of the panel (counters of cut letters), in the order given */
+  holeLoops?: number[][];
 }
 
 function distToPolyline(p: Pt, poly: Pt[]): number {
@@ -24,7 +26,7 @@ function distToPolyline(p: Pt, poly: Pt[]): number {
   return best;
 }
 
-export function meshPanel(points: PPoint[], h: number): PanelMesh {
+export function meshPanel(points: PPoint[], h: number, holes: Pt[][] = []): PanelMesh {
   const uv: Pt[] = [];
   const boundary: number[] = [];
   const segStart: number[] = [];
@@ -37,6 +39,16 @@ export function meshPanel(points: PPoint[], h: number): PanelMesh {
     }
   });
   const outline = boundary.map((i) => uv[i]);
+  // holes: vertices round each, no interior points or triangles inside
+  const holeLoops: number[][] = holes.filter((r) => r.length >= 3).map((r) => {
+    const loop: number[] = [];
+    for (let i = 0; i < r.length; i++) {
+      const a = r[i], b = r[(i + 1) % r.length], n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / h));
+      for (let k = 0; k < n; k++) { loop.push(uv.length); uv.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n }); }
+    }
+    return loop;
+  });
+  const holePolys = holeLoops.map((l) => l.map((i) => uv[i]));
 
   // interior: triangular lattice
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -48,7 +60,7 @@ export function meshPanel(points: PPoint[], h: number): PanelMesh {
   for (let row = 0, y = minY + dy / 2; y < maxY; y += dy, row++) {
     for (let x = minX + (row % 2 ? h / 2 : 0); x < maxX; x += h) {
       const p = { x, y };
-      if (pointInPoly(outline, p) && distToPolyline(p, outline) > 0.55 * h) uv.push(p);
+      if (pointInPoly(outline, p) && distToPolyline(p, outline) > 0.55 * h && !holePolys.some((hp) => pointInPoly(hp, p) || distToPolyline(p, hp) <= 0.55 * h)) uv.push(p);
     }
   }
 
@@ -59,12 +71,12 @@ export function meshPanel(points: PPoint[], h: number): PanelMesh {
     const a = d.triangles[i], b = d.triangles[i + 1], c = d.triangles[i + 2];
     const A = uv[a], B = uv[b], C = uv[c];
     const cen = { x: (A.x + B.x + C.x) / 3, y: (A.y + B.y + C.y) / 3 };
-    if (!pointInPoly(outline, cen)) continue;
+    if (!pointInPoly(outline, cen) || holePolys.some((hp) => pointInPoly(hp, cen))) continue;
     const e = Math.max(Math.hypot(A.x - B.x, A.y - B.y), Math.hypot(B.x - C.x, B.y - C.y), Math.hypot(C.x - A.x, C.y - A.y));
     if (e > maxE) continue;
     tris.push(a, b, c);
   }
-  return { uv, tris, boundary, segStart, pointIds: points.map((p) => p.id) };
+  return { uv, tris, boundary, segStart, pointIds: points.map((p) => p.id), ...(holeLoops.length ? { holeLoops } : {}) };
 }
 
 /** Boundary vertex path between two outline points, taking the shorter way round. */

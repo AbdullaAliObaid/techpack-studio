@@ -5,7 +5,7 @@ import { useStore, usePick } from '../store';
 import { SHAPES } from '../lib/shapes';
 import { ColorField, LenInput, Row, Seg, SubLabel } from './controls';
 import { FONT_STACKS } from '../three/detailsArt';
-import { RELIEF_PRESETS, attachmentPatch, docFromAttachment, type Blend, type DLayer, type FontId, type MakeAs, type Stitch } from './designDoc';
+import { RELIEF_PRESETS, attachmentPatch, docFromAttachment, droppedLayers, type Blend, type DLayer, type FontId, type MakeAs, type Stitch } from './designDoc';
 import { pieceBottom, pieceTop } from './designDoc';
 import { ALL_ITEMS } from './designShapes';
 import { uid } from '../lib/units';
@@ -52,6 +52,7 @@ function PlaceCard() {
   const atts = project.edits?.attachments ?? [];
   const pieceId = design.pieceId && project.pieces.some((p) => p.id === design.pieceId) ? design.pieceId : (project.pieces.find((p) => p.role === 'front') ?? project.pieces[0])?.id;
   const piece = project.pieces.find((p) => p.id === pieceId);
+  const dropped = droppedLayers(design);
   const placed = design.placedId ? atts.find((a) => a.id === design.placedId) : null;
   const place = () => {
     if (!piece) return;
@@ -73,6 +74,7 @@ function PlaceCard() {
   return (
     <div className="dz-place">
       <SubLabel>Place on garment</SubLabel>
+      {dropped > 0 && <div className="group-note" role="status">{dropped === 1 ? '1 layer is' : `${dropped} layers are`} wholly outside the outline and will not be made.</div>}
       <Row label="On piece" htmlFor="dz-piece">
         <select id="dz-piece" className="sel" value={pieceId} onChange={(e) => move({ pieceId: e.target.value })}>
           {project.pieces.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}

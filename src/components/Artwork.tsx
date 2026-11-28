@@ -1,4 +1,6 @@
-import { SHAPES, OUTLINES, outlinePolygon } from '../lib/shapes';
+import { SHAPES, OUTLINES, outlinePolygon, attachmentShapes } from '../lib/shapes';
+import { fontOf } from '../three/detailsArt';
+import { cleanText } from '../lib/fonts';
 import type { Attachment, Finish, Hardware, ShapeLayer, ZipperDesign } from '../data/edits';
 import { polyD } from '../lib/geometry';
 import { buttonholeSlots } from '../data/construction';
@@ -161,12 +163,24 @@ export function HardwareRow({ a }: { a: Pick<Attachment, 'hardware' | 'w' | 'h'>
 export function LayerShape({ l, pointer = true, ...rest }: { l: ShapeLayer; pointer?: boolean } & React.SVGProps<SVGGElement>) {
   const op = l.opacity ?? 1;
   if (op <= 0 && pointer === false) return null;
+  if (l.clip?.length) {
+    // cut to its outline: clip in the attachment's frame, then draw the layer as usual
+    const id = `lc-${l.id}`;
+    const { clip: _c, ...bare } = l;
+    void _c;
+    return (
+      <g>
+        <clipPath id={id}><path d={l.clip.map((r) => 'M' + r.map((q) => `${q.x} ${q.y}`).join('L') + 'Z').join('')} clipRule="evenodd" /></clipPath>
+        <g clipPath={`url(#${id})`}><LayerShape l={bare} pointer={pointer} {...rest} /></g>
+      </g>
+    );
+  }
   const flip = l.flipX ? -1 : 1;
   return (
     <g transform={`translate(${l.x},${l.y}) rotate(${l.rotation})`} opacity={op} {...rest}>
       {l.shape === 'text' ? (
-        <text x={0} y={0} fontSize={l.h} textLength={l.w} lengthAdjust="spacingAndGlyphs" textAnchor="middle" dominantBaseline="central" fill={l.color} fontWeight={800} transform={`scale(${flip},1)`} style={{ fontFamily: 'var(--font)' }}>
-          {l.text ?? ''}
+        <text x={0} y={0} fontSize={l.h} textLength={l.w} lengthAdjust="spacingAndGlyphs" textAnchor="middle" dominantBaseline="central" fill={l.color} transform={`scale(${flip},1)`} style={{ font: fontOf(l, l.h) }}>
+          {cleanText(l.text)}
         </text>
       ) : l.shape === 'image' && l.image ? (
         <image href={l.image} x={-0.5} y={-0.5} width={1} height={1} preserveAspectRatio="none" transform={`scale(${l.w * flip},${l.h})`} />
@@ -175,6 +189,11 @@ export function LayerShape({ l, pointer = true, ...rest }: { l: ShapeLayer; poin
       )}
     </g>
   );
+}
+
+/** SVG path (cm, centred) of cut text: every letter's outer edge and counters, to fill evenodd */
+function cutLettersD(a: Pick<Attachment, 'kind' | 'outline' | 'w' | 'h' | 'points' | 'shape' | 'text' | 'font' | 'outlineRings' | 'outlineKey'>): string {
+  return attachmentShapes(a).flatMap((s) => [s.outer, ...s.holes]).map((r) => polyD(r)).join('');
 }
 
 export function outlineD(a: Pick<Attachment, 'outline' | 'w' | 'h' | 'points'> & { shape?: Attachment['shape'] }): { d: string; transform?: string } {
@@ -202,7 +221,8 @@ export function ArtworkGroup({ a, fill, layers = true }: { a: Art | Attachment; 
       {isCloth(a.kind) && fill && !letters && <path d={o.d} transform={o.transform} fill={fill} />}
       {isCloth(a.kind) && fill && !letters && sheenFill(a.sheen) && <path d={o.d} transform={o.transform} fill={sheenFill(a.sheen)!} pointerEvents="none" />}
       {isCloth(a.kind) && fill && letters && (
-        <text fontSize={a.h} textLength={a.w} lengthAdjust="spacingAndGlyphs" textAnchor="middle" dominantBaseline="central" fill={fill} fontWeight={800} stroke={a.thread ?? 'none'} strokeWidth={a.h * 0.03} strokeDasharray={`${a.h * 0.08} ${a.h * 0.06}`} style={{ fontFamily: 'var(--font)' }}>{a.text ?? ''}</text>
+        // the cut letters, traced from the real font, counters left open
+        <path d={cutLettersD(a)} fillRule="evenodd" fill={fill} stroke={a.thread ?? 'none'} strokeWidth={1.4} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
       )}
       {isCloth(a.kind) && !letters && a.thread && <path d={o.d} transform={o.transform} fill="none" stroke={a.thread} strokeWidth={1.6} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" pointerEvents="none" />}
       {layers && a.layers.map((l) => <LayerShape key={l.id} l={l} pointer={false} />)}
