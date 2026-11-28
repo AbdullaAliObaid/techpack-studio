@@ -1222,9 +1222,9 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .fb-cats button { flex: none; min-height: 30px; padding: 0 12px; border-radius: 15px; border: 0; background: var(--fill-2); font-size: 12px; font-weight: 600; color: var(--text-2); position: relative; }
 .fb-cats button::after { content: ''; position: absolute; inset: -7px -2px; }
 .fb-cats button.on { background: var(--accent-fill); color: #fff; }
-.fb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-height: 280px; overflow-y: auto; padding: 2px; }
+.fb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-height: 280px; overflow-y: auto; padding: 2px; grid-auto-rows: max-content; align-content: start; }
 .fb-tile, .fb-card, .pat-tile { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 4px; border: 0; border-radius: 10px; background: none; min-height: 44px; text-align: center; position: relative; }
-.fb-tile .fab-swatch, .fb-card .fab-swatch { border-radius: 4px; width: 100%; aspect-ratio: 1; height: auto; max-width: 72px; }
+.fb-tile .fab-swatch, .fb-card .fab-swatch { border-radius: 4px; width: 100%; aspect-ratio: 1; height: auto; max-width: 72px; flex-shrink: 0; }
 .fb-tile:hover, .fb-card:hover, .pat-tile:hover { background: var(--fill-2); }
 .fb-tile.on, .fb-card.on, .pat-tile.on { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent); }
 .fb-name { font-size: 11px; line-height: 1.2; color: var(--label); font-weight: 500; overflow-wrap: anywhere; }
