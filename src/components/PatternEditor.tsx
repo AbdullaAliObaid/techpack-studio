@@ -1,4 +1,5 @@
 import { notify } from './notify';
+import { layerRank } from './layerOrder';
 import BandStripes from './BandStripes';
 import { inspectAttachment, inspectPiece } from './inspect';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -1441,7 +1442,7 @@ function PieceView(props: {
         if (t.method === 'binding') return <path key={t.id} d={polyD(insetPolyline(p, line, t.width / 2)).replace(/Z$/, '')} fill="none" stroke={t.colour} strokeWidth={t.width} strokeLinejoin="round" opacity={0.92} pointerEvents="none" />;
         return <path key={t.id} d={polyD(line).replace(/Z$/, '')} fill="none" stroke={t.colour} strokeWidth={t.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />;
       })}
-      {attachments.filter((a) => !a.block).map((a) => renderAtt(a, true))}
+      {[...attachments.filter((a) => !a.block)].sort((a, b) => layerRank(a) - layerRank(b)).map((a) => renderAtt(a, true))}
 
       {/* drawn pieces that are patched on: dashed placement, draggable */}
       {ghosts.map((g) => {

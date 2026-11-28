@@ -11,6 +11,8 @@ export interface Notice {
   tone?: NoticeTone;
   /** remember "Got it" on this device and never show it again */
   once?: boolean;
+  /** label of the closing button (default "Got it") */
+  ok?: string;
   /** an optional second button; it runs and then closes the notice */
   action?: { label: string; run: () => void };
 }

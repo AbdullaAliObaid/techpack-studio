@@ -76,7 +76,7 @@ export default function Notices() {
           <p id="notice-body">{shown.body}</p>
           <div className="notice-actions">
             {shown.action && <button className="btn" tabIndex={open ? 0 : -1} onClick={() => { const a = shown.action!; close(); a.run(); }}>{shown.action.label}</button>}
-            <button ref={ok} className="btn primary" tabIndex={open ? 0 : -1} onClick={close}>Got it</button>
+            <button ref={ok} className="btn primary" tabIndex={open ? 0 : -1} onClick={close}>{shown.ok ?? 'Got it'}</button>
           </div>
         </div></div>
       </div>

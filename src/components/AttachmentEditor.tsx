@@ -135,6 +135,15 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
         <span className="group-note" style={{ padding: 0 }}>{face === 'inside' ? 'On the side against the body. Shown dotted on the chart.' : 'On the side people see.'}</span>
       </div>
 
+      {(att.kind === 'print' || att.kind === 'embroidery') && !att.block && (
+        <div className="frow stack">
+          <span className="lbl">Layer</span>
+          <Seg label="Layer order against pockets and trims" value={att.order ?? 'over'} onChange={(order) => patch({ order })}
+            options={[{ id: 'under', label: 'Under pockets and trims' }, { id: 'over', label: 'Over pockets and trims' }]} />
+          <span className="group-note" style={{ padding: 0 }}>{(att.order ?? 'over') === 'under' ? 'Pockets, patches and tags sewn on this piece cover the design where they meet.' : 'The design runs across any pocket, patch or tag on this piece.'}</span>
+        </div>
+      )}
+
       <Disclosure id="att-placement" title="Placement" icon="target">
         {parent ? (
           <p className="group-note">Sewn onto {parent.name}. Drag it on the chart to move it inside the {KIND_LABEL[parent.kind].toLowerCase()}.</p>
