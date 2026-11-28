@@ -52,3 +52,4 @@ components use `usePick(...)` selectors, keep that), `npx tsc --noEmit`, `npm ru
 - Queued round 2 also: Finish workspace (wash, fade, bleach, stone wash, distressing) was never built; tab exists only. Added Camera/Edit 3D toggle to agent/insert.
 - Done: leather wash sequence production check (Review > Production checks, prints in construction). In flight: agent/shots (wt-shots) point of interest close up pages in tech pack.
 - Merged: tech pack close ups (poi.ts), hats + star stitch + user buttonholes. In flight round 2: agent/r2sim (collar, placket sides, pocket outline editing, hat label sim bug), agent/r2look (photo blend, edge thread, Finish wash/distress).
+- 2026-11-28: merged photo blend, edge methods, Finish wash/distress; loading overlay now ends on worker error; Camera/Edit is a left column. In flight: agent/r2sim (collar, hat labels, placket sides, pocket outlines) restarted.
