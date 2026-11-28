@@ -63,7 +63,7 @@ export function SelectionChip({ box, count, k }: { box: { x: number; y: number; 
       <rect x={box.x - px(8)} y={box.y - px(8)} width={box.w + px(16)} height={box.h + px(16)} fill="none" stroke="var(--accent)" strokeWidth={px(1)} strokeDasharray={`${px(3)} ${px(3)}`} opacity={0.7} rx={px(4)} />
       <g transform={`translate(${x},${y})`}>
         <rect width={px(w)} height={px(h)} rx={px(h / 2)} fill="var(--accent)" />
-        <text x={px(w) / 2} y={px(h) / 2} fontSize={px(11)} fill="#fff" textAnchor="middle" dominantBaseline="central" fontWeight={600}>{text}</text>
+        <text x={px(w) / 2} y={px(h) / 2} fontSize={px(11)} fill="var(--on-accent)" textAnchor="middle" dominantBaseline="central" fontWeight={600}>{text}</text>
       </g>
     </g>
   );

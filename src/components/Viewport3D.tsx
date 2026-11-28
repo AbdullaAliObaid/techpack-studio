@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { ContactShadows, OrbitControls } from '@react-three/drei';
 import { useStore, usePick } from '../store';
-import { hitCloth } from '../three/hitCloth';
+import { hitCloth, focusHitMember } from '../three/hitCloth';
 import { SKIN_TONES } from '../three/body';
 import { MODES } from '../sim/pose';
 import { fabricById } from '../data/fabrics';
@@ -66,6 +66,7 @@ export default function Viewport3D() {
         if (!d || d.b !== 0 || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey || useStore.getState().pullMode) return;
         if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
         const h = hitCloth(e.clientX, e.clientY);
+        focusHitMember(h);
         useStore.setState({ probe: h ? { pieceId: h.pieceId, instance: h.instance ?? 0, x: h.x, y: h.y, at: Date.now() } : null });
       }}
       onDoubleClick={(e) => {
@@ -73,6 +74,7 @@ export default function Viewport3D() {
         if (useStore.getState().pullMode || useStore.getState().view3dMode !== 'edit' || (e.target as HTMLElement).closest('.vp-top, .vp-bottom, .body-card')) return;
         const h = hitCloth(e.clientX, e.clientY);
         if (!h) return;
+        focusHitMember(h);
         const a = attachmentAt(h.pieceId, h.instance ?? 0, h.x, h.y);
         if (a) inspectAttachment(a.id); else inspectPiece(h.pieceId, h.instance ?? 0);
       }}

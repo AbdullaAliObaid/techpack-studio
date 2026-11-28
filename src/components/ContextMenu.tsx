@@ -7,6 +7,8 @@ import { uid } from '../lib/units';
 import { copiesOf } from './sides';
 import { allPointsOf } from './multi';
 import { openPieceFlow } from './flow';
+import { hitCloth, focusHitMember } from '../three/hitCloth';
+import { attachmentAt, inspectPiece } from './inspect';
 import { delLayers, dupLayers, groupLayers, lockLayers, moveLayers } from './designOps';
 import Icon from './Icon';
 
@@ -126,6 +128,25 @@ function chartItems(t: HTMLElement): MenuItem[] | null {
   return null;
 }
 
+/** Right click on the 3D garment (Edit mode): the design or trim under the pointer, else the piece. Camera mode has no menu. */
+function clothItems(x: number, y: number): MenuItem[] | null {
+  const st = S();
+  if (st.view3dMode !== 'edit' || st.pullMode) return null;
+  const h = hitCloth(x, y);
+  if (!h) return null;
+  // in an outfit the garment under the pointer becomes the active one first
+  focusHitMember(h);
+  const a = attachmentAt(h.pieceId, h.instance ?? 0, h.x, h.y);
+  if (a) { S().set({ selAttachment: a.id, selPiece: S().project.pieces.some((p) => p.id === h.pieceId) ? h.pieceId : S().selPiece }); return attachItems(a.id); }
+  const piece = S().project.pieces.find((p) => p.id === h.pieceId);
+  if (!piece) return null;
+  S().set({ selPiece: h.pieceId, selInstance: h.instance ?? 0, selPoint: null, selAttachment: null });
+  return [
+    { label: 'Edit fabric', icon: 'stitch', onClick: () => inspectPiece(h.pieceId, h.instance ?? 0) },
+    { label: 'Select piece', icon: 'select', onClick: () => S().set({ selPiece: h.pieceId, selInstance: h.instance ?? 0 }) },
+  ];
+}
+
 function artboardItems(t: HTMLElement): MenuItem[] | null {
   const el = t.closest<HTMLElement>('[data-layer]');
   if (!el) return null;
@@ -158,6 +179,12 @@ export function ContextMenuHost() {
       const t = (under && (target as Element | null)?.closest?.('.editor-svg, .dz-slot svg') && (under.closest('.editor-svg, .dz-slot svg') ? under : null)) || (target as HTMLElement | null);
       if (!t?.closest) return false;
       if (S().screen !== 'editor') return false;
+      if (t.closest('.viewport canvas')) {
+        const cloth = clothItems(x, y);
+        if (!cloth) return false;
+        setM({ x, y, items: cloth });
+        return true;
+      }
       const inChart = t.closest('.editor-svg');
       const inBoard = t.closest('.dz-slot svg');
       const items = inChart ? chartItems(t) : inBoard ? artboardItems(t) : null;

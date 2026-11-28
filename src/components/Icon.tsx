@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
 const P: Record<string, ReactNode> = {
@@ -85,10 +86,17 @@ const P: Record<string, ReactNode> = {
   target: <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3.5" /></>,
 };
 
-/** `weight` is the drawn stroke in px, so an icon beside 13 px text can match it (1.5 px at 16 px). */
+/**
+ * `weight` is the drawn stroke in px, so an icon beside 13 px text can match it (1.5 px at 16 px). Without it the stroke
+ * follows the text beside the icon: regular 1.5 px, and 2 px where a control sets --icon-stroke for semibold text.
+ */
 export default function Icon({ name, size = 20, weight }: { name: keyof typeof P | string; size?: number; weight?: number }) {
+  // a swap (play to pause, share to check) cross-fades with a short blur; the first draw does not animate
+  const prev = useRef(name);
+  const swapped = prev.current !== name;
+  useEffect(() => { prev.current = name; }, [name]);
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={weight ? (weight * 24) / size : 1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    <svg key={swapped ? name : undefined} className={swapped ? 'icon-swap' : undefined} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={weight ? (weight * 24) / size : undefined} style={weight ? undefined : { strokeWidth: `calc(var(--icon-stroke, ${size > 20 ? 1.7 : 1.5}px) * ${(24 / size).toFixed(4)})` }} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
       {P[name]}
     </svg>
   );

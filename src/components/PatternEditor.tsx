@@ -1306,7 +1306,7 @@ function PieceView(props: {
             {mid && r.label && (
               <g transform={`translate(${mid.x},${mid.y})`}>
                 <circle r={px(9)} fill={badge} />
-                <text fontSize={px(11)} fill="#fff" textAnchor="middle" dominantBaseline="central" fontWeight={700}>{r.label}</text>
+                <text fontSize={px(11)} fill="var(--on-accent)" textAnchor="middle" dominantBaseline="central" fontWeight={700}>{r.label}</text>
               </g>
             )}
           </g>
