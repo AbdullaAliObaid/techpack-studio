@@ -21,6 +21,7 @@ import { BODY_FIELDS, limbGirths } from '../three/body';
 import { bbox, centroid, offsetInward, samplePoly, type Pt } from './geometry';
 import { constructionReport, seamReport, cutList, fabricBom, fabricText, fitTable, garmentSpecs, hardwareMarks, noteRows, pieceSpecs, placementMarks, trimDetails, trimsReport, type TrimDetail, FABRIC_WIDTH, MARKER_WASTE } from './specs';
 import { pathRings, shapePolygon } from './shapes';
+import { ringArea, scaleRings, traceTextUnit } from './textTrace';
 import { edgeTrimRows } from '../data/edgeTrim';
 import { finishRows } from '../data/finish';
 import { includedPois, POI_KIND_LABEL, type Poi } from './poi';
@@ -265,9 +266,13 @@ function artwork(doc: jsPDF, t: TrimDetail, att: NonNullable<Project['edits']>['
       try { doc.addImage(l.image, 'PNG', cx + (l.x - l.w / 2) * s, cy + (l.y - l.h / 2) * s, l.w * s, l.h * s, undefined, 'FAST'); } catch { /* skip */ }
       continue;
     }
-    const rings = l.shape === 'path' && l.path ? pathRings(l.path).map((r) => r.map((q) => ({ x: q.x * l.w, y: q.y * l.h }))) : shapePolygon(l.shape, l.w, l.h, l.text);
-    doc.setFillColor(css(l.color, '#444444'));
-    for (const r of rings) poly(doc, r.map(T), 'F');
+    // text: the letters of the layer's own font, counters (holes) knocked out in the white of the artwork box
+    const traced = l.shape === 'text' ? traceTextUnit(l.text, (l as { font?: string }).font) : null;
+    const rings = traced?.length ? scaleRings(traced, l.w, l.h) : l.shape === 'path' && l.path ? pathRings(l.path).map((r) => r.map((q) => ({ x: q.x * l.w, y: q.y * l.h }))) : shapePolygon(l.shape, l.w, l.h, l.text);
+    for (const r of [...rings].sort((a, b) => Math.abs(ringArea(b)) - Math.abs(ringArea(a)))) {
+      doc.setFillColor(traced?.length && ringArea(r) < 0 ? '#ffffff' : css(l.color, '#444444'));
+      poly(doc, r.map(T), 'F');
+    }
   }
   doc.setFont('helvetica', 'normal').setFontSize(6).setTextColor(MUTED).text('Artwork', x + size / 2, y + size + 2.6, { align: 'center' });
 }

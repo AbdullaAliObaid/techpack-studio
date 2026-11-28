@@ -148,6 +148,15 @@ export interface Attachment {
   /** outline === 'shape': the shape to cut (applique) and its text for 'text' */
   shape?: ShapeId;
   text?: string;
+  /** text appliques and patches: the Design font of the letters (src/lib/fonts.ts), so the cut letters match the canvas */
+  font?: string;
+  /**
+   * text appliques and patches: the letter outlines traced from the real font (src/lib/textTrace.ts), in the text's unit
+   * box (x -0.5..0.5, y in em units, y down; multiply by w and h). Outer rings have a positive area, holes (counters) a
+   * negative one. Valid while outlineKey equals textKey(text, font); otherwise (old projects) they are traced again.
+   */
+  outlineRings?: Pt[][];
+  outlineKey?: string;
   /** thread colour for embroidery and for the stitching around cloth attachments (CSS colour) */
   thread?: string;
   /** which face of the host it is on; default 'outside' */

@@ -1,5 +1,6 @@
 import type { ShapeLayer } from '../data/edits';
 import { SHAPES } from '../lib/shapes';
+import { centralShift, cleanText, fontCss } from '../lib/fonts';
 
 // Shared artwork painting for prints, embroidery, tags and trim faces: every ShapeLayer kind in one place.
 //   shape 'image'  the picture (data URL) drawn into the layer box w x h, opacity and flip respected. Decoded once and
@@ -10,16 +11,9 @@ import { SHAPES } from '../lib/shapes';
 
 const rad = (d: number) => (d * Math.PI) / 180;
 
-/** Font styles of text layers. The Design workspace sets `font` on a layer; without it the bold system face is used. */
-export const FONT_STACKS: Record<string, string> = {
-  classic: `700 {h}px Georgia, 'Times New Roman', serif`,
-  varsity: `900 {h}px Rockwell, 'Roboto Slab', 'Arial Black', serif`,
-  script: `italic 700 {h}px 'Snell Roundhand', 'Brush Script MT', 'Segoe Script', cursive`,
-  block: `900 {h}px Impact, 'Arial Black', sans-serif`,
-  mono: `700 {h}px 'SF Mono', Menlo, Consolas, monospace`,
-};
+export { FONT_STACKS } from '../lib/fonts';
 /** canvas font for a text layer of height h */
-export const fontOf = (l: ShapeLayer, h: number) => (FONT_STACKS[(l as { font?: string }).font ?? ''] ?? '700 {h}px system-ui, sans-serif').replace('{h}', String(h));
+export const fontOf = (l: ShapeLayer, h: number) => fontCss((l as { font?: string }).font, h);
 
 /**
  * Draw a text layer centred on the origin, h tall and at most w wide, in the current space (usually cm). Canvas text
@@ -27,14 +21,19 @@ export const fontOf = (l: ShapeLayer, h: number) => (FONT_STACKS[(l as { font?: 
  * out at 100 px and scaled down.
  */
 export function drawText(ctx: CanvasRenderingContext2D, l: ShapeLayer, h: number, w: number, mode: 'fill' | 'stroke' = 'fill') {
-  const S = 100, k = h / S;
+  const S = 100, k = h / S, t = cleanText(l.text);
+  if (!t) return;
   ctx.save();
   ctx.scale(k, k);
   ctx.font = fontOf(l, S);
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  if (mode === 'stroke') { ctx.lineWidth /= k; const d = ctx.getLineDash(); if (d.length) ctx.setLineDash(d.map((v) => v / k)); ctx.strokeText(l.text ?? '', 0, 0, w / k); }
-  else ctx.fillText(l.text ?? '', 0, 0, w / k);
+  ctx.textBaseline = 'alphabetic';
+  const dy = centralShift(ctx, S);
+  // the Design canvas sets the text to exactly w (SVG textLength, glyphs stretched or squeezed): do the same here
+  const mw = ctx.measureText(t).width;
+  if (mw > 0) ctx.scale(w / k / mw, 1);
+  if (mode === 'stroke') { ctx.lineWidth /= k; const d = ctx.getLineDash(); if (d.length) ctx.setLineDash(d.map((v) => v / k)); ctx.strokeText(t, 0, dy); }
+  else ctx.fillText(t, 0, dy);
   ctx.restore();
 }
 

@@ -6,6 +6,7 @@ import type { Piece } from '../data/presets';
 import { uid } from '../lib/units';
 import { bandSlope } from '../data/bandGeom';
 import { outlinePolygon, pathPolygon, shapePolygon } from '../lib/shapes';
+import { textKey, traceTextUnit } from '../lib/textTrace';
 
 export type Workspace = 'shape' | 'seams' | 'fabric' | 'paint' | 'design' | 'trims' | 'fit' | 'outfit' | 'finish' | 'review' | 'techpack';
 /** In bar order. `key` is the Cmd or Ctrl number shortcut (the visible ones are numbered in order, see workspaceKey). */
@@ -132,14 +133,16 @@ const bounds = (pts: { x: number; y: number }[]) => {
   return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 };
 
-export function attachmentPatch(doc: DesignDoc): Pick<Attachment, 'kind' | 'name' | 'w' | 'h' | 'outline' | 'points' | 'layers' | 'thread' | 'sheen' | 'fabric'> & Partial<Pick<Attachment, 'shape' | 'text'>> {
+export function attachmentPatch(doc: DesignDoc): Pick<Attachment, 'kind' | 'name' | 'w' | 'h' | 'outline' | 'points' | 'layers' | 'thread' | 'sheen' | 'fabric'> & Partial<Pick<Attachment, 'shape' | 'text' | 'font' | 'outlineRings' | 'outlineKey'>> {
   const cloth = isCloth(doc);
   const base = baseLayer(doc);
   if (cloth && base && base.shape === 'text' && base.text?.trim()) {
     // letters as the cloth: the patch is cut letter by letter (not a box round the text)
     const rest = flatten({ layers: doc.layers.filter((l) => l !== base), groups: doc.groups }).map((l) => ({ ...l, x: Math.round((l.x - base.x) * 100) / 100, y: Math.round((l.y - base.y) * 100) / 100 }));
+    // the letters are cut from the real font, the same text, font and box as the Design canvas draws (src/lib/textTrace.ts)
+    const text = base.text.trim(), rings = traceTextUnit(text, base.font);
     return {
-      kind: doc.makeAs, name: doc.name, w: Math.max(0.5, Math.round(base.w * 100) / 100), h: Math.max(0.5, Math.round(base.h * 100) / 100), outline: 'shape', shape: 'text', text: base.text.trim(), layers: rest, thread: doc.thread, sheen: doc.sheen,
+      kind: doc.makeAs, name: doc.name, w: Math.max(0.5, Math.round(base.w * 100) / 100), h: Math.max(0.5, Math.round(base.h * 100) / 100), outline: 'shape', shape: 'text', text, ...(base.font ? { font: base.font } : {}), ...(rings?.length ? { outlineRings: rings, outlineKey: textKey(text, base.font) } : {}), layers: rest, thread: doc.thread, sheen: doc.sheen,
       fabric: { id: 'canvas', color: 0, hex: base.color },
     };
   }
@@ -164,7 +167,7 @@ export function docFromAttachment(a: Attachment): DesignDoc {
   const kind = a.kind === 'patch' || a.kind === 'applique' || a.kind === 'embroidery' || a.kind === 'print' ? a.kind : 'patch';
   const doc: DesignDoc = { ...newDesign(), name: a.name, makeAs: kind, w: a.w, h: a.h, outline: a.outline === 'custom' || a.outline === 'shape' ? 'rounded' : a.outline, cloth: a.fabric?.hex ?? '#1d3b6e', thread: a.thread ?? '#e9e2cf', sheen: a.sheen ?? 'matte', layers: a.layers.map((l) => ({ ...l }) as DLayer), placedId: a.id, pieceId: a.pieceId, instance: a.instance ?? 0 };
   if ((kind === 'patch' || kind === 'applique') && a.outline === 'shape' && a.shape === 'text' && a.text) {
-    doc.layers = [newLayer('text', { w: a.w, h: a.h, text: a.text, color: doc.cloth, name: 'Letters' }), ...doc.layers];
+    doc.layers = [newLayer('text', { w: a.w, h: a.h, text: a.text, ...(a.font ? { font: a.font as FontId } : {}), color: doc.cloth, name: 'Letters' }), ...doc.layers];
   } else if (kind === 'patch' || kind === 'applique') {
     const pts = a.outline === 'custom' && a.points?.length ? a.points : outlinePolygon(a.outline === 'shape' ? 'rect' : a.outline, a.w, a.h);
     const d = 'M' + pts.map((q) => `${Math.round((q.x / a.w) * 1000) / 1000} ${Math.round((q.y / a.h) * 1000) / 1000}`).join('L') + 'Z';

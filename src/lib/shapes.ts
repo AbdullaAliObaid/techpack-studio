@@ -2,6 +2,7 @@
 // centred on (0,0) spanning -0.5..0.5, so it can be scaled to any w x h. Used by the 2D pattern chart
 // (SVG), the emblem editor and the 3D print textures (Canvas Path2D accepts the same strings).
 
+import { groupShapes, scaleRings, textKey, traceTextUnit } from './textTrace';
 import type { Attachment, Outline, ShapeId } from '../data/edits';
 
 type P2 = { x: number; y: number };
@@ -346,10 +347,39 @@ export function pathPolygon(d: string, w: number, h: number): P2[] {
  * Cloth outline(s) of an attachment, centred on 0,0 in its own coords (cm): an applique (or outline 'shape')
  * is cut to its shape, one piece per letter for text; everything else is one outline.
  */
-export function attachmentPolygons(a: Pick<Attachment, 'kind' | 'outline' | 'w' | 'h' | 'points' | 'shape' | 'text'>): P2[][] {
+export function attachmentPolygons(a: AttachShapeSrc): P2[][] {
+  return attachmentShapes(a).map((s) => s.outer);
+}
+
+export type AttachShapeSrc = Pick<Attachment, 'kind' | 'outline' | 'w' | 'h' | 'points' | 'shape' | 'text'> & Partial<Pick<Attachment, 'font' | 'outlineRings' | 'outlineKey'>>;
+
+/** The unit rings of a text outline: the stored traced ones when they match, else traced now (cached), else null. */
+export function textRingsOf(a: Pick<Attachment, 'text' | 'font' | 'outlineRings' | 'outlineKey'>): P2[][] | null {
+  if (a.outlineRings?.length && a.outlineKey === textKey(a.text, a.font)) return a.outlineRings;
+  return traceTextUnit(a.text, a.font);
+}
+
+/**
+ * Cloth pieces of an attachment (cm, centred on 0,0): an outer ring and the holes cut out of it. Text cut as letters
+ * follows the real font, counters included; without a canvas to trace on it falls back to the block capitals.
+ */
+export function attachmentShapes(a: AttachShapeSrc): { outer: P2[]; holes: P2[][] }[] {
   if (a.outline === 'shape' || (a.kind === 'applique' && a.shape)) {
+    if (a.shape === 'text') {
+      const unit = textRingsOf(a);
+      if (unit?.length) return groupShapes(scaleRings(unit, a.w, a.h));
+    }
     const rings = shapePolygon(a.shape ?? 'rect', a.w, a.h, a.text);
-    if (rings.length) return rings;
+    if (rings.length) return rings.map((outer) => ({ outer, holes: [] }));
   }
-  return [outlinePolygon(a.outline === 'shape' ? 'rect' : a.outline, a.w, a.h, a.points)];
+  return [{ outer: outlinePolygon(a.outline === 'shape' ? 'rect' : a.outline, a.w, a.h, a.points), holes: [] }];
+}
+
+/** Cut text with its letter outlines traced from the real font stored on it (old projects get them here, once). */
+export function withTextRings<T extends Pick<Attachment, 'outline' | 'shape' | 'text' | 'font' | 'outlineRings' | 'outlineKey'>>(a: T): T {
+  if (a.outline !== 'shape' || a.shape !== 'text' || !a.text) return a;
+  const key = textKey(a.text, a.font);
+  if (a.outlineRings?.length && a.outlineKey === key) return a;
+  const rings = traceTextUnit(a.text, a.font);
+  return rings?.length ? { ...a, outlineRings: rings, outlineKey: key } : a;
 }

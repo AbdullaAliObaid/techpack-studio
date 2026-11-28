@@ -1,7 +1,7 @@
 import type { Piece, SpecDef, GarmentType } from '../data/presets';
 import { bbox, bezAt, bezTangent, dist, offsetInward, outlineLength, samplePoly, signedArea, sliceSpan, toBeziers, type Pt } from './geometry';
 import type { Attachment, Edits, Face, Hardware, Pleat, WashSequence } from '../data/edits';
-import { attachmentPolygons, outlinePolygon, SHAPES } from './shapes';
+import { attachmentPolygons, attachmentShapes, outlinePolygon, SHAPES } from './shapes';
 import { builtinSeams, faceLabel, faceOf, instanceLabel, crownCount } from '../sim/seams';
 import { buttonholeSlots } from '../data/construction';
 import { labelMaterial, labelSewing, labelSize } from '../data/labels';
@@ -471,7 +471,7 @@ export function attachmentReport(pieces: Piece[], edits?: Edits, style?: StyleId
     const host = pieces.find((p) => p.id === a.pieceId);
     const rings = attachmentPolygons(a);
     const poly = rings[0] ?? outlinePolygon(a.outline, a.w, a.h, a.points);
-    const P = rings.reduce((sum, r) => sum + perimeter(r), 0);
+    const P = attachmentShapes(a).reduce((sum, sh) => sum + perimeter(sh.outer) + sh.holes.reduce((t, h) => t + perimeter(h), 0), 0);
     const top = poly.filter((q) => q.y < Math.min(...poly.map((r) => r.y)) + 0.05);
     const mouth = top.length >= 2 ? Math.max(...top.map((q) => q.x)) - Math.min(...top.map((q) => q.x)) : 0;
     const short = Math.min(a.w, a.h);
@@ -871,7 +871,8 @@ export function attachmentOutline(a: Attachment, n = 48): Pt[] {
 /** Placement outlines of an attachment on its host (one per letter for a text applique), host local coords (cm). */
 export function attachmentOutlines(a: Attachment): Pt[][] {
   const c = Math.cos((a.rotation * Math.PI) / 180), s = Math.sin((a.rotation * Math.PI) / 180);
-  return attachmentPolygons(a).map((r) => r.map((q) => ({ x: a.x + q.x * c - q.y * s, y: a.y + q.x * s + q.y * c })));
+  // outer rings and the counters (holes) of letters, each its own outline
+  return attachmentShapes(a).flatMap((sh) => [sh.outer, ...sh.holes]).map((r) => r.map((q) => ({ x: a.x + q.x * c - q.y * s, y: a.y + q.x * s + q.y * c })));
 }
 
 /**
@@ -1022,7 +1023,7 @@ export function fabricBom(pieces: Piece[], edits?: Edits, style?: StyleId, width
     const ref = (a?.fabric ?? up?.fabric ?? host?.fabric) as (FabricRef & { sheen?: string }) | undefined;
     if (!ref) continue;
     let area = 0;
-    if (a) for (const ring of attachmentPolygons(a)) area += Math.abs(signedArea(ring)) + perimeter(ring);
+    if (a) for (const sh of attachmentShapes(a)) area += Math.abs(signedArea(sh.outer)) - sh.holes.reduce((t, h) => t + Math.abs(signedArea(h)), 0) + perimeter(sh.outer);
     else if (up) area = pieceCutArea(up);
     const same = !up && host && fabricKey(ref) === fabricKey(host.fabric);
     const S = a ? attachmentStack(a, ref.id) : up ? stackOf(up, edits) : undefined;

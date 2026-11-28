@@ -5,7 +5,7 @@ const THREE_COLOR = THREE.Color;
 import { useStore } from '../store';
 import type { Attachment, ShapeLayer } from '../data/edits';
 import { outlinePolygon } from '../lib/shapes';
-import { attachmentRings } from '../lib/trims';
+import { attachmentAllRings } from '../lib/trims';
 import { registerHitCloth, type ClothHit } from './hitCloth';
 import { NONE, type VertexPattern } from './printsAdapter';
 import { fabricHex as hexOf } from './fabricAdapter';
@@ -67,7 +67,7 @@ function clothFill(ctx: CanvasRenderingContext2D, f: NonNullable<Attachment['fab
 
 function outlinePath(a: Attachment) {
   const p = new Path2D();
-  for (const pts of attachmentRings(a)) {
+  for (const pts of attachmentAllRings(a)) {
     pts.forEach((q, i) => (i ? p.lineTo(q.x, q.y) : p.moveTo(q.x, q.y)));
     p.closePath();
   }
@@ -93,7 +93,7 @@ function drawInk(ctx: CanvasRenderingContext2D, a: Attachment, local: boolean, o
   const fill = fabricHex(a.fabric);
   if ((a.kind === 'print' || onHost) && fill && a.kind !== 'embroidery' && a.kind !== 'hardware' && a.kind !== 'label') {
     ctx.fillStyle = clothFill(ctx, a.fabric!);
-    ctx.fill(outlinePath(a));
+    ctx.fill(outlinePath(a), 'evenodd');
   } else if (onHost && a.kind !== 'print' && a.kind !== 'embroidery' && a.kind !== 'hardware' && a.kind !== 'label') {
     // no cloth of its own yet: a faint edge so the shape still reads
     ctx.strokeStyle = 'rgba(0,0,0,0.3)';
