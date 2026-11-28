@@ -1797,3 +1797,6 @@ input[type='range'] { width: 100%; accent-color: var(--accent); margin: 0; heigh
 .prod-check .group-note { margin: 0; }
 .poi-row { min-height: 44px; }
 .poi-row small { display: block; font-size: 11px; }
+.freehand-btn { width: 100%; justify-content: center; min-height: 44px; background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.freehand-btn.on { background: var(--accent); color: white; }
+body.band-freehand .editor-svg [data-kind="edge"], body.band-freehand .editor-svg [data-kind="point"], body.band-freehand .editor-svg [data-kind="piece"] { pointer-events: none; }

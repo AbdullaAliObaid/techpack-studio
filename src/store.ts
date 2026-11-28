@@ -391,6 +391,8 @@ export interface State {
   /** Paint workspace right panel: Edge paint or Bands across the garment */
   paintTab: 'edge' | 'bands';
   selBand: string | null;
+  /** Paint > Bands: the selected band shows big grab handles to move, resize and tilt it on the chart */
+  bandFreehand: boolean;
   addBand: (b?: Partial<Omit<Band, 'id'>>) => string;
   updateBand: (id: string, patch: Partial<Band>) => void;
   removeBand: (id: string) => void;
@@ -908,6 +910,7 @@ export const useStore = create<State>((set, get) => {
     designSel: [],
     dwTab: 'layers',
     selBand: null,
+    bandFreehand: false,
     addBand: (b = {}) => {
       const id = uid();
       get().commit();

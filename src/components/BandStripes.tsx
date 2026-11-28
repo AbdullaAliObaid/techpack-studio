@@ -14,10 +14,11 @@ export default function BandStripes({ piece, d, id }: { piece: Piece; d: string;
   const bands = useStore((s) => s.project.edits?.bands);
   const live = useStore((s) => s.workspace === 'paint' && s.paintTab === 'bands');
   const selBand = useStore((s) => s.selBand);
+  const freehand = useStore((s) => s.bandFreehand);
   // Shape and Seams edit the pattern itself: the bands stay as a faint guide there and never take a click
   const faint = useStore((s) => s.workspace === 'shape' || s.workspace === 'seams');
   const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null);
-  const drag = useRef<{ kind: 'move' | 'edge' | 'tilt'; band: Band; edge: number; y0: number; moved: boolean; sign?: number; cy?: number } | null>(null);
+  const drag = useRef<{ kind: 'move' | 'edge' | 'tilt' | 'top' | 'bottom'; band: Band; edge: number; y0: number; moved: boolean; sign?: number; cy?: number } | null>(null);
   if (!bands?.length) return null;
   const xs = piece.points.map((p) => p.x);
   const x0 = Math.min(...xs) - 2, w = Math.max(...xs) - x0 + 2;
@@ -34,7 +35,7 @@ export default function BandStripes({ piece, d, id }: { piece: Piece; d: string;
     return { x: p.x, y: p.y };
   };
   const total = (b: Band) => b.stripes.reduce((s, q) => s + q.height, 0);
-  const start = (e: React.PointerEvent, b: Band, kind: 'move' | 'edge' | 'tilt', edge = 0, extra: { sign?: number; cy?: number } = {}) => {
+  const start = (e: React.PointerEvent, b: Band, kind: 'move' | 'edge' | 'tilt' | 'top' | 'bottom', edge = 0, extra: { sign?: number; cy?: number } = {}) => {
     e.stopPropagation();
     e.preventDefault();
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
@@ -60,7 +61,17 @@ export default function BandStripes({ piece, d, id }: { piece: Piece; d: string;
     const dy = local(e).y - g.y0;
     if (!g.moved) { if (Math.abs(dy) < 0.15) return; st.commit(); g.moved = true; }
     const b = g.band;
-    if (g.kind === 'move') {
+    if (g.kind === 'top' || g.kind === 'bottom') {
+      // grow or shrink the whole band from one edge, the other edge stays put; stripes keep their proportions
+      const t0 = total(b);
+      const t1 = Math.max(0.5, Math.min(60, Math.round((t0 + (g.kind === 'bottom' ? dy : -dy)) * 10) / 10));
+      const k = t1 / t0;
+      const stripes = b.stripes.map((q) => ({ ...q, height: Math.max(0.2, Math.round(q.height * k * 10) / 10) }));
+      const grown = stripes.reduce((s2, q) => s2 + q.height, 0) - t0;
+      const offset = g.kind === 'top' ? Math.max(0, Math.round((b.offset + (b.from === 'hem' ? grown : -grown)) * 10) / 10) : b.offset;
+      st.updateBand(b.id, { stripes, offset });
+      setTip({ x: e.clientX, y: e.clientY, text: `Band ${Math.round(stripes.reduce((s2, q) => s2 + q.height, 0) * 10) / 10} cm tall` });
+    } else if (g.kind === 'move') {
       let off = Math.round(b.offset + (b.from === 'hem' ? -dy : dy));
       // snap to the edges of the other bands (top to top, top to bottom, bottom to top)
       const mine = total(b);
@@ -112,6 +123,25 @@ export default function BandStripes({ piece, d, id }: { piece: Piece; d: string;
             <circle cx={xr} cy={mid + m * xr} r={0.9} fill="var(--bg-elevated)" stroke="var(--accent)" strokeWidth={2} vectorEffect="non-scaling-stroke" pointerEvents="none" />
             <circle cx={xr} cy={mid + m * xr} r={1.9} fill="transparent" style={{ cursor: 'grab', touchAction: 'none' }} role="presentation"
               onPointerDown={(e) => start(e, b, 'tilt', 0, { sign, cy: mid })} onPointerMove={move} onPointerUp={end} onPointerCancel={end}><title>Drag to tilt the band. Shift snaps to 15 degrees.</title></circle>
+          </g>
+        );
+      })}
+      {live && freehand && out.filter(({ b }) => b.id === selBand).map(({ b, r }) => {
+        // freehand: the band glows, the whole of it drags up and down, the pills on its top and bottom edges resize it
+        const m = r[0].slope ?? 0, yt = r[0].y0, yb = r[r.length - 1].y1, xc = (x0 + w / 2);
+        const pill = (y: number, kind: 'top' | 'bottom') => (
+          <g key={kind}>
+            <rect x={xc - 3} y={y + m * xc - 0.7} width={6} height={1.4} rx={0.7} fill="var(--bg-elevated)" stroke="var(--accent)" strokeWidth={2} vectorEffect="non-scaling-stroke" pointerEvents="none" />
+            <rect x={xc - 5} y={y + m * xc - 1.8} width={10} height={3.6} fill="transparent" style={{ cursor: 'ns-resize', touchAction: 'none' }} role="presentation"
+              onPointerDown={(e) => start(e, b, kind)} onPointerMove={move} onPointerUp={end} onPointerCancel={end}><title>{kind === 'top' ? 'Drag to grow or shrink the band from the top' : 'Drag to grow or shrink the band from the bottom'}</title></rect>
+          </g>
+        );
+        return (
+          <g key={`free${b.id}`} data-handle="band-free">
+            <polygon points={[...stripeCorners({ y0: yt, y1: yb, slope: m }, x0, x0 + w)].map((c) => c.join(',')).join(' ')} fill="var(--accent)" fillOpacity={0.12} stroke="var(--accent)" strokeWidth={3} vectorEffect="non-scaling-stroke" style={{ cursor: 'grab', touchAction: 'none' }}
+              onPointerDown={(e) => start(e, b, 'move')} onPointerMove={move} onPointerUp={end} onPointerCancel={end}><title>Drag to move the band up or down</title></polygon>
+            {pill(yt, 'top')}
+            {pill(yb, 'bottom')}
           </g>
         );
       })}

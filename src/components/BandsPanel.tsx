@@ -1,4 +1,5 @@
 // "Band across the garment": a stripe set (rugby / polo chest band) at a height measured from the shoulder or the hem.
+import { useEffect } from 'react';
 import { useStore, usePick } from '../store';
 import { ColorField, LenInput, NumInput, Row, Seg, SubLabel } from './controls';
 const BAND_SWATCH = ['#c0392b', '#ffffff', '#16315f', '#111111', '#d9b45a', '#1f5d3a'];
@@ -7,8 +8,13 @@ import type { Band } from '../data/edits';
 import Icon from './Icon';
 
 export default function BandsPanel() {
-  const { project, units, selBand, addBand, updateBand, removeBand, set } = usePick('project', 'units', 'selBand', 'addBand', 'updateBand', 'removeBand', 'set');
+  const { project, units, selBand, bandFreehand, addBand, updateBand, removeBand, set } = usePick('project', 'units', 'selBand', 'bandFreehand', 'addBand', 'updateBand', 'removeBand', 'set');
   const bands = project.edits?.bands ?? [];
+  // freehand: the pattern's own edges and points stop taking clicks so the band's handles are always grabbable
+  useEffect(() => {
+    document.body.classList.toggle('band-freehand', bandFreehand);
+    return () => document.body.classList.remove('band-freehand');
+  }, [bandFreehand]);
   const band = bands.find((b) => b.id === selBand) ?? bands[0] ?? null;
   const total = band ? band.stripes.reduce((s, q) => s + q.height, 0) : 0;
   const patchStripe = (i: number, p: Partial<Band['stripes'][number]>) => band && updateBand(band.id, { stripes: band.stripes.map((s, j) => (j === i ? { ...s, ...p } : s)) });
@@ -32,6 +38,10 @@ export default function BandsPanel() {
 
       {band && (
         <div className="dz-props">
+          <button className={`btn freehand-btn ${bandFreehand ? 'on' : ''}`} aria-pressed={bandFreehand} onClick={() => set({ bandFreehand: !bandFreehand, selBand: band.id })}>
+            <Icon name="pan" size={16} /> {bandFreehand ? 'Done' : 'Freehand: drag it on the pattern'}
+          </button>
+          {bandFreehand && <div className="group-note">The band is highlighted on the pattern. Drag it up or down, drag the pills on its top and bottom edges to make it taller or shorter, and the round handle on the right to tilt it. Lines between stripes resize single stripes.</div>}
           <SubLabel>Position</SubLabel>
           <Row label="Measure from"><Seg<Band['from']> label="Measure from" full={false} value={band.from} options={[{ id: 'shoulder', label: 'Shoulder' }, { id: 'hem', label: 'Hem' }]} onChange={(v) => updateBand(band.id, { from: v })} /></Row>
           <Row label="Distance"><LenInput units={units} label="Band distance" value={band.offset} min={0} max={120} onChange={(v) => updateBand(band.id, { offset: v })} /></Row>
