@@ -194,7 +194,6 @@ export default function App() {
       <PieceFlow />
       <PhotoSheet />
       <ContextMenuHost />
-      <Notices />
       </div>
       <div className="layer home-layer" data-state={screen === 'home' ? 'active' : screen === 'new' && newFrom === 'home' ? 'under' : 'gone'} {...inertIf(screen !== 'home')}>
         <Home />
@@ -202,6 +201,7 @@ export default function App() {
       <div className="layer new-layer" data-state={screen === 'new' ? 'active' : screen === 'home' ? 'right' : 'gone'} data-from={newFrom} {...inertIf(screen !== 'new')}>
         <NewFlow />
       </div>
+      <Notices />
     </div>
   );
 }

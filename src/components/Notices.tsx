@@ -36,7 +36,12 @@ export default function Notices() {
     const t = window.setTimeout(() => setPhase('open'), reduced ? 30 : 520);
     return () => window.clearTimeout(t);
   }, [shown, reduced]);
-  useEffect(() => { if (phase === 'open') ok.current?.focus(); }, [phase]);
+  useEffect(() => {
+    if (phase !== 'open') return;
+    ok.current?.focus({ preventScroll: true });
+    const t = window.setTimeout(() => { if (document.activeElement !== ok.current) ok.current?.focus({ preventScroll: true }); }, 80);
+    return () => window.clearTimeout(t);
+  }, [phase]);
 
   const close = () => {
     if (!shown) return;
