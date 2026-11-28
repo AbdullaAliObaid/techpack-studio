@@ -249,8 +249,22 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
           </div>
         </>
       )}
+      {trims && <Disclosure id="design-buttons" title="Buttons" icon="hardware" openFirst>
+        <p className="group-note">Sewn on through the fabric. One button goes to the middle of the selected piece. A row goes down the centre line, like a placket or centre front. Buttonholes are just below.</p>
+        <div className="tile-grid">
+          <button className="tile on" aria-label={`Add ${btn.count > 1 ? `a row of ${btn.count} buttons` : 'a button'}${piece ? ` to ${targetLabel}` : ''}`} onClick={addButtons}>
+            <svg viewBox="-1.6 -1.6 3.2 3.2" aria-hidden="true" pointerEvents="none"><ArtworkGroup a={buttonTemplate()} /></svg>
+            <span>Buttons</span>
+          </button>
+        </div>
+        <Row label="How many"><NumInput label="Button count" value={btn.count} min={1} max={12} step={1} digits={0} onChange={(count) => setBtn({ ...btn, count: Math.round(count) })} /></Row>
+        {btn.count > 1 && <Row label="Spacing"><LenInput units={units} label="Button spacing, centre to centre" value={btn.spacing} min={1} max={20} onChange={(spacing) => setBtn({ ...btn, spacing })} /></Row>}
+        <Row label="Size"><LenInput units={units} label="Button size" value={btn.size} min={0.6} max={4} onChange={(size) => setBtn({ ...btn, size })} /></Row>
+        <button className="btn wide" disabled={!piece || !!host?.attachment} onClick={addButtons}><Icon name="plus" size={16} /> Add {btn.count > 1 ? `${btn.count} buttons` : 'a button'}{piece && !host?.attachment ? ` to ${targetLabel}` : ''}</button>
+      </Disclosure>}
+
       {trims && (
-        <Disclosure id="trims-cut" title="Pockets, patches and straps" icon="pocket" openFirst>
+        <Disclosure id="trims-cut" title="Pockets, patches and straps" icon="pocket">
           <Seg label="Kind of cloth piece" value={cutKind === 'applique' ? 'pocket' : cutKind} onChange={(k) => { setCutKind(k); setArmedKey(null); }}
             options={[{ id: 'pocket', label: 'Pocket' }, { id: 'patch', label: 'Patch' }, { id: 'strap', label: 'Strap' }]} />
           <p className="group-note">{KIND_BLURB[cutKind === 'applique' ? 'pocket' : cutKind]}</p>
@@ -277,19 +291,6 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
         <button className="btn wide" disabled={!host} onClick={() => addTo(tagAttachment(tag))}><Icon name="plus" size={16} /> Add this tag{host ? ` to ${targetLabel}` : ''}</button>
       </Disclosure>}
 
-      {trims && <Disclosure id="design-buttons" title="Buttons" icon="hardware" openFirst>
-        <p className="group-note">Sewn on through the fabric. One button goes to the middle of the selected piece. A row goes down the centre line, like a placket or centre front. Buttonholes are just below.</p>
-        <div className="tile-grid">
-          <button className="tile on" aria-label={`Add ${btn.count > 1 ? `a row of ${btn.count} buttons` : 'a button'}${piece ? ` to ${targetLabel}` : ''}`} onClick={addButtons}>
-            <svg viewBox="-1.6 -1.6 3.2 3.2" aria-hidden="true" pointerEvents="none"><ArtworkGroup a={buttonTemplate()} /></svg>
-            <span>Buttons</span>
-          </button>
-        </div>
-        <Row label="How many"><NumInput label="Button count" value={btn.count} min={1} max={12} step={1} digits={0} onChange={(count) => setBtn({ ...btn, count: Math.round(count) })} /></Row>
-        {btn.count > 1 && <Row label="Spacing"><LenInput units={units} label="Button spacing, centre to centre" value={btn.spacing} min={1} max={20} onChange={(spacing) => setBtn({ ...btn, spacing })} /></Row>}
-        <Row label="Size"><LenInput units={units} label="Button size" value={btn.size} min={0.6} max={4} onChange={(size) => setBtn({ ...btn, size })} /></Row>
-        <button className="btn wide" disabled={!piece || !!host?.attachment} onClick={addButtons}><Icon name="plus" size={16} /> Add {btn.count > 1 ? `${btn.count} buttons` : 'a button'}{piece && !host?.attachment ? ` to ${targetLabel}` : ''}</button>
-      </Disclosure>}
 
       {trims && <Disclosure id="design-hardware" title="Hardware" icon="hardware" openFirst>
         <p className="group-note">Metal or plastic trims fixed through the fabric. Each one you place is its own, so you can design every button differently.</p>
