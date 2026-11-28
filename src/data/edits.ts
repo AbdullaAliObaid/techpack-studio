@@ -167,6 +167,8 @@ export interface Attachment {
   face?: Face;
   /** surface look; default matte for cloth, metallic for metal trims */
   sheen?: Sheen;
+  /** the attachment goes on after the wash, so the wash does not touch it (default: washed with the garment) */
+  afterWash?: boolean;
   /** kind === 'label' */
   label?: Label;
   /** kind === 'hardware' */
@@ -285,9 +287,9 @@ export interface EdgeTrim {
 }
 
 /** wash and wear processes painted as a colour and texture change (src/data/finish.ts) */
-export type WashKind = 'acid' | 'bleach' | 'fade' | 'stone';
+export type WashKind = 'acid' | 'bleach' | 'fade' | 'stone' | 'sunfade' | 'armpit' | 'splatter' | 'paint';
 /** distressing: fray (edges and hems), whiskers (hip creases), honeycomb (behind the knee), abrasion, rip, hole (cut through) */
-export type DistressKind = 'fray' | 'whiskers' | 'honeycomb' | 'abrasion' | 'rip' | 'hole';
+export type DistressKind = 'fray' | 'whiskers' | 'honeycomb' | 'abrasion' | 'rip' | 'hole' | 'rawhem' | 'ribwear' | 'elbow' | 'pilling' | 'pinhole' | 'crack';
 export type FinishKind = WashKind | DistressKind;
 /** one brush stroke in a piece's own pattern space. Compact: flat x,y pairs in cm, rounded to 0.1 */
 export interface FinishStroke { k: FinishKind; p: number[]; /** brush radius (cm) */ r: number; /** strength 0..1 */ s: number }

@@ -1,6 +1,6 @@
 // Run: npx tsx tests/finish.ts (part of npm test). Wash and distress edits: strokes as compact masks, round trip, tech pack rows.
 import { freshProject } from '../src/store';
-import { addStroke, extendStroke, finishRows, hasFinish, newStroke, removeLast, strokesFor, strokeCount } from '../src/data/finish';
+import { ALL_KINDS, KIND, addSpots, addStroke, kindAllowed, typicalSpots, WASH_KINDS, DISTRESS_KINDS, extendStroke, finishRows, hasFinish, newStroke, removeLast, strokesFor, strokeCount } from '../src/data/finish';
 import { openings } from '../src/three/detailsFinish';
 import type { GarmentFinish } from '../src/data/edits';
 
@@ -47,5 +47,38 @@ ok(strokeCount(undone) === 2, 'undo removes the last stroke');
 ok(!hasFinish(removeLast(removeLast(removeLast(removeLast(f))))) || true, 'undo down to nothing is safe');
 const legacy = { attachments: [], customSeams: [], detachedSeams: [], pleats: [] } as { finish?: GarmentFinish };
 ok(!hasFinish(legacy.finish), 'old projects load with no finish');
+
+// every tool on every garment
+const STYLES = ['basic-tee', 'straight-jeans', 'polo', 'button-up', 'jacket', 'sweatpants'] as const;
+for (const st of STYLES) {
+  const pr = freshProject(st);
+  ok(ALL_KINDS.every((k) => kindAllowed(k, st)), `${st}: every tool allowed`);
+  const total = ALL_KINDS.reduce((n, k) => n + typicalSpots(k, st, pr.pieces).length, 0);
+  ok(total > 15, `${st}: typical spots exist for most tools (${total})`);
+  ok(ALL_KINDS.every((k) => typicalSpots(k, st, pr.pieces).every((sp) => pr.pieces.some((q) => q.id === sp.pieceId) && sp.stroke.p.every(Number.isFinite))), `${st}: typical spots sit on real pieces`);
+}
+ok(ALL_KINDS.every((k) => KIND[k] && KIND[k].label && KIND[k].process && KIND[k].hint), 'every tool has a label, a process name and a hint');
+ok(new Set(ALL_KINDS).size === WASH_KINDS.length + DISTRESS_KINDS.length, 'no tool listed twice');
+const tee2 = freshProject('basic-tee'), jeans = freshProject('straight-jeans');
+ok(typicalSpots('whiskers', 'basic-tee', tee2.pieces).length > 0, 'whiskers have a place on a tee too');
+ok(typicalSpots('honeycomb', 'straight-jeans', jeans.pieces).length > 0, 'honeycombs go behind the knee on jeans');
+ok(typicalSpots('ribwear', 'basic-tee', tee2.pieces).some((sp) => tee2.pieces.find((q) => q.id === sp.pieceId)?.role === 'neckband'), 'rib wear goes on the neckband');
+ok(typicalSpots('armpit', 'basic-tee', tee2.pieces).length >= 2, 'armpit fade goes on both sides of the body');
+// new tools round trip and show in the tech pack
+let nf: GarmentFinish | undefined;
+for (const k of ALL_KINDS) nf = addSpots(nf, typicalSpots(k, 'basic-tee', tee2.pieces).slice(0, 1));
+nf = addStroke(nf, tee2.pieces[0].id, undefined, newStroke('pinhole', 0.35, 0.8, 3, 20));
+nf = { ...nf, preset: 'vintage' };
+ok(JSON.stringify(JSON.parse(JSON.stringify(nf))) === JSON.stringify(nf), 'new tools round trip as JSON');
+const nrows = finishRows('basic-tee', tee2.pieces, nf);
+ok(nrows.some((r) => r.kind === 'sunfade' && /Sun fade/.test(r.process)) && nrows.some((r) => r.kind === 'rawhem' && /curl/.test(r.process)), 'new processes are listed by name');
+ok(nrows.some((r) => r.kind === 'pinhole' && /\d+ holes?/.test(r.area)), 'pin holes counted as holes');
+ok(nrows.filter((r) => r.kind !== 'preset').every((r) => /(hem|top edge|third)/.test(r.where) && /cm/.test(r.where)), 'every row says where, in words and cm');
+const att = { id: 'a', kind: 'print', name: 'Chest print', pieceId: tee2.pieces[0].id, x: 0, y: 15, rotation: 0, w: 12, h: 10, outline: 'rect', layers: [] } as never;
+const att2 = { ...(att as object), id: 'b', name: 'Back label', kind: 'label', afterWash: true } as never;
+const arows = finishRows('basic-tee', tee2.pieces, nf, [att, att2]);
+ok(arows.some((r) => /after the wash/i.test(r.process) && /Back label/.test(r.where)), 'items added after the wash are listed as not washed');
+ok(arows.some((r) => /Prints and embroidery go through/.test(r.process) && /Chest print/.test(r.where)), 'washed prints are listed');
+ok(typicalSpots('crack', 'basic-tee', tee2.pieces, [att, att2]).length === 1, 'cracked print goes on washed prints only');
 if (fails) { console.error(`${fails} failed`); process.exit(1); }
 console.log('finish tests passed');

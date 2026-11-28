@@ -111,7 +111,7 @@ export function TechPackPanel() {
     { icon: 'seams', title: 'Seam report', note: 'Every seam with matched lengths' },
     { icon: 'garment', title: 'Materials', note: 'Fabric and colour of each piece, thread and trims' },
     { icon: 'patch', title: 'Detail sheets', note: `${designs} ${designs === 1 ? 'design' : 'designs'}, ${trims} ${trims === 1 ? 'trim or tag' : 'trims and tags'}` },
-    ...(hasFinish(e?.finish) ? [{ icon: 'sparkle', title: 'Wash and distress', note: `${finishRows(project.garment, project.pieces, e?.finish).length} processes with locations and process names` }] : []),
+    ...(hasFinish(e?.finish) ? [{ icon: 'sparkle', title: 'Wash and distress', note: `${finishRows(project.garment, project.pieces, e?.finish, e?.attachments ?? []).length} processes with locations and process names` }] : []),
     ...((e?.edgeTrims?.length ?? 0) > 0 ? [{ icon: 'seams', title: 'Edge trims', note: `${e!.edgeTrims!.length} contrast thread, binding or piping runs in the materials list` }] : []),
     { icon: 'stripes', title: 'Bands', note: `${e?.bands?.length ?? 0} across the garment, shown in the cover render` },
     { icon: 'note', title: 'Notes', note: `${project.notes?.length ?? 0} drawn on the pattern` },

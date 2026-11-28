@@ -1,5 +1,6 @@
 // Finish workspace: wash and wear tools. A global wash, brushes for wash effects and distressing painted on the pattern or
 // the 3D garment, and a list of what has been done. Strokes are stored per piece in pattern space (Edits.finish).
+import { useState } from 'react';
 import { usePick } from '../store';
 import { LenInput, Row, Seg } from './controls';
 import { DISTRESS_KINDS, KIND, PRESET_INFO, WASH_KINDS, finishRows, strokeCount } from '../data/finish';
@@ -8,9 +9,10 @@ import type { FinishKind, WashPreset } from '../data/edits';
 const PRESETS: { id: WashPreset; label: string }[] = [{ id: 'none', label: 'None' }, { id: 'light', label: 'Light' }, { id: 'mid', label: 'Mid' }, { id: 'dark', label: 'Dark' }, { id: 'vintage', label: 'Vintage' }];
 
 export default function FinishPanel() {
-  const { project, finishBrush: b, set, units, setWashPreset, undoFinishStroke, clearFinish } = usePick('project', 'finishBrush', 'set', 'units', 'setWashPreset', 'undoFinishStroke', 'clearFinish');
+  const { project, finishBrush: b, set, units, setWashPreset, undoFinishStroke, clearFinish, placeTypical } = usePick('project', 'finishBrush', 'set', 'units', 'setWashPreset', 'undoFinishStroke', 'clearFinish', 'placeTypical');
+  const [note, setNote] = useState('');
   const f = project.edits?.finish;
-  const rows = finishRows(project.garment, project.pieces, f);
+  const rows = finishRows(project.garment, project.pieces, f, project.edits?.attachments ?? []);
   const pick = (k: FinishKind) => set({ finishBrush: { ...b, k, r: KIND[k].defaultR }, tool: 'brush' });
   const kinds = (list: FinishKind[]) => (
     <div className="agrid" role="group">
@@ -38,9 +40,13 @@ export default function FinishPanel() {
 
       <div className="sublabel">Wash brushes</div>
       {kinds(WASH_KINDS)}
-      <div className="sublabel">Distressing</div>
+      <div className="sublabel">Wear and distressing</div>
       {kinds(DISTRESS_KINDS)}
-      <p className="group-note">{KIND[b.k].hint}. Fray goes along an edge or hem, whiskers on the hip, honeycombs behind the knee.</p>
+      <p className="group-note">{KIND[b.k].hint}. Every tool works on every garment: brush it anywhere.</p>
+      <div className="row wrap">
+        <button className="btn small" title="Add the usual marks for this tool, then change or undo them" onClick={() => { const n = placeTypical(b.k); setNote(n ? `Added ${n} ${n === 1 ? 'mark' : 'marks'} on typical spots. Undo removes the last one.` : 'This tool has no usual spot on this garment. Brush it where you want it.'); }}>Place on typical spots</button>
+      </div>
+      {note && <p className="group-note" role="status">{note}</p>}
 
       <Row label="Brush size"><LenInput label="Brush size" units={units} value={b.r} min={0.5} max={25} step={0.5} onChange={(r) => set({ finishBrush: { ...b, r } })} /></Row>
       <div className="frow stack">

@@ -18,7 +18,7 @@ import { setMeasurement, targetKey, type MeasureTarget } from './data/measureEdi
 import { fitTable, garmentSpecs, pieceSpecs } from './lib/specs';
 import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorkspaceMap, defaultBand } from './components/designDoc';
 import type { Band } from './data/edits';
-import { addStroke, extendStroke, newStroke, removeLast, EMPTY_FINISH } from './data/finish';
+import { addSpots, addStroke, extendStroke, newStroke, removeLast, typicalSpots, EMPTY_FINISH } from './data/finish';
 import { deleteOutfit as removeSavedOutfit, listOutfits, listProjects, saveOutfit, saveProject } from './lib/projects';
 import { builtinKey, buttonholeSet, matchingTrim, regradeBuiltins, restoreBuiltins, styleEdits, upgradeFront, withBuiltins, type ButtonholeOpts } from './data/construction';
 
@@ -306,6 +306,8 @@ export interface State {
   setWashPreset: (preset: import('./data/edits').WashPreset, strength?: number) => void;
   undoFinishStroke: () => void;
   clearFinish: () => void;
+  /** put a tool on its usual places on this garment (returns how many marks were added) */
+  placeTypical: (k: import('./data/edits').FinishKind) => number;
   addEdgeTrims: (list: Omit<import('./data/edits').EdgeTrim, 'id'>[]) => void;
   removeEdgeTrim: (id: string) => void;
   movePiece: (pieceId: string, offset: Pt) => void;
@@ -720,6 +722,13 @@ export const useStore = create<State>((set, get) => {
     },
     setWashPreset: (preset, strength) => { get().commit(); setEdits((e) => ({ ...e, finish: { ...(e.finish ?? EMPTY_FINISH), preset, ...(strength !== undefined ? { presetStrength: strength } : {}) } })); },
     undoFinishStroke: () => { get().commit(); setEdits((e) => ({ ...e, finish: removeLast(e.finish) })); },
+    placeTypical: (k) => {
+      const st = get(), spots = typicalSpots(k, st.project.garment, st.project.pieces, st.project.edits?.attachments ?? []);
+      if (!spots.length) return 0;
+      get().commit();
+      setEdits((e) => ({ ...e, finish: addSpots(e.finish, spots) }));
+      return spots.length;
+    },
     clearFinish: () => { get().commit(); setEdits((e) => ({ ...e, finish: undefined })); },
     addEdgeTrims: (list) => {
       if (!list.length) return;
