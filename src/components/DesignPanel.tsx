@@ -57,6 +57,9 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
   const [drawing, setDrawing] = useState<DrawDraft | null>(null);
   const [pullerSheet, setPullerSheet] = useState(false);
   const [bh, setBh] = useState({ style: 'straight' as 'straight' | 'keyhole', dir: 'across' as 'across' | 'along', size: 1.5, count: 1, spacing: 6, button: true });
+  const [btn, setBtn] = useState({ count: 1, spacing: 6, size: 1.1 });
+  const [restored, setRestored] = useState<string | null>(null);
+  const removedMatch = useStore((st) => st.removedMatch);
   const reg = useRef(new Map<string, Armed>());
   reg.current = new Map();
 
@@ -88,6 +91,24 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
     set({ selLayer: null, viewFace: t.face === 'inside' ? 'inside' : useStore.getState().viewFace });
     openDesign('edit');
     return true;
+  };
+
+  /** one button, or a row of them, on the centre line of the selected piece (a placket or centre front) */
+  const buttonTemplate = (): AttachTemplate => {
+    const t = hardwareAttachment('button', { ...hw.button, size: btn.size, count: btn.count, spacing: btn.spacing });
+    return btn.count > 1 ? { ...t, rotation: 90, name: `Buttons, ${btn.count}` } : t;
+  };
+  const addButtons = () => {
+    if (!piece || host?.attachment) { setNotice('Tap a piece on the pattern first, then add buttons to it.'); window.setTimeout(() => setNotice(null), 3500); return; }
+    const c = centroid(samplePoly(piece.points));
+    // on the centre line of a piece cut twice (centre front) or a symmetric one; else at the middle of the piece
+    const onCentre = copies === 2 || piece.symmetric;
+    const t = buttonTemplate();
+    const n = btn.count;
+    // the row is centred on the middle of the piece, so it runs down the centre line
+    addAttachment({ ...withFace(t), pieceId: piece.id, x: onCentre ? 0 : c.x, y: c.y, w: n > 1 ? (n - 1) * btn.spacing + btn.size : btn.size, h: btn.size, ...(inst !== undefined ? { instance: inst } : {}) });
+    set({ selLayer: null });
+    openDesign('edit');
   };
 
   /** one draggable tile: click to pick it, double click to add it, drag it onto the garment */
@@ -172,6 +193,13 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
 
   return (
     <>
+      {removedMatch && (
+      <div className="insert-notice" role="status">
+        <span>Removed {removedMatch.removed}. Remove {removedMatch.name} too?</span>{' '}
+        <button className="btn small" onClick={() => useStore.getState().removeMatch()}>Remove it</button>{' '}
+        <button className="btn small" onClick={() => useStore.setState({ removedMatch: null })}>Keep it</button>
+      </div>
+      )}
       <InsertSection notice={notice}>
       {/* where it goes */}
       <div className={`target-card ${host ? '' : 'none'}`}>
@@ -221,8 +249,22 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
           </div>
         </>
       )}
+      {trims && <Disclosure id="design-buttons" title="Buttons" icon="hardware" openFirst>
+        <p className="group-note">Sewn on through the fabric. One button goes to the middle of the selected piece. A row goes down the centre line, like a placket or centre front. Buttonholes are just below.</p>
+        <div className="tile-grid">
+          <button className="tile on" aria-label={`Add ${btn.count > 1 ? `a row of ${btn.count} buttons` : 'a button'}${piece ? ` to ${targetLabel}` : ''}`} onClick={addButtons}>
+            <svg viewBox="-1.6 -1.6 3.2 3.2" aria-hidden="true" pointerEvents="none"><ArtworkGroup a={buttonTemplate()} /></svg>
+            <span>Buttons</span>
+          </button>
+        </div>
+        <Row label="How many"><NumInput label="Button count" value={btn.count} min={1} max={12} step={1} digits={0} onChange={(count) => setBtn({ ...btn, count: Math.round(count) })} /></Row>
+        {btn.count > 1 && <Row label="Spacing"><LenInput units={units} label="Button spacing, centre to centre" value={btn.spacing} min={1} max={20} onChange={(spacing) => setBtn({ ...btn, spacing })} /></Row>}
+        <Row label="Size"><LenInput units={units} label="Button size" value={btn.size} min={0.6} max={4} onChange={(size) => setBtn({ ...btn, size })} /></Row>
+        <button className="btn wide" disabled={!piece || !!host?.attachment} onClick={addButtons}><Icon name="plus" size={16} /> Add {btn.count > 1 ? `${btn.count} buttons` : 'a button'}{piece && !host?.attachment ? ` to ${targetLabel}` : ''}</button>
+      </Disclosure>}
+
       {trims && (
-        <Disclosure id="trims-cut" title="Pockets, patches and straps" icon="pocket" openFirst>
+        <Disclosure id="trims-cut" title="Pockets, patches and straps" icon="pocket">
           <Seg label="Kind of cloth piece" value={cutKind === 'applique' ? 'pocket' : cutKind} onChange={(k) => { setCutKind(k); setArmedKey(null); }}
             options={[{ id: 'pocket', label: 'Pocket' }, { id: 'patch', label: 'Patch' }, { id: 'strap', label: 'Strap' }]} />
           <p className="group-note">{KIND_BLURB[cutKind === 'applique' ? 'pocket' : cutKind]}</p>
@@ -248,6 +290,7 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
         <Row label="Tag text" htmlFor="tag-text-new"><input id="tag-text-new" className="txt" maxLength={24} value={tag.text} onChange={(e) => setTag({ ...tag, text: e.target.value })} /></Row>
         <button className="btn wide" disabled={!host} onClick={() => addTo(tagAttachment(tag))}><Icon name="plus" size={16} /> Add this tag{host ? ` to ${targetLabel}` : ''}</button>
       </Disclosure>}
+
 
       {trims && <Disclosure id="design-hardware" title="Hardware" icon="hardware" openFirst>
         <p className="group-note">Metal or plastic trims fixed through the fabric. Each one you place is its own, so you can design every button differently.</p>
@@ -319,7 +362,15 @@ export default function DesignLibrary({ mode = 'insert' }: { mode?: 'insert' | '
       </InsertSection>
 
       <Disclosure id={trims ? 'trims-list' : 'design-list'} title={trims ? 'Trims on this garment' : 'Designs on this garment'} icon="layers" count={listed.length}>
-        {listed.length === 0 && <div className="group-note">Nothing added yet. Click a tile to add it to the selected piece, or drag it onto the garment.</div>}
+        
+        {listed.length === 0 && <div className="group-note">{trims ? 'No trims on this garment. To add buttons, open Buttons above, pick a piece and press Add. Buttonholes and other hardware are in the sections below it.' : 'Nothing added yet. Click a tile to add it to the selected piece, or drag it onto the garment.'}</div>}
+        {trims && (project.edits?.removedBuiltins?.length ?? 0) > 0 && (
+          <div className="frow">
+            <button className="btn small" onClick={() => { const n = useStore.getState().restoreStyleTrims(); setRestored(n ? `Brought back ${n} style ${n === 1 ? 'trim' : 'trims'}.` : 'Nothing to bring back.'); window.setTimeout(() => setRestored(null), 3500); }}>Restore style trims</button>
+            <small>{project.edits!.removedBuiltins!.length} removed from the style</small>
+          </div>
+        )}
+        {restored && <div className="group-note" role="status">{restored}</div>}
         <ul className="att-list">
           {listed.map((a) => {
             const parent = atts.find((q) => q.id === a.pieceId);

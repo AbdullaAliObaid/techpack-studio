@@ -13,6 +13,9 @@ import { productionChecks, constructionReport, fabricBom, noteRows, trimDetails,
 import { buildTechPack } from '../src/lib/exportPdf';
 import { pointsOfInterest, includedPois } from '../src/lib/poi';
 import type { Attachment } from '../src/data/edits';
+import { restoreBuiltins, matchingTrim } from '../src/data/construction';
+import { useStore } from '../src/store';
+import { hardwareMarks } from '../src/lib/specs';
 
 let fails = 0;
 const ok = (name: string, cond: boolean, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'ok  ' : 'FAIL'} ${name}${extra ? '  ' + extra : ''}`); };
@@ -170,6 +173,31 @@ async function main() {
     const old = { ...freshProject('jeans', 'Old'), edits: { attachments: [], customSeams: [] } } as never;
     const m = migrateProject(old);
     ok('old project: missing edit lists are filled in', Array.isArray(m.edits?.pleats) && Array.isArray(m.edits?.detachedSeams));
+  }
+  {
+    // style trims can be removed, stay removed through a migrate, and come back with Restore
+    const po = freshProject('polo', 'P');
+    const btn = po.edits!.attachments.find((a) => a.builtin && a.name === 'Placket buttons')!;
+    const hole = matchingTrim(po.edits!.attachments, btn);
+    ok('polo has builtin buttons and a matching buttonhole', !!btn && !!hole);
+    useStore.setState({ project: po, past: [], future: [] });
+    useStore.getState().removeAttachment(btn.id);
+    useStore.getState().removeMatch();
+    const p1 = useStore.getState().project;
+    ok('removed trims are remembered', p1.edits!.removedBuiltins!.length === 2 && !p1.edits!.attachments.some((a) => a.id === btn.id || a.id === hole!.id));
+    const m = migrateProject(JSON.parse(JSON.stringify(p1)));
+    ok('removed builtin button survives migrateProject', !m.edits!.attachments.some((a) => a.builtin && a.name === 'Placket buttons'));
+    ok('gone from the trims report', !trimsReport(m.pieces, m.edits, m.garment).some((r) => r.kind === 'hardware' && r.item === 'Button') && !trimsReport(m.pieces, m.edits, m.garment).some((r) => r.kind === 'buttonhole'));
+    const plk = m.pieces.find((q) => q.role === 'placket')!;
+    ok('gone from the simulation hardware list', !hardwareMarks(plk, m.edits).some((h) => h.type === 'button' || h.type === 'buttonhole'));
+    const un = (useStore.getState().undo(), useStore.getState().project);
+    ok('one undo step brings both back', un.edits!.attachments.some((a) => a.id === btn.id) && un.edits!.attachments.some((a) => a.id === hole!.id));
+    useStore.getState().redo();
+    const n = useStore.getState().restoreStyleTrims();
+    const p2 = useStore.getState().project;
+    ok('restore brings the style trims back', n === 2 && !p2.edits!.removedBuiltins!.length && p2.edits!.attachments.filter((a) => a.builtin && a.name.startsWith('Placket')).length === 2);
+    ok('restored trims are in the trims report again', trimsReport(p2.pieces, p2.edits, p2.garment).some((r) => r.kind === 'hardware' && r.item === 'Button'));
+    ok('restore twice adds nothing', restoreBuiltins(p2) === p2 || restoreBuiltins(p2).edits!.attachments.length === p2.edits!.attachments.length);
   }
   console.log('\nall share and tech pack checks passed');
 }

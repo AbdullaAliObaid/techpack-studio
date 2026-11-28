@@ -312,6 +312,11 @@ export interface Edits {
    * deleted them does not get them back on load; projects from before have none and get them once (withBuiltins).
    */
   builtin?: number;
+  /**
+   * style trims the user removed, one key per trim (builtinKey in src/data/construction.ts), so "Restore style trims"
+   * knows what to bring back and a project that is migrated again does not remake them.
+   */
+  removedBuiltins?: string[];
 }
 
 /**

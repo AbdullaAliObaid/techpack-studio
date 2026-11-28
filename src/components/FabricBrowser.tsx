@@ -8,7 +8,7 @@ import { FABRICS, fabricById, stretchLabel, type FabricPattern } from '../data/f
 import type { PieceFabric } from '../data/presets';
 import { fabricDataUrl } from '../lib/textures';
 import { categoryOf, colourName, fabricCategories, fabricHex, patternList, patternTile, svgUrl, swatchStyle, PALETTE } from './editHelpers';
-import { ColorField, Disclosure, Seg } from './controls';
+import { ColorField, Disclosure, SavedColours, Seg } from './controls';
 import Icon from './Icon';
 import MotifSheet from './MotifSheet';
 import { customPatternUrl, SHEEN_LABEL } from './editHelpers';
@@ -109,6 +109,7 @@ export default function FabricBrowser({ value, onChange, idKey, part, targetLabe
             <span className="fb-name">Custom colour</span>
           </div>
         </div>
+        <SavedColours label="Fabric colour" value={curHex} onChange={(h) => { setHex(h); setHexText(''); }} />
         {value.hex !== undefined && (
           <div className="fb-hex">
             <label htmlFor={`hex-${idKey}`}>Colour code</label>
