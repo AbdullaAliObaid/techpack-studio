@@ -2,6 +2,7 @@
 // bands and notes, and on the Design artboard for layers. One app styled menu, keyboard driven (arrows, Enter, Escape).
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
+import { matchingTrim } from '../data/construction';
 import { uid } from '../lib/units';
 import { copiesOf } from './sides';
 import { allPointsOf } from './multi';
@@ -36,6 +37,7 @@ function attachItems(id: string): MenuItem[] {
   if (!a) return [];
   const host = st.project.pieces.find((p) => p.id === a.pieceId);
   const pair = !!host && copiesOf(st.project.garment, host) === 2 && a.instance !== undefined;
+  const partner = matchingTrim(st.project.edits?.attachments ?? [], a);
   const trim = a.kind === 'hardware' || a.kind === 'label' || a.kind === 'pocket' || a.kind === 'strap';
   return [
     { label: 'Edit', icon: 'select', onClick: () => { go(trim ? 'trims' : 'design', { designMode: 'insert', designTab: 'edit', selAttachment: id, tool: 'select' }); } },
@@ -46,6 +48,7 @@ function attachItems(id: string): MenuItem[] {
     { label: 'Send back', icon: 'down', onClick: () => stack(id, -1) },
     { sep: true, label: '' },
     { label: 'Delete', icon: 'trash', danger: true, hint: 'Del', onClick: () => { st.removeAttachment(id); st.set({ selAttachment: null }); } },
+    ...(partner ? [{ label: a.buttonhole ? 'Delete with its button' : 'Delete with its buttonhole', icon: 'trash', danger: true, onClick: () => { st.removeAttachment(id); st.removeMatch(); } }] : []),
   ];
 }
 

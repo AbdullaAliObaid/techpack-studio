@@ -452,10 +452,60 @@ export function styleEdits(style: StyleId, pieces: Piece[], body?: Pick<Body, 's
   return { ...edits, attachments: [...builtinDetails(style, pieces, body), ...edits.attachments], builtin: BUILTIN_VERSION };
 }
 
+/** Stable name of a style trim (piece role, name, side), kept in Edits.removedBuiltins when the trim is removed. */
+export const builtinKey = (a: Pick<Attachment, 'pieceId' | 'name' | 'instance'>, pieces: Piece[]) =>
+  `${pieces.find((p) => p.id === a.pieceId)?.role ?? '?'}|${a.name}|${a.instance ?? ''}`;
+
 /** A project from before style details were attachments gets them once; one that has them (or had them deleted) is left alone. */
 export function withBuiltins<T extends ProjectLike>(p: T): T {
   if (p.edits?.builtin !== undefined) return p;
-  return { ...p, edits: styleEdits(p.garment, p.pieces, p.body, p.edits ?? EMPTY_EDITS) };
+  const e = styleEdits(p.garment, p.pieces, p.body, p.edits ?? EMPTY_EDITS);
+  const gone = [...(p.edits?.removedBuiltins ?? [])];
+  if (!gone.length) return { ...p, edits: e };
+  // trims the user already removed stay removed
+  const keep = e.attachments.filter((a) => {
+    if (!a.builtin) return true;
+    const i = gone.indexOf(builtinKey(a, p.pieces));
+    if (i < 0) return true;
+    gone.splice(i, 1);
+    return false;
+  });
+  return { ...p, edits: { ...e, attachments: keep } };
+}
+
+/**
+ * The style trims that were removed, made again from the drafted pattern (positions follow the current body and fit).
+ * Trims still on the garment are left alone: a restored belt loop is one that is not already near an existing one.
+ */
+export function restoreBuiltins<T extends ProjectLike>(p: T): T {
+  const e = p.edits ?? EMPTY_EDITS;
+  const gone = [...(e.removedBuiltins ?? [])];
+  if (!gone.length) return p;
+  const have = e.attachments.filter((a) => a.builtin);
+  const fresh = builtinDetails(p.garment, p.pieces, p.body);
+  const used = new Set<string>();
+  for (const h of have) {
+    const k = builtinKey(h, p.pieces);
+    let best: Attachment | null = null, bd = Infinity;
+    for (const f of fresh) if (!used.has(f.id) && builtinKey(f, p.pieces) === k) { const d = Math.hypot(f.x - h.x, f.y - h.y); if (d < bd) { bd = d; best = f; } }
+    if (best) used.add(best.id);
+  }
+  const add: Attachment[] = [];
+  for (const f of fresh) {
+    if (used.has(f.id)) continue;
+    const i = gone.indexOf(builtinKey(f, p.pieces));
+    if (i < 0) continue;
+    gone.splice(i, 1);
+    add.push(f);
+  }
+  return { ...p, edits: { ...e, attachments: [...e.attachments, ...add], removedBuiltins: gone } };
+}
+
+/** The buttonhole that takes this button, or the button that fills this buttonhole (same row of the same piece). */
+export function matchingTrim(atts: Attachment[], a: Attachment): Attachment | undefined {
+  if (a.kind !== 'hardware' || a.hardware?.type !== 'button') return undefined;
+  return atts.find((b) => b.id !== a.id && b.kind === 'hardware' && b.hardware?.type === 'button' && !!b.buttonhole !== !!a.buttonhole && b.pieceId === a.pieceId
+    && (b.hardware?.count ?? 1) === (a.hardware?.count ?? 1) && Math.abs(Math.abs(b.x) - Math.abs(a.x)) < 0.3 && Math.abs(b.y - a.y) < 0.3);
 }
 
 /**

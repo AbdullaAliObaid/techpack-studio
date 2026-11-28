@@ -19,7 +19,7 @@ import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorks
 import type { Band } from './data/edits';
 import { addStroke, extendStroke, newStroke, removeLast, EMPTY_FINISH } from './data/finish';
 import { deleteOutfit as removeSavedOutfit, listOutfits, listProjects, saveOutfit, saveProject } from './lib/projects';
-import { buttonholeSet, regradeBuiltins, styleEdits, upgradeFront, withBuiltins, type ButtonholeOpts } from './data/construction';
+import { builtinKey, buttonholeSet, matchingTrim, regradeBuiltins, restoreBuiltins, styleEdits, upgradeFront, withBuiltins, type ButtonholeOpts } from './data/construction';
 
 /** undo history entry: pattern pieces plus garment edits */
 export interface Snapshot { pieces: Piece[]; edits?: Edits; notes?: Note[] }
@@ -353,7 +353,13 @@ export interface State {
   /** add an outline point on segment seg at t; returns the new point's index */
   insertAttachmentPoint: (id: string, seg: number, t: number) => number | null;
   removeAttachmentPoint: (id: string, index: number) => void;
-  removeAttachment: (id: string) => void;
+  /** deletes a trim or design (a style trim is remembered in Edits.removedBuiltins); a button or buttonhole with a partner sets removedMatch so the UI can offer to remove it too */
+  removeAttachment: (id: string, replaced?: boolean) => void;
+  /** the partner (buttonhole or button) of the trim just removed, offered for removal in the same undo step */
+  removedMatch: { id: string; name: string; removed: string } | null;
+  removeMatch: () => void;
+  /** brings back the style trims that were removed (Edits.removedBuiltins) */
+  restoreStyleTrims: () => number;
   addCustomSeam: (s: Omit<CustomSeam, 'id'>) => string;
   removeCustomSeam: (id: string) => void;
   setSeamAttached: (builtinId: string, attached: boolean) => void;
@@ -673,7 +679,7 @@ export const useStore = create<State>((set, get) => {
 
     set: (s) => set(s),
 
-    commit: () => set((s) => ({ past: [...s.past.slice(-99), snap(s.project)], future: [] })),
+    commit: () => set((s) => ({ past: [...s.past.slice(-99), snap(s.project)], future: [], removedMatch: null })),
 
     undo: () => {
       const { past, future, project } = get();
@@ -1056,11 +1062,39 @@ export const useStore = create<State>((set, get) => {
       get().commit();
       get().updateAttachment(id, patch);
     },
-    removeAttachment: (id) => {
+    removedMatch: null,
+    removeAttachment: (id, replaced) => {
+      const a0 = get().project.edits?.attachments.find((a) => a.id === id);
+      const m = a0 && matchingTrim(get().project.edits!.attachments, a0);
       get().commit();
+      const pieces = get().project.pieces;
       // designs sewn onto this attachment go with it
-      setEdits((e) => ({ ...e, attachments: e.attachments.filter((a) => a.id !== id && a.pieceId !== id) }));
-      set((s) => ({ selAttachment: s.selAttachment === id ? null : s.selAttachment }));
+      setEdits((e) => ({
+        ...e,
+        attachments: e.attachments.filter((a) => a.id !== id && a.pieceId !== id),
+        ...(a0?.builtin && !replaced ? { removedBuiltins: [...(e.removedBuiltins ?? []), builtinKey(a0, pieces)] } : {}),
+      }));
+      set((s) => ({ selAttachment: s.selAttachment === id ? null : s.selAttachment, removedMatch: m && a0 ? { id: m.id, name: m.name, removed: a0.name } : null }));
+    },
+    removeMatch: () => {
+      const m = get().removedMatch;
+      if (!m) return;
+      const b = get().project.edits?.attachments.find((a) => a.id === m.id);
+      const pieces = get().project.pieces;
+      // same undo step as the removal just before it: no new snapshot
+      if (b) setEdits((e) => ({
+        ...e,
+        attachments: e.attachments.filter((a) => a.id !== m.id),
+        ...(b.builtin ? { removedBuiltins: [...(e.removedBuiltins ?? []), builtinKey(b, pieces)] } : {}),
+      }));
+      set((s) => ({ removedMatch: null, selAttachment: s.selAttachment === m.id ? null : s.selAttachment }));
+    },
+    restoreStyleTrims: () => {
+      const before = get().project.edits?.attachments.length ?? 0;
+      const next = restoreBuiltins(get().project);
+      const n = (next.edits?.attachments.length ?? 0) - before;
+      if (n > 0) { get().commit(); setEdits(() => next.edits!); }
+      return n;
     },
     addCustomSeam: (cs) => {
       const id = uid();

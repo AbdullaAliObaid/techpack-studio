@@ -83,7 +83,7 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
       const off = (i - (n - 1) / 2) * gap;
       ids.push(st.addAttachment({ ...base, name: `${att.name.replace(/ \d+$/, '')} ${i + 1}`, x: att.x + off * Math.cos(r), y: att.y + off * Math.sin(r), w: hw.size, h: hw.size, outline: hw.outline ? att.outline : 'circle', hardware: { ...hw, count: 1, spacing: undefined } }));
     }
-    st.removeAttachment(att.id);
+    st.removeAttachment(att.id, true);
     set({ selAttachment: ids[0] });
   };
 
@@ -109,7 +109,7 @@ export default function AttachmentEditor({ att }: { att: Attachment }) {
           <small>{KIND_LABEL[att.kind]}{parent ? `, on ${parent.name}` : host ? `, on ${host.name}` : ''}</small>
         </div>
         <button className="icon-btn sm" aria-label={`Make a copy of ${att.name}`} title="Make a copy to edit separately" onClick={() => duplicateAttachment(att.id)}><Icon name="copy" size={16} /></button>
-        <button className="icon-btn sm danger" aria-label={`Delete ${att.name}`} title="Delete" onClick={() => removeAttachment(att.id)}><Icon name="trash" size={16} /></button>
+        <button className="icon-btn sm danger" aria-label={`Delete ${att.name}${att.builtin ? ', a style trim' : ''}`} title="Delete" onClick={() => removeAttachment(att.id)}><Icon name="trash" size={16} /></button>
         <button className="btn small" onClick={() => set({ selAttachment: null, selLayer: null, designTab: 'add' })}>Done</button>
       </div>
 
