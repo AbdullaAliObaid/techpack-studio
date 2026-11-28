@@ -336,7 +336,7 @@ export interface SeamRow {
 export function seamReport(type: GarmentType, pieces: Piece[], edits?: Edits): SeamRow[] {
   reportEdits = edits;
   try {
-    const rows = baseSeamRows(type, pieces);
+    const rows = [...baseSeamRows(type, pieces.filter((p) => !p.splitOf)), ...splitSeamRows(type, pieces)];
     if (!edits) return rows;
     const off = new Set(edits.detachedSeams);
     const out = rows.filter((r) => !r.seams || !r.seams.every((id) => off.has(id)));
@@ -354,6 +354,35 @@ export function seamReport(type: GarmentType, pieces: Piece[], edits?: Edits): S
   } finally {
     reportEdits = undefined;
   }
+}
+
+/**
+ * Seams of the sides edited on their own (src/data/split.ts): every built-in seam that runs along a split copy, walked
+ * with that copy's own outline (the rows above walk the other side). A seam of two halves (both halves of a sleeve cap)
+ * is one row, with the intended ease of the row above that covers it.
+ */
+function splitSeamRows(type: GarmentType, pieces: Piece[]): SeamRow[] {
+  const splits = pieces.filter((p) => p.splitOf);
+  if (!splits.length) return [];
+  const own = (e: { pieceId: string; instance?: number }) => splits.find((s) => s.splitOf === e.pieceId && s.side === (e.instance ?? 0));
+  const main = pieces.filter((p) => !p.splitOf);
+  const len = (list: { pieceId: string; fromId: string; toId: string; instance?: number }[]) => list.reduce((t, e) => {
+    const p = own(e) ?? main.find((q) => q.id === e.pieceId);
+    return t + (p ? sewnLength(p, e.fromId, e.toId, reportEdits) : 0);
+  }, 0);
+  const base = baseSeamRows(type, main);
+  const groups = new Map<string, { label: string; ids: string[]; a: Parameters<typeof len>[0]; b: Parameters<typeof len>[0]; on: Piece }>();
+  for (const bs of builtinSeams(migrateGarment(type), main, { collar: 'down' })) {
+    const on = [...bs.a, ...bs.b].map(own).find((s): s is Piece => !!s);
+    if (!on) continue;
+    const k = bs.group ?? bs.id;
+    const g = groups.get(k) ?? groups.set(k, { label: bs.group ? bs.label.replace(/, (front|back)$/, '') : bs.label, ids: [], a: [], b: [], on }).get(k)!;
+    g.ids.push(bs.id); g.a.push(...bs.a); g.b.push(...bs.b);
+  }
+  return [...groups.values()].map((g) => {
+    const ease = base.find((r) => r.seams?.some((id) => g.ids.includes(id)))?.ease;
+    return { label: `${g.label} (${g.on.name}, edited on its own)`, a: len(g.a), b: len(g.b), ...(ease !== undefined ? { ease } : {}), seams: g.ids };
+  });
 }
 
 export interface AttachmentRow {

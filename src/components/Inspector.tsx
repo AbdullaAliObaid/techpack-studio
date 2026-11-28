@@ -1,4 +1,5 @@
 // Sections the workspace panels share: inside and outside card, fit, point and piece numbers, the review tables.
+import { canSplit } from '../data/split';
 import { useStore, usePick } from '../store';
 import type { PieceFabric } from '../data/presets';
 import { fabricById } from '../data/fabrics';
@@ -133,15 +134,30 @@ export function PointCard() {
 
 /** Measurements of the selected piece (or of the whole garment when nothing is selected), typeable. */
 export function PieceNumbers() {
-  const { project, units, selPiece } = usePick('project', 'units', 'selPiece');
+  const { project, units, selPiece, selInstance, splitSide, matchOtherSide } = usePick('project', 'units', 'selPiece', 'selInstance', 'splitSide', 'matchOtherSide');
   const field = useField();
   const piece = project.pieces.find((p) => p.id === selPiece);
   const g = garmentSpecs(project.garment, project.pieces);
+  // a copy of a piece cut twice can be split off and edited on its own (src/data/split.ts)
+  const side = selInstance ?? 0;
+  const canSplitHere = !!piece && canSplit(project.garment, piece, side) && selInstance !== null;
   return (
     <>
       {piece && (
         <Disclosure id="shape-piece" title={piece.name} icon="pattern" openFirst>
-          <div className="sublabel"><span className="muted">{fabricById(piece.fabric.id).name} · cut {piece.cut}{copiesOf(project.garment, piece) === 2 ? ', right and left' : ''}</span></div>
+          <div className="sublabel"><span className="muted">{fabricById(piece.fabric.id).name} · cut {piece.cut}{copiesOf(project.garment, piece) === 2 ? ', right and left' : ''}{piece.splitOf ? ', edited on its own' : ''}</span></div>
+          {canSplitHere && (
+            <div className="row">
+              <button className="btn small" onClick={() => splitSide(piece.id, side)}>Edit this side only</button>
+            </div>
+          )}
+          {piece.splitOf && (
+            <div className="row">
+              <button className="btn small" onClick={() => matchOtherSide(piece.id)}>Match other side</button>
+            </div>
+          )}
+          {canSplitHere && <p className="fit-note">Change the {side === 1 ? 'right' : 'left'} side without changing the other. Seams stay the same.</p>}
+          {piece.splitOf && <p className="fit-note">This side has its own shape. Match other side puts it back to a mirror of the other side.</p>}
           {pieceSpecs(piece, project.edits).map((s) => (
             <div className="kv" key={s.label}><span>{s.label}</span>{piece.specs.some((d) => d.label === s.label) ? field(s.value, { kind: 'spec', pieceId: piece.id, label: s.label }, `${piece.name} ${s.label}`) : <b>{fmt(s.value, units)}</b>}</div>
           ))}

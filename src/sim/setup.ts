@@ -12,6 +12,7 @@ import { attachmentPolygons } from '../lib/shapes';
 import { EMPTY_EDITS, type EdgeRef, type Edits, type Face, type Hardware, type Pleat } from '../data/edits';
 import { labelMaterial, labelSewing, labelSize, type LabelMaterial } from '../data/labels';
 import { builtinSeams, collarRoll, collarState, faceOf } from './seams';
+import { foldSplits } from '../data/split';
 import { pleatIntake } from '../lib/specs';
 import { bodyFrame, ellipseCirc, ellipseFromCirc, hullAt, type Body, type BodyFrame } from '../three/body';
 import { BodyCollider } from './collider';
@@ -31,6 +32,8 @@ export interface PanelInst {
    * mesh.uv of an attachment is in the attachment's own coords (cm, centred, before rotation).
    */
   attach?: { id: string; kind: ClothKind; host: number; face: Face };
+  /** this copy is a side edited on its own (src/data/split.ts): the id of that split piece */
+  ownId?: string;
 }
 
 /** attachments that are cloth of their own (embroidery, prints and hardware add no cloth) */
@@ -452,7 +455,9 @@ function mechanics(p: Piece, style: Style, opts: { collarUp?: boolean; legacyCol
   return { stretch, sc: stretch * 0.3 * scK * H2, bc: (0.05 / (bend * bend)) * H2, shaped, plate, gather, foldBend };
 }
 
-export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing = 2.2, collider?: ClothSim['collider'], edits: Edits = EMPTY_EDITS): Garment3D | null {
+export function assemble(type: GarmentType, pieces0: Piece[], body: Body, spacing = 2.2, collider?: ClothSim['collider'], edits0: Edits = EMPTY_EDITS): Garment3D | null {
+  // sides edited on their own (src/data/split.ts): sewn and placed as the copy they stand in for, meshed from their own outline
+  const { pieces, edits, own } = foldSplits(pieces0, edits0);
   const style = styleById(migrateGarment(type));
   const fam = style.family;
   const f = bodyFrame(body);
@@ -476,9 +481,10 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   let count = 0;
   /** place: where each pattern point starts; shape: the rest shape of a pre-shaped part (defaults to place) */
   const add = (piece: Piece, mirror: boolean, place: Placer, mesh?: PanelMesh, shape?: Placer) => {
-    const m = mesh ?? meshPanel(piece.points, spacing);
     const instance = insts.filter((q) => q.piece === piece).length;
-    insts.push({ piece, mesh: m, offset: count, mirror, place, shape, instance });
+    const side = own.get(piece.id)?.get(instance);
+    const m = side ? meshPanel(side.points, spacing) : mesh ?? meshPanel(piece.points, spacing);
+    insts.push({ piece, mesh: m, offset: count, mirror, place, shape, instance, ...(side ? { ownId: side.id } : {}) });
     count += m.uv.length;
     return insts[insts.length - 1];
   };
@@ -1031,7 +1037,8 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     return (q: Pt): Pt => ({ x: x + q.x * c - q.y * s, y: y + q.x * s + q.y * c });
   };
   /** host copies an edit goes on: the chosen copy, or every copy when none is chosen */
-  const hostsOf = (pieceId: string, instance?: number) => instance !== undefined ? [instOf(pieceId, instance)].filter((q): q is (typeof insts)[number] => !!q) : copiesOf(pieceId);
+  // every copy: the copies still cut as the piece (a side edited on its own carries only what is put on it)
+  const hostsOf = (pieceId: string, instance?: number) => instance !== undefined ? [instOf(pieceId, instance)].filter((q): q is (typeof insts)[number] => !!q) : copiesOf(pieceId).filter((q) => !q.ownId);
   const mirrorLocal = (H: PanelInst, q: Pt): Pt => (H.mirror ? { x: -q.x, y: q.y } : q);
   const attachSpecs: { id: string; kind: ClothKind; piece: Piece; local: Pt; host: string; instance?: number; xf: (q: Pt) => Pt; w: number; h: number; face: Face; tag?: { mat: LabelMaterial; sew: ReturnType<typeof labelSewing> }; stack: Stack }[] = [];
   for (const a0 of edits.attachments) {

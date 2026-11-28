@@ -11,6 +11,7 @@ import { fromUnit, uid, type Units } from './lib/units';
 import { pleatIntakeOf, EMPTY_EDITS, ZERO_POSE, type Face, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
 import { FEMALE_BODY, MALE_BODY } from './three/body';
 import { applyMoves, linkedMoves } from './data/symmetry';
+import { rejoinSide, splitSide } from './data/split';
 import { setMeasurement, targetKey, type MeasureTarget } from './data/measureEdit';
 import { fitTable, garmentSpecs, pieceSpecs } from './lib/specs';
 import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorkspaceMap, defaultBand } from './components/designDoc';
@@ -357,6 +358,10 @@ export interface State {
   addCustomPiece: (name: string, points: Pt[], placement: Placement) => string;
   updatePiece: (id: string, patch: Partial<Piece>) => void;
   removePiece: (id: string) => void;
+  /** "Edit this side only": copy `instance` of a piece cut twice becomes a piece of its own (src/data/split.ts); selects it */
+  splitSide: (pieceId: string, instance: number) => string | null;
+  /** "Match other side": a split side joins its piece again and takes the other side's shape; selects that copy */
+  matchOtherSide: (splitPieceId: string) => void;
   // --- body presets and posing ---
   setBodyPreset: (sex: 'male' | 'female') => void;
   customPose: CustomPose;
@@ -1081,7 +1086,26 @@ export const useStore = create<State>((set, get) => {
       return id;
     },
     updatePiece: (id, patch) => setPieces(get().project.pieces.map((p) => (p.id === id ? { ...p, ...patch } : p))),
+    splitSide: (pieceId, instance) => {
+      const { project } = get();
+      const r = splitSide(project.garment, project.pieces, project.edits ?? EMPTY_EDITS, pieceId, instance);
+      if (!r.id) return null;
+      get().commit();
+      set((s) => ({ project: { ...s.project, pieces: r.pieces, edits: r.edits, updatedAt: Date.now() }, selPiece: r.id, selInstance: null, selPoint: null, selMulti: [] }));
+      return r.id;
+    },
+    matchOtherSide: (splitPieceId) => {
+      const { project } = get();
+      const side = project.pieces.find((p) => p.id === splitPieceId)?.side ?? null;
+      const r = rejoinSide(project.pieces, project.edits ?? EMPTY_EDITS, splitPieceId);
+      if (!r.id) return;
+      get().commit();
+      set((s) => ({ project: { ...s.project, pieces: r.pieces, edits: r.edits, updatedAt: Date.now() }, selPiece: r.id, selInstance: side, selPoint: null, selMulti: [] }));
+    },
     removePiece: (id) => {
+      // a side edited on its own goes back to matching the other side; a piece goes with its split sides
+      if (get().project.pieces.find((p) => p.id === id)?.splitOf) { get().matchOtherSide(id); return; }
+      for (const s of get().project.pieces.filter((p) => p.splitOf === id)) get().matchOtherSide(s.id);
       get().commit();
       setPieces(get().project.pieces.filter((p) => p.id !== id));
       setEdits((e) => ({

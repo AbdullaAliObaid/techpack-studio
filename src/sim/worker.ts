@@ -96,6 +96,10 @@ type BuildMsg =
   | { type: 'soft'; on: boolean };
 
 let attachments: Attachment[] = [];
+/** sides edited on their own (src/data/split.ts) in the last build: split piece id -> the piece and copy it stands in for */
+let splitOf = new Map<string, { id: string; side: number }>();
+/** attachments on a split side, as the cloth has them: on that copy of the piece it came from */
+const foldAtt = (list: Attachment[]) => (splitOf.size ? list.map((a) => { const s = splitOf.get(a.pieceId); return s ? { ...a, pieceId: s.id, instance: s.side } : a; }) : list);
 /** outfit: attachments per garment project (the outfit message brings them, an attachments message updates one) */
 const outfitAttachments = new Map<string, Attachment[]>();
 /** what the last posted stitching / hardware were built from; an attachments message rebuilds only what changed */
@@ -105,7 +109,7 @@ const hardwareOf = (list: Attachment[]) => list.filter((a) => a.kind === 'hardwa
 function postAttachDetails(force = true) {
   if (!G) return;
   const O = outfitOf(G);
-  const lists = O ? O.garments.map((g) => outfitAttachments.get(g.projectId) ?? []) : [attachments];
+  const lists = O ? O.garments.map((g) => outfitAttachments.get(g.projectId) ?? []) : [foldAtt(attachments)];
   const keys = { stitch: JSON.stringify(lists.map(stitchOf)), hardware: JSON.stringify(lists.map(hardwareOf)) };
   const stitch = force || keys.stitch !== sentKeys.stitch, hardware = force || keys.hardware !== sentKeys.hardware;
   sentKeys = keys;
@@ -113,7 +117,7 @@ function postAttachDetails(force = true) {
     // an outfit: per garment, on its own cloth, then shifted to the outfit's particle numbering
     const det = O
       ? mergeDetails(O.garments.map((g, k) => buildAttachmentDetails(g.own, lists[k])), O.garments.map((g) => g.start), O.sim.n)
-      : buildAttachmentDetails(G, attachments);
+      : buildAttachmentDetails(G, lists[0]);
     (self as unknown as Worker).postMessage(det, detailTransfers(det as never));
   } catch (err) {
     console.warn('attachment details failed', err);
@@ -121,7 +125,7 @@ function postAttachDetails(force = true) {
   if (hardware) try {
     // hardware trims: anchors on the host cloth per copy (instance), drawn by src/three/Hardware.tsx
     const one = (g: Garment3D, list: Attachment[]) => buildHardware(g, list, g.panelSign ? Array.from(g.panelSign) : outwardSignsHosted(g.panels, g.sim.pos));
-    const hw = O ? mergeHardware(O.garments.map((g, k) => one(g.own, lists[k])), O.garments.map((g) => g.start), O.sim.n) : one(G, attachments);
+    const hw = O ? mergeHardware(O.garments.map((g, k) => one(g.own, lists[k])), O.garments.map((g) => g.start), O.sim.n) : one(G, lists[0]);
     (self as unknown as Worker).postMessage(hw, hardwareTransfers(hw));
   } catch (err) {
     console.warn('hardware failed', err);
@@ -333,6 +337,7 @@ async function handle(m: BuildMsg) {
     for (const it of m.items) outfitAttachments.set(it.project.id, it.project.edits?.attachments ?? []);
     next = O;
   } else {
+    splitOf = new Map(m.pieces.filter((p) => p.splitOf).map((p) => [p.id, { id: p.splitOf!, side: p.side ?? 1 }]));
     next = assemble(m.garment, m.pieces, m.body, m.spacing, collider!, m.edits);
     if (next && m.warm && G && !outfitOf(G)) warmStart(next, G);
   }
@@ -400,14 +405,14 @@ async function handle(m: BuildMsg) {
   const pieceIndex = (id: string) => { let k = pieceIds.indexOf(id); if (k < 0) { k = pieceIds.length; pieceIds.push(id); } return k; };
   const vertexPiece = new Uint16Array(G.sim.n), vertexPatternUv = new Float32Array(G.sim.n * 2);
   const panels = G.panels.map((p) => {
-    const k = pieceIndex(p.attach?.id ?? p.piece.id);
+    const k = pieceIndex(p.attach?.id ?? p.ownId ?? p.piece.id);
     p.mesh.uv.forEach((q, i) => { vertexPiece[p.offset + i] = k; vertexPatternUv[(p.offset + i) * 2] = q.x; vertexPatternUv[(p.offset + i) * 2 + 1] = q.y; });
     // an attachment panel also says which copy of its host it sits on (0 right, 1 left)
     return { start: p.offset, count: p.mesh.uv.length, pieceIndex: k, instance: p.instance, mirror: p.mirror, role: p.piece.role, ...(p.attach ? { hostInstance: G!.panels[p.attach.host].instance, face: p.attach.face } : {}) };
   });
   const attachmentPanels = G.panels.flatMap((p) => p.attach ? [{
     attachmentId: p.attach.id, start: p.offset, count: p.mesh.uv.length, kind: p.attach.kind,
-    hostPieceId: G!.panels[p.attach.host].piece.id, hostInstance: G!.panels[p.attach.host].instance, face: p.attach.face,
+    hostPieceId: G!.panels[p.attach.host].ownId ?? G!.panels[p.attach.host].piece.id, hostInstance: G!.panels[p.attach.host].instance, face: p.attach.face,
   }] : []);
   //   garments            outfits only: per garment { projectId, style, category, layer, tuck, start, count (vertex range),
   //                       panelStart, panelCount (range of groups / panels / fabrics), indexStart, indexCount (range
