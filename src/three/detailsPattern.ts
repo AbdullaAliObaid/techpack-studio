@@ -40,11 +40,11 @@ function motifHash(p: FabricPattern): string {
     h = (a >>> 0).toString(36) + ':' + s.length;
     motifHashes.set(p.motif, h);
   }
-  return h + '|' + (p.layout ?? 'block') + '|' + (p.motifScale ?? 0.7) + '|' + (p.recolor ?? []).join(',');
+  return h + '|' + (p.layout ?? 'block') + '|' + (p.motifScale ?? 0.7) + '|' + (p.recolor ?? []).join(',') + '|' + (p.hidden ?? []).join(',');
 }
 
 /** cache key of a pattern's raster: everything but the rotation */
-export const patternKey = (p: FabricPattern) => JSON.stringify([p.id, p.colors, p.scale, motifHash(p)]);
+export const patternKey = (p: FabricPattern) => JSON.stringify([p.id, p.colors, p.scale, motifHash(p), p.opacity, p.offsetX, p.offsetY, p.hidden]);
 
 export function patternRaster(p: FabricPattern): Raster {
   const key = patternKey(p);

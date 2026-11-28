@@ -498,5 +498,58 @@ console.log('\n== thickness and layer stacks ==');
   pass(shell.thickness === 0.5 && shell.stacks.some((s) => s.startsWith(`${front.name}: Cotton Jersey + Leather lining, 1.7 mm`)) && !!lin && lin.fabric === 'Leather', `fabric BOM layers: ${shell.stacks.join('; ')} | lining row ${lin?.fabric}`);
 }
 
+// ---------------------------------------------------------------- pattern opacity, hidden and recoloured colours, match garment
+console.log('== pattern colour tools ==');
+{
+  const fx = await import('../src/data/patternFx');
+  const { patternEditsText } = await import('../src/data/patterns');
+  const base: FabricPattern = withPatternDefaults({ id: 'stripe', colors: ['#f4f4f1', '#7e9cc8'], scale: 1, rotation: 0 });
+  const plain = patternTile(base);
+  pass(JSON.stringify(withPatternDefaults(JSON.parse(JSON.stringify(base)))) === JSON.stringify(base) && !('opacity' in base) && !('hidden' in base), 'defaults add no new fields, old patterns unchanged');
+  pass(!plain.svg.includes('<g ') && plain.svg.includes('#7e9cc8'), 'untouched tile has no group and keeps its colour');
+  const hid = patternTile(withPatternDefaults({ ...base, hidden: [1] }));
+  pass(!hid.svg.includes('#7e9cc8') && hid.svg.split('#f4f4f1').length > 2, 'hidden colour is drawn as the base cloth colour');
+  pass(withPatternDefaults({ ...base, hidden: [0, 1, 7] }).hidden?.join() === '1,7', 'the ground cannot be hidden');
+  const rec = patternTile(withPatternDefaults({ ...base, colors: ['#f4f4f1', '#aa2200'] }));
+  pass(rec.svg.includes('#aa2200') && !rec.svg.includes('#7e9cc8'), 'recolour maps the colour');
+  const op = patternTile(withPatternDefaults({ ...base, opacity: 0.4 }));
+  pass(op.svg.includes('<g opacity="0.4">') && op.body.startsWith('<rect') && op.body.indexOf('#f4f4f1') < op.body.indexOf('<g opacity'), 'opacity fades the print over the base colour');
+  pass(withPatternDefaults({ ...base, opacity: 1 }).opacity === undefined, 'opacity 100% is stored as nothing');
+  const off = patternTile(withPatternDefaults({ ...base, offsetX: 0.25 }));
+  pass((off.svg.match(/translate/g) ?? []).length === 2 && off.size[0] === plain.size[0], 'offset wraps round and keeps the tile size');
+  const tart = patternTile(withPatternDefaults({ id: 'tartan', colors: ['#1f2a44', '#2f4a3a', '#7a1f2b', '#e0c36a'], scale: 10, rotation: 0, hidden: [2, 3] }));
+  pass(!tart.svg.includes('#7a1f2b') && !tart.svg.includes('#e0c36a') && tart.svg.includes('#2f4a3a'), 'several colours hide together');
+  // custom vector motif
+  const paths = [{ color: '#112233', path: 'M-0.4 -0.4L0.4 -0.4L0.4 0.4L-0.4 0.4Z' }, { color: '#cc3344', path: 'M-0.2 -0.2L0.2 -0.2L0.2 0.2L-0.2 0.2Z' }];
+  const cust: FabricPattern = { id: 'custom', colors: ['#eeeeee'], scale: 6, rotation: 0, motif: { aspect: 1, paths }, layout: 'block', motifScale: 0.7 };
+  pass(patternTile(withPatternDefaults({ ...cust, hidden: [1] })).svg.includes('fill="#eeeeee" fill-rule') && !patternTile(withPatternDefaults({ ...cust, hidden: [1] })).svg.includes('#cc3344'), 'hidden motif colour shows the base');
+  pass(patternTile(withPatternDefaults({ ...cust, recolor: ['#00ff00', '#cc3344'] })).svg.includes('#00ff00'), 'recoloured motif colour');
+  pass(patternEditsText({ ...base, opacity: 0.6, hidden: [1] }, (h) => h).includes('opacity 60%') && patternEditsText({ ...base, hidden: [1] }).includes('hidden #7e9cc8') && patternEditsText({ ...base, colors: ['#f4f4f1', '#aa2200'] }).includes('recoloured'), 'tech pack words list opacity, hidden and recoloured colours');
+  const bom = fabricInfo({ id: 'cotton', color: 0, pattern: { ...base, opacity: 0.6, hidden: [1] } });
+  pass(!!bom.adjust?.includes('opacity 60%') && !!bom.adjust.includes('hidden'), `BOM carries the adjustments: ${bom.adjust}`);
+
+  // palette of a picture, hide and recolour on pixels
+  const W = 8, px = new Uint8ClampedArray(W * W * 4);
+  for (let i = 0; i < W * W; i++) { const left = i % W < 4; px.set(left ? [200, 30, 30, 255] : [20, 20, 160, 255], i * 4); }
+  const bm = { w: W, h: W, data: px };
+  const pal = fx.quantizePalette(bm, 8);
+  pass(pal.length === 2, `picture palette has 2 colours: ${pal}`);
+  const redIdx = pal.findIndex((c) => fx.toOklch(c)[2] < 60 || fx.toOklch(c)[2] > 300);
+  const hidB = fx.applyColourEdits(bm, pal, [redIdx]);
+  pass(hidB.data[3] === 0 && hidB.data[(W - 1) * 4 + 3] === 255, 'hiding a picture colour makes its pixels transparent');
+  const recB = fx.applyColourEdits(bm, pal, [], pal.map((_, i) => (i === redIdx ? '#00ff00' : undefined)));
+  pass(recB.data[1] > 200 && recB.data[0] < 40 && recB.data[(W - 1) * 4 + 2] > 100, 'recolouring a picture colour changes only its pixels');
+  pass(fx.quantizePalette({ w: 4, h: 4, data: new Uint8ClampedArray(64) }, 8).length === 0, 'a clear picture has no colours');
+
+  // match garment: darkest to darkest, lightest to lightest
+  const cols = ['#f0e8d0', '#202840', '#7a8cb0'];
+  const garment = ['#101820', '#e8d8c0', '#406080'];
+  const m = fx.matchPalette(cols, garment);
+  pass(m[1] === '#101820' && m[0] === '#e8d8c0' && m[2] === '#406080', `match garment maps darkest to darkest: ${m}`);
+  pass(fx.matchPalette(['#222222', '#dddddd'], ['#336699']).length === 2 && fx.lightness(fx.matchPalette(['#222222', '#dddddd'], ['#336699'])[0]) < fx.lightness(fx.matchPalette(['#222222', '#dddddd'], ['#336699'])[1]), 'a one colour garment still keeps contrast');
+  const cw = fx.colourways(cols, garment);
+  pass(cw.length === 4 && cw.every((c) => c.colors.length === 3 && c.colors.every((h) => /^#[0-9a-f]{6}$/.test(h))) && cw.every((c) => fx.lightness(c.colors[1]) <= fx.lightness(c.colors[0])), 'four colourways keep the lightness order');
+}
+
 console.log(fails ? `\n${fails} FAILED` : '\nall fabric checks passed');
 process.exit(fails ? 1 : 0);
