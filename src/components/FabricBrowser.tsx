@@ -11,6 +11,8 @@ import { categoryOf, colourName, fabricCategories, fabricHex, patternList, patte
 import { ColorField, Disclosure, SavedColours, Seg } from './controls';
 import Icon from './Icon';
 import MotifSheet from './MotifSheet';
+import { PatternAdjust, PatternColours, YourMotifs } from './PatternTools';
+import { useStore } from '../store';
 import { customPatternUrl, SHEEN_LABEL } from './editHelpers';
 import type { PieceFabric as PF } from '../data/presets';
 
@@ -139,6 +141,7 @@ function PatternSection({ value, onChange, idKey, bare, targetLabel }: { value: 
     onChange(p ? { ...rest, pattern: p } : rest);
   };
   const [sheet, setSheet] = useState(false);
+  const project = useStore((s) => s.project);
   const choose = (id: string) => {
     if (id === 'solid') return set(null);
     if (id === 'custom') return setSheet(true);
@@ -169,19 +172,24 @@ function PatternSection({ value, onChange, idKey, bare, targetLabel }: { value: 
           );
         })}
       </div>
+      <YourMotifs cur={cur} ground={ground} fabricId={value.id} onApply={(p) => set(p)} />
       {sheet && <MotifSheet value={value} onClose={() => setSheet(false)} target={targetLabel ? { label: targetLabel, apply: onChange } : undefined} />}
       {cur?.id === 'custom' && (
-        <button className="btn wide" onClick={() => setSheet(true)}><Icon name="draw" size={16} /> Edit your motif</button>
+        <>
+          <button className="btn wide" onClick={() => setSheet(true)}><Icon name="draw" size={16} /> Edit your motif</button>
+          <PatternColours cur={cur} set={set} project={project} />
+          <PatternAdjust cur={cur} set={set} idKey={idKey} />
+        </>
       )}
       {cur && cur.id !== 'custom' && (
         <>
-          <div className="sublabel">Colours of this pattern</div>
-          {cur.colors.map((c, i) => (
-            <div className="frow stack" key={i}>
-              <span className="lbl">{colourName(i, cur.colors.length)}{i === 0 && c.toLowerCase() !== ground.toLowerCase() && <button className="btn small inline" onClick={() => set({ ...cur, colors: cur.colors.map((x, j) => (j === 0 ? ground : x)) })}>Use cloth colour</button>}</span>
-              <ColorField label={colourName(i, cur.colors.length)} value={c} colors={PALETTE} onChange={(hex) => set({ ...cur, colors: cur.colors.map((x, j) => (j === i ? hex : x)) })} />
-            </div>
-          ))}
+          <div className="sublabel">Base colour</div>
+          <div className="frow stack">
+            <span className="lbl">{colourName(0, cur.colors.length)}{cur.colors[0].toLowerCase() !== ground.toLowerCase() && <button className="btn small inline" onClick={() => set({ ...cur, colors: cur.colors.map((x, j) => (j === 0 ? ground : x)) })}>Use cloth colour</button>}</span>
+            <ColorField label={colourName(0, cur.colors.length)} value={cur.colors[0]} colors={PALETTE} onChange={(hex) => set({ ...cur, colors: cur.colors.map((x, j) => (j === 0 ? hex : x)) })} />
+          </div>
+          <PatternColours cur={cur} set={set} project={project} />
+          <PatternAdjust cur={cur} set={set} idKey={idKey} />
           <div className="frow stack">
             <label htmlFor={`pat-scale-${idKey}`}>Repeat size <b className="val">{cur.scale} cm</b></label>
             <input id={`pat-scale-${idKey}`} type="range" min={0.5} max={30} step={0.5} value={cur.scale} onChange={(e) => set({ ...cur, scale: Number(e.target.value) })} />

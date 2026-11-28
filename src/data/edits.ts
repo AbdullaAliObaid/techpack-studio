@@ -140,6 +140,8 @@ export interface Attachment {
   layers: ShapeLayer[];
   /** fabric for cloth attachments; defaults to the host piece fabric */
   fabric?: { id: string; color: number; hex?: string; pattern?: import('./fabrics').FabricPattern };
+  /** cloth attachments with a patterned fabric: lay the pattern out as on the host piece so it continues the body's repeat (default: starts at the attachment) */
+  alignPattern?: boolean;
   /**
    * cloth attachments: a lining or backing bagged inside the attachment (a leather lined pocket, a felt backed patch).
    * It adds its weight, thickness and stiffness to the attachment (src/data/stack.ts). Omitted: unlined.

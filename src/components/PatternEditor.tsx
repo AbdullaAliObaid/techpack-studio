@@ -21,7 +21,7 @@ import { builtinSeams } from '../sim/seams';
 import type { Attachment, EdgeRef, Pleat } from '../data/edits';
 import { symmetryGroups } from '../data/symmetry';
 import { ArtworkGroup, isCloth, outlineD } from './Artwork';
-import { FabricDefs, InsideDecor, InsideLegend } from './ChartInside';
+import { AttachmentCloth, FabricDefs, InsideDecor, InsideLegend } from './ChartInside';
 import { canHostDesigns, fabricHex, imageFileOf, linkedPoints, openPhoto, pleatMarks, rootPiece, runD, runIndices, runMid, scaleAttachment, scaleLimits } from './editHelpers';
 import { pickSeamPoint } from './ConstructionPanel';
 import { ATTACHMENT_MIME, isAttachment } from './designLibrary';
@@ -1185,7 +1185,8 @@ function PieceView(props: {
     const o = outlineD(a);
     const label = a.kind === 'label';
     const fabric = a.fabric ?? p.fabric;
-    const hex = label ? a.label?.color ?? '#f2f2f2' : fabricHex(fabric);
+    const patterned = !label && isCloth(a.kind) && !!a.fabric?.pattern && a.fabric.pattern.id !== 'solid';
+    const hex = label ? a.label?.color ?? '#f2f2f2' : patterned ? `url(#attfab-${a.id})` : fabricHex(fabric);
     const on = a.id === selAttachment;
     const fr = top ? frameOn(entry, a) : { x: a.x, y: a.y, rotation: a.rotation }; // on the left copy the position and turn mirror, the artwork does not flip
     const hw = a.kind === 'hardware';
@@ -1213,6 +1214,7 @@ function PieceView(props: {
               <circle r={px(10)} fill="var(--canvas)" fillOpacity={0.85} stroke="var(--outline)" strokeWidth={px(1.2)} pointerEvents="none" />
             </>
           )}
+          {patterned && <AttachmentCloth id={a.id} fabric={fabric} align={a.alignPattern ? fr : undefined} />}
           <g transform={hw && a.hardware?.type !== 'zipper' && Math.max(a.w, a.h) * k < 12 ? `scale(${px(12) / Math.max(a.w, a.h, 1e-3)})` : undefined}><ArtworkGroup a={a} fill={hex} /></g>
           {showLine && (
             hw || letters
