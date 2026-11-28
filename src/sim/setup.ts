@@ -461,7 +461,8 @@ function mechanics(p: Piece, style: Style, opts: { collarUp?: boolean; legacyCol
 
 export function assemble(type: GarmentType, pieces0: Piece[], body: Body, spacing = 2.2, collider?: ClothSim['collider'], edits0: Edits = EMPTY_EDITS): Garment3D | null {
   // sides edited on their own (src/data/split.ts): sewn and placed as the copy they stand in for, meshed from their own outline
-  const { pieces, edits, own } = foldSplits(pieces0, edits0);
+  // older projects (and outfit members) may lack newer edit lists such as pleats: fill them in before anything iterates
+  const { pieces, edits, own } = foldSplits(pieces0, { ...EMPTY_EDITS, ...Object.fromEntries(Object.entries(edits0 ?? {}).filter(([, v]) => v !== undefined)) } as Edits);
   const style = styleById(migrateGarment(type));
   const fam = style.family;
   const f = bodyFrame(body);

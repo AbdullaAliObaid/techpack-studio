@@ -482,7 +482,9 @@ export function designProject(d: Design, body: Body = DEFAULT_BODY): Project | n
 /** A saved project as this version opens it: split fronts for a front that buttons, the inside pieces of the newer draft,
  *  the style details as attachments once, the collar position stored. */
 export function migrateProject(p: Project): Project {
-  return withCollar(withBuiltins(upgradeFront({ ...p, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true })));
+  // projects saved before a list was added to Edits (pleats, detached seams...) lack it: fill every list in
+  const edits = p.edits ? { ...EMPTY_EDITS, ...Object.fromEntries(Object.entries(p.edits).filter(([, v]) => v !== undefined)) } as Edits : p.edits;
+  return withCollar(withBuiltins(upgradeFront({ ...p, edits, garment: migrateGarment(p.garment), linkPattern: p.linkPattern ?? true })));
 }
 
 /** Regrade every piece from one body to another, keeping the user's edits as offsets. */

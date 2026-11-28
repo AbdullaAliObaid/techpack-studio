@@ -6,7 +6,7 @@ const mem = new Map<string, string>();
   clear: () => mem.clear(), key: () => null, get length() { return mem.size; },
 } as Storage;
 
-import { freshProject, type Note, type Outfit } from '../src/store';
+import { freshProject, migrateProject, type Note, type Outfit } from '../src/store';
 import { exportShareFile, importShareFile, readShareFile, ShareError } from '../src/lib/share';
 import { BUILTIN_BODIES, deleteBodyPreset, listBodyPresets, listImported, listProjects, renameBodyPreset, saveBodyPreset } from '../src/lib/projects';
 import { productionChecks, constructionReport, fabricBom, noteRows, trimDetails, trimsReport } from '../src/lib/specs';
@@ -164,6 +164,12 @@ async function main() {
     const c1 = productionChecks(leathered, { ...j.edits!, washSequence: 'prewash' });
     ok('leather + denim: answer printed', c1[0]?.resolved === true && constructionReport('jeans', leathered, { ...j.edits!, washSequence: 'prewash' }).finishing.some((f) => f.includes('washed before the leather')));
     ok('plain denim: no wash question', productionChecks(j.pieces, j.edits).length === 0);
+  }
+  {
+    // projects saved before newer edit lists existed still open with every list filled in
+    const old = { ...freshProject('jeans', 'Old'), edits: { attachments: [], customSeams: [] } } as never;
+    const m = migrateProject(old);
+    ok('old project: missing edit lists are filled in', Array.isArray(m.edits?.pleats) && Array.isArray(m.edits?.detachedSeams));
   }
   console.log('\nall share and tech pack checks passed');
 }
