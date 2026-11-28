@@ -172,6 +172,7 @@ export function ContextMenuHost() {
   const ref = useRef<HTMLDivElement>(null);
   const press = useRef<{ t: number; x: number; y: number } | null>(null);
   useEffect(() => { show = setM; return () => { show = null; }; }, []);
+  const rdown = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => {
     const build = (target: EventTarget | null, x: number, y: number) => {
       // the chart captures the pointer, so the event target is the whole svg: ask what is really under the pointer
@@ -180,6 +181,8 @@ export function ContextMenuHost() {
       if (!t?.closest) return false;
       if (S().screen !== 'editor') return false;
       if (t.closest('.viewport canvas')) {
+        // a right button drag pans the camera: no menu when the pointer travelled
+        if (rdown.current && Math.hypot(x - rdown.current.x, y - rdown.current.y) > 5) return false;
         const cloth = clothItems(x, y);
         if (!cloth) return false;
         setM({ x, y, items: cloth });
@@ -195,7 +198,7 @@ export function ContextMenuHost() {
     const ctx = (e: MouseEvent) => { if (build(e.target, e.clientX, e.clientY)) e.preventDefault(); else setM(null); };
     // press and hold with a finger or Pencil
     const down = (e: PointerEvent) => {
-      if (e.pointerType === 'mouse') return;
+      if (e.pointerType === 'mouse') { if (e.button === 2) rdown.current = { x: e.clientX, y: e.clientY }; return; }
       window.clearTimeout(press.current?.t);
       const x = e.clientX, y = e.clientY, target = e.target;
       press.current = { x, y, t: window.setTimeout(() => { if (build(target, x, y)) navigator.vibrate?.(8); }, 550) };
