@@ -15,7 +15,7 @@ export default function FinishPanel() {
   const rows = finishRows(project.garment, project.pieces, f, project.edits?.attachments ?? []);
   const pick = (k: FinishKind) => set({ finishBrush: { ...b, k, r: KIND[k].defaultR }, tool: 'brush' });
   const kinds = (list: FinishKind[]) => (
-    <div className="agrid" role="group">
+    <div className="agrid" role="group" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
       {list.map((k) => (
         <button key={k} className={`btn small ${b.k === k ? 'primary' : ''}`} aria-pressed={b.k === k} title={KIND[k].hint} onClick={() => pick(k)}>{KIND[k].label}</button>
       ))}

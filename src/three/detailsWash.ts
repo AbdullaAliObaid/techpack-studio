@@ -217,22 +217,23 @@ export function paintWash(ctx: CanvasRenderingContext2D, hex: string, fin: WashF
     let ridge = 0;
     if (ridges.length) { let best = 9; for (let q = 0; q < ridges.length; q += 4) { const ax = ridges[q], ay = ridges[q + 1], dx = ridges[q + 2] - ax, dy = ridges[q + 3] - ay, L = dx * dx + dy * dy || 1e-9, t = Math.max(0, Math.min(1, ((X - ax) * dx + (Y - ay) * dy) / L)); best = Math.min(best, Math.hypot(ax + dx * t - X, ay + dy * t - Y)); } ridge = bell(best, 0.2, 0.28); }
     if (pp) {
-      const m = clamp01(0.5 + (cloud - 0.5) * 2.2 * pp.contrast);
+      const mixc = (cloud * 0.45 + cloud2 * 0.55 - 0.5) * 2.0; // mostly the finer mottle, a little of the broad cloud
+      const m = clamp01(0.5 + mixc * pp.contrast * 0.9);
       const zone = zoneAt(info, (X - left) / W, (Y - top) / H);
       const seamW = bell(f.dSeam[o], 0.35, 0.32) + 0.35 * bell(f.dSeam[o], 0.9, 0.5);
       const hemW = bell(f.dHem[o], 0.6, 0.8);
       const edgeW = bell(Math.min(f.dSeam[o], f.dHem[o]), 0.4, 1.4);
       const grain = info.family === 'denim' ? 0.7 + 0.6 * streak : 0.85 + 0.3 * streak;
       const speck = info.family === 'denim' ? (fine > 0.62 ? (fine - 0.62) * 2.2 : 0) : (fine > 0.58 ? (fine - 0.58) * 1.2 : 0);
-      let w = pp.base * (0.45 + 0.95 * m) * grain + speck * pp.base * 0.9;
+      let w = pp.base * (0.6 + 0.8 * m) * grain + speck * pp.base * 0.9;
       w += pp.zone * zone * (0.45 + 0.7 * cloud2) * (0.5 + pp.base);
       w += pp.edge * (info.family === 'denim' ? seamW * 0.9 + hemW * 0.8 : seamW * 0.5 + hemW * 0.9 + edgeW * 0.35) * (0.55 + 0.6 * cloud2);
       w += ridge * pp.edge * 0.55;
-      w = clamp01(w * (0.5 + 0.5 * ps) * ps ** 0.35);
+      w = clamp01(w * (0.5 + 0.5 * ps) * ps ** 0.35 * 0.85);
       // base stays deeper in the recesses: a darker band beside seam ridges and in the low parts of the mottling
       const rec = (pp.recess * (1 - m) * (1 - w) + 0.3 * pp.recess * bell(f.dSeam[o], 1.0, 0.3)) * (0.4 + ps);
       if (rec > 0.004) layers.push({ col: darkRgb, a: rec });
-      layers.push({ col: pLight, a: w * 0.9 });
+      layers.push({ col: pLight, a: w * 0.8 });
     }
     for (const kd of groups) {
       const mk = masks.get(kd)![o];
