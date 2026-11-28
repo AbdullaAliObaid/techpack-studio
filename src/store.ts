@@ -12,6 +12,7 @@ import { pleatIntakeOf, EMPTY_EDITS, ZERO_POSE, type Face, type Attachment, type
 import { FEMALE_BODY, MALE_BODY } from './three/body';
 import { applyMoves, linkedMoves } from './data/symmetry';
 import { rejoinSide, splitSide } from './data/split';
+import { insertOutlinePoint, moveOutlinePoint, outlineEditable, removeOutlinePoint } from './data/attachOutline';
 import { setMeasurement, targetKey, type MeasureTarget } from './data/measureEdit';
 import { fitTable, garmentSpecs, pieceSpecs } from './lib/specs';
 import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorkspaceMap, defaultBand } from './components/designDoc';
@@ -347,6 +348,11 @@ export interface State {
   /** the same inside fabric on every piece; null = every piece uses its outside fabric */
   setInsideAll: (fabric: { id: string; color: number } | null) => void;
   updateAttachment: (id: string, patch: Partial<Attachment>) => void;
+  /** reshape a pocket, patch or applique outline by its points (src/data/attachOutline.ts); symmetry mirrors the edit */
+  moveAttachmentPoint: (id: string, index: number, p: Pt) => void;
+  /** add an outline point on segment seg at t; returns the new point's index */
+  insertAttachmentPoint: (id: string, seg: number, t: number) => number | null;
+  removeAttachmentPoint: (id: string, index: number) => void;
   removeAttachment: (id: string) => void;
   addCustomSeam: (s: Omit<CustomSeam, 'id'>) => string;
   removeCustomSeam: (id: string) => void;
@@ -1028,6 +1034,26 @@ export const useStore = create<State>((set, get) => {
       setEdits((e) => ({ ...e, insideFabric: fabric ? Object.fromEntries(get().project.pieces.map((p) => [p.id, fabric])) : {} }));
     },
     updateAttachment: (id, patch) => setEdits((e) => ({ ...e, attachments: e.attachments.map((a) => (a.id === id ? { ...a, ...patch } : a)) })),
+    moveAttachmentPoint: (id, index, p) => {
+      const a = get().project.edits?.attachments.find((q) => q.id === id);
+      if (a && outlineEditable(a)) get().updateAttachment(id, moveOutlinePoint(a, index, p, get().symmetry));
+    },
+    insertAttachmentPoint: (id, seg, t) => {
+      const a = get().project.edits?.attachments.find((q) => q.id === id);
+      if (!a || !outlineEditable(a)) return null;
+      get().commit();
+      const r = insertOutlinePoint(a, seg, t, get().symmetry);
+      get().updateAttachment(id, r.patch);
+      return r.index;
+    },
+    removeAttachmentPoint: (id, index) => {
+      const a = get().project.edits?.attachments.find((q) => q.id === id);
+      if (!a || !outlineEditable(a)) return;
+      const patch = removeOutlinePoint(a, index, get().symmetry);
+      if (!patch.points) return;
+      get().commit();
+      get().updateAttachment(id, patch);
+    },
     removeAttachment: (id) => {
       get().commit();
       // designs sewn onto this attachment go with it

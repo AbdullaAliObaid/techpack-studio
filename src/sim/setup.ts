@@ -13,6 +13,7 @@ import { EMPTY_EDITS, type EdgeRef, type Edits, type Face, type Hardware, type P
 import { labelMaterial, labelSewing, labelSize, type LabelMaterial } from '../data/labels';
 import { builtinSeams, collarRoll, collarState, faceOf } from './seams';
 import { foldSplits } from '../data/split';
+import { outlineMirrored } from '../data/attachOutline';
 import { pleatIntake } from '../lib/specs';
 import { bodyFrame, ellipseCirc, ellipseFromCirc, hullAt, type Body, type BodyFrame } from '../three/body';
 import { BodyCollider } from './collider';
@@ -1040,7 +1041,7 @@ export function assemble(type: GarmentType, pieces0: Piece[], body: Body, spacin
   // every copy: the copies still cut as the piece (a side edited on its own carries only what is put on it)
   const hostsOf = (pieceId: string, instance?: number) => instance !== undefined ? [instOf(pieceId, instance)].filter((q): q is (typeof insts)[number] => !!q) : copiesOf(pieceId).filter((q) => !q.ownId);
   const mirrorLocal = (H: PanelInst, q: Pt): Pt => (H.mirror ? { x: -q.x, y: q.y } : q);
-  const attachSpecs: { id: string; kind: ClothKind; piece: Piece; local: Pt; host: string; instance?: number; xf: (q: Pt) => Pt; w: number; h: number; face: Face; tag?: { mat: LabelMaterial; sew: ReturnType<typeof labelSewing> }; stack: Stack }[] = [];
+  const attachSpecs: { id: string; kind: ClothKind; piece: Piece; local: Pt; host: string; instance?: number; xf: (q: Pt) => Pt; w: number; h: number; face: Face; tag?: { mat: LabelMaterial; sew: ReturnType<typeof labelSewing> }; stack: Stack; edited?: boolean }[] = [];
   for (const a0 of edits.attachments) {
     // a tag without a size gets the standard 5 x 2.5 cm
     const a = a0.kind === 'label' ? { ...a0, ...labelSize(a0) } : a0;
@@ -1056,7 +1057,7 @@ export function assemble(type: GarmentType, pieces0: Piece[], body: Body, spacin
       const bb = bbox(poly);
       const piece: Piece = { id: a.id, name: a.name, role: 'custom', cut: 1, offset: { x: 0, y: 0 }, symmetric: false, points: pts, fabric: a.fabric ?? host.fabric, specs: [] };
       // a letter's size for meshing is its own box; its position stays in the attachment's coords
-      attachSpecs.push({ id: a.id, kind: a.kind as ClothKind, piece, local: { x: 0, y: 0 }, host: host.id, instance: a.instance, xf: toHost(a.x, a.y, a.rotation), w: rings.length > 1 ? bb.w : a.w, h: rings.length > 1 ? bb.h : a.h, face, ...(tag ? { tag } : {}), stack: attachmentStack(a, host.fabric.id) });
+      attachSpecs.push({ id: a.id, kind: a.kind as ClothKind, piece, local: { x: 0, y: 0 }, host: host.id, instance: a.instance, xf: toHost(a.x, a.y, a.rotation), w: rings.length > 1 ? bb.w : a.w, h: rings.length > 1 ? bb.h : a.h, face, ...(tag ? { tag } : {}), stack: attachmentStack(a, host.fabric.id), ...(outlineMirrored(a, true) ? { edited: true } : {}) });
     });
   }
   for (const up of pieces.filter((q) => q.role === 'custom' && q.placement?.mode === 'patch' && q.placement.hostPieceId)) {
@@ -1127,8 +1128,10 @@ export function assemble(type: GarmentType, pieces0: Piece[], body: Body, spacin
     };
     for (const H of hosts) {
       const hostIdx = insts.indexOf(H);
-      const hpOf = (q: Pt) => at.xf(mirrorLocal(H, lp(q)));
-      const A = add(at.piece, false, (u, v) => {
+      // an outline reshaped on the chart is cut as its mirror image on the mirrored copy (src/data/attachOutline.ts)
+      const flip = !!at.edited && H.mirror;
+      const hpOf = (q: Pt) => at.xf(flip ? lp(q) : mirrorLocal(H, lp(q)));
+      const A = add(at.piece, flip, (u, v) => {
         let bump = 0;
         if (at.kind === 'strap') {
           const t = (long === 'x' ? u - at.local.x : v - at.local.y) / (Lh || 1); // -1..1 along the strap

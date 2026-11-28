@@ -6,8 +6,9 @@ import type { Attachment, Pleat } from '../data/edits';
 import type { Piece } from '../data/presets';
 import { nearestOnOutline, pointInPoly, type Pt } from '../lib/geometry';
 import { pleatMarks } from './editHelpers';
-import { attWorld, frameOn, onCopy, toWorldPt, type Entry } from './sides';
+import { attWorld, frameOn, onCopy, outlinePointsOn, toWorldPt, type Entry } from './sides';
 import { attsOnEntry, type Geo } from './chartLayout';
+import { outlineEditable } from '../data/attachOutline';
 
 export type DS = { kind: string; piece?: string; inst?: string; att?: string; point?: string; handle?: string; pleat?: string };
 
@@ -61,6 +62,19 @@ export function hitList(o: {
         for (const [name, h] of [['rotate', hp.rotate], ['resize', hp.resize]] as const) {
           const d = Math.hypot(w.x - h.p.x, w.y - h.p.y);
           if (d <= h.r) out.push({ rank: 0, sort: d, c: { id: `h:${a.id}:${name}:${en.key}`, ds: { kind: 'handle', handle: name, att: a.id, piece: en.src.id, inst: inst(en) }, name: name === 'rotate' ? 'Turn' : 'Resize', hl: { t: 'ring', x: h.p.x, y: h.p.y, r: px(12) } } });
+        }
+        // outline points of a pocket, patch or applique: drag to reshape; its edge, to add a point
+        if (outlineEditable(a)) {
+          const pts = outlinePointsOn(a, en, atts);
+          pts.forEach((q, i) => {
+            const d = Math.hypot(w.x - q.x, w.y - q.y);
+            if (d * k <= 11) out.push({ rank: 0, sort: d + px(1), c: { id: `ap:${a.id}:${i}:${en.key}`, ds: { kind: 'attpt', att: a.id, point: String(i), piece: en.src.id, inst: inst(en) }, name: 'Outline point', sub: a.name, hl: { t: 'ring', x: q.x, y: q.y, r: px(9) } } });
+          });
+          for (let i = 0; i < pts.length; i++) {
+            const A = pts[i], B = pts[(i + 1) % pts.length];
+            const d = distSeg(w, A, B);
+            if (d * k <= 7) out.push({ rank: 0, sort: px(30) + d, c: { id: `ae:${a.id}:${en.key}`, ds: { kind: 'attedge', att: a.id, point: String(i), piece: en.src.id, inst: inst(en) }, name: `Outline of ${a.name}`, hl: { t: 'line', a: A, b: B } } });
+          }
         }
       }
     }

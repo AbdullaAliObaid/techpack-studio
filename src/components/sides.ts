@@ -6,6 +6,7 @@ import type { StyleId } from '../data/catalog';
 import type { Piece } from '../data/presets';
 import type { Pt } from '../lib/geometry';
 import type { Attachment } from '../data/edits';
+import { editPoints, outlineMirrored } from '../data/attachOutline';
 
 export interface Entry {
   key: string;
@@ -156,4 +157,24 @@ export function flipEntries(entries: Entry[]): Entry[] {
     const offset: Pt = { x: -e.offset.x, y: e.offset.y };
     return { ...e, flipped: true, mirror: !e.mirror, offset, piece: { ...e.piece, offset, points: e.piece.points.map((q) => ({ ...q, x: -q.x })) } };
   });
+}
+
+/* ---------- outlines reshaped by their points (src/data/attachOutline.ts) ---------- */
+const radOf = (d: number) => (d * Math.PI) / 180;
+
+/** world positions of an attachment's outline points on a copy (mirrored where its edited outline is cut mirrored) */
+export function outlinePointsOn(a: Attachment, en: Entry, atts: Attachment[]): Pt[] {
+  const pose = attWorld(atts, a, en);
+  const c = Math.cos(radOf(pose.rot)), s = Math.sin(radOf(pose.rot));
+  const m = outlineMirrored(a, en.mirror) ? -1 : 1;
+  return editPoints(a).map((q) => ({ x: pose.x + c * m * q.x - s * q.y, y: pose.y + s * m * q.x + c * q.y }));
+}
+
+/** a world point to an attachment's own outline coords on a copy */
+export function toOutlineLocal(a: Attachment, en: Entry, atts: Attachment[], w: Pt): Pt {
+  const pose = attWorld(atts, a, en);
+  const c = Math.cos(radOf(-pose.rot)), s = Math.sin(radOf(-pose.rot));
+  const dx = w.x - pose.x, dy = w.y - pose.y;
+  const m = outlineMirrored(a, en.mirror) ? -1 : 1;
+  return { x: m * (c * dx - s * dy), y: s * dx + c * dy };
 }

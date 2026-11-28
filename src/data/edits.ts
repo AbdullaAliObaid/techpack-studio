@@ -131,6 +131,11 @@ export interface Attachment {
   outline: Outline;
   /** custom outline points (cm, centred on 0,0) when outline === 'custom' */
   points?: Pt[];
+  /**
+   * the outline was reshaped by its points on the chart (src/data/attachOutline.ts): on the mirrored copy of a piece
+   * cut twice it is cut as its mirror image (artwork on it is never flipped)
+   */
+  outlineEdited?: boolean;
   /** emblem / print artwork, drawn on top of the attachment's fabric */
   layers: ShapeLayer[];
   /** fabric for cloth attachments; defaults to the host piece fabric */
