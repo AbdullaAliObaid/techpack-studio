@@ -35,11 +35,12 @@ export function crownCount(style: StyleId): number {
 /** How many times a piece is placed on the body (instances), by role and style family. */
 export function instanceCount(style: StyleId, p: Piece): number {
   const fam = styleById(migrateGarment(style)).family;
+  if (p.splitOf) return 1; // one side edited on its own (src/data/split.ts)
   if (p.role === 'crown') return crownCount(style);
   if (p.role === 'sleeve') return 2;
   if (p.role === 'cuff') return fam === 'shirt' || fam === 'pants' ? 2 : 1;
   if (fam === 'pants' && (p.role === 'front' || p.role === 'back')) return 2;
-  if (p.role === 'custom') return p.cut > 1 ? 2 : 1; // a user piece cut twice is placed as a pair
+  if (p.role === 'custom') return p.cut + (p.splitSides?.length ?? 0) > 1 ? 2 : 1; // a user piece cut twice is placed as a pair
   if (p.role === 'front' && isSplitFront(p)) return 2; // split fronts: 0 the wearer's left, 1 the right (mirrored)
   if (p.role === 'placket' && fam === 'polo') return 2; // two placket strips, one on each side of the opening
   if (p.role === 'facing' || p.role === 'pocketFacing' || p.role === 'pocketBag') return 2;
@@ -71,6 +72,8 @@ export function instanceLabel(style: StyleId, piece: Piece, instance?: number): 
  * old saves drape bit for bit the same (tests/fixtures/sew-baseline.json).
  */
 export function builtinSeams(style: StyleId, pieces: Piece[], edits?: Pick<Edits, 'collar'>): BuiltinSeam[] {
+  // a side split off (src/data/split.ts) is sewn as the copy of its piece it stands in for
+  pieces = pieces.filter((p) => !p.splitOf);
   const collarSet = edits?.collar !== undefined;
   const st = styleById(migrateGarment(style));
   const fam = st.family;

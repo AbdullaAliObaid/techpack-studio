@@ -763,5 +763,114 @@ for (const s of CATALOG) {
 }
 console.log(`ok   all ${CATALOG.length} styles keep their point keys across bodies and fits`);
 
+// ---- one side edited on its own (src/data/split.ts): "Edit this side only" and "Match other side" ----
+{
+  console.log('\n== one side on its own ==');
+  const yes = (name: string, cond: boolean, info = '') => { if (!cond) fails++; console.log(`${cond ? 'ok  ' : 'FAIL'} ${name}${info ? '  ' + info : ''}`); };
+  const { splitSide, rejoinSide, foldSplits, canSplit } = await import('../src/data/split');
+  const { linkedMoves, applyMoves } = await import('../src/data/symmetry');
+  const { layoutEntries } = await import('../src/components/sides');
+  for (const [style, role] of [['polo', 'placket'], ['basic-tee', 'sleeve'], ['jeans', 'front']] as const) {
+    const pieces = makePreset(style, DEFAULT_BODY);
+    const base = pieces.find((p) => p.role === role)!;
+    const tag: Attachment = { id: 'tagR', kind: 'patch', name: 'Patch', pieceId: base.id, instance: 1, x: 0, y: 0, rotation: 0, w: 2, h: 2, outline: 'rect', layers: [] };
+    const both: Attachment = { ...tag, id: 'both', instance: undefined };
+    const edits: Edits = { ...EMPTY_EDITS, collar: 'down', attachments: [tag, both] };
+    yes(`${style} ${role}: right copy can be split, a piece cut once cannot`, canSplit(style, base, 1) && !canSplit(style, pieces.find((p) => p.role === 'back')!, 0) || role === 'front' && canSplit(style, base, 1));
+    const ids0 = builtinSeams(style, pieces, edits).map((b) => b.id).join(',');
+    const plain: Edits = { ...EMPTY_EDITS, collar: 'down' };
+    const sig0 = sewSignature(style, plain, pieces);
+    const r = splitSide(style, pieces, edits, base.id, 1);
+    const S = r.pieces.find((p) => p.id === r.id)!, O = r.pieces.find((p) => p.id === base.id)!;
+    yes(`${style} ${role}: split side is its own piece, tagged with its side`, !!S && S.splitOf === base.id && S.side === 1 && S.cut === 1 && O.cut === base.cut - 1 && O.splitSides?.[0] === 1, S?.name);
+    yes(`${style} ${role}: built-in seam ids unchanged`, builtinSeams(style, r.pieces, r.edits).map((b) => b.id).join(',') === ids0);
+    yes(`${style} ${role}: right side patch moves to the split piece, a both sides patch is now one per side`,
+      r.edits.attachments.find((a) => a.id === 'tagR')?.pieceId === S.id && r.edits.attachments.find((a) => a.id === 'both')?.instance === 0 && r.edits.attachments.some((a) => a.pieceId === S.id && a.id !== 'tagR'));
+    // unedited, the split garment is sewn and placed exactly as before
+    const r0 = splitSide(style, pieces, plain, base.id, 1);
+    const sig1 = sewSignature(style, r0.edits, r0.pieces);
+    yes(`${style} ${role}: unedited split sews and starts exactly as the pair`, sig1.n === sig0.n && sig1.sew === sig0.sew && sig1.pos === sig0.pos && sig1.particles === sig0.particles, `${sig1.n} sew links`);
+    // edit one point of the split side with total symmetry: the other side does not follow
+    const pt = S.points.reduce((a, q) => (q.x > a.x ? q : a));
+    const moves = linkedMoves(style, r.pieces, S.id, pt.id, 1.5, 0);
+    const edited = applyMoves(r.pieces, moves);
+    yes(`${style} ${role}: editing the split side moves nothing on the other side or its mates`, moves.every((m) => m.pieceId === S.id) && JSON.stringify(edited.find((p) => p.id === base.id)!.points) === JSON.stringify(O.points));
+    const oMoves = linkedMoves(style, edited, O.id, O.points[1].id, 1, 0);
+    yes(`${style} ${role}: editing the other side does not move the split side`, oMoves.every((m) => m.pieceId !== S.id));
+    // the 3D copy follows the split side's own outline, the other copy keeps the shared one
+    const F = foldSplits(edited, r.edits);
+    yes(`${style} ${role}: folded for the simulation: the pair again, cut twice`, F.pieces.length === pieces.length && F.pieces.find((p) => p.id === base.id)!.cut === base.cut && F.own.get(base.id)?.get(1)?.id === S.id);
+    const G = assemble(style, edited, DEFAULT_BODY, 2.2, NO_COLLIDER, r.edits)!;
+    const G0 = assemble(style, pieces, DEFAULT_BODY, 2.2, NO_COLLIDER, edits)!;
+    const span = (g: typeof G, k: number) => { const P = g.panels.filter((q) => q.piece.id === base.id && !q.attach)[k]; const xs = P.mesh.uv.map((q) => q.x); return Math.max(...xs) - Math.min(...xs); };
+    yes(`${style} ${role}: 3D right copy is meshed from the edited side, the left from the shared shape`, Math.abs(span(G, 0) - span(G0, 0)) < 1e-6 && Math.abs(span(G, 1) - span(G0, 1)) > 0.5, `${span(G0, 1).toFixed(2)} -> ${span(G, 1).toFixed(2)} cm`);
+    {
+      const Ge = assemble(style, applyMoves(r0.pieces, linkedMoves(style, r0.pieces, r0.id!, pt.id, 1.5, 0)), DEFAULT_BODY, 2.2, NO_COLLIDER, r0.edits)!;
+      const empty = builtinSeams(style, pieces, plain).filter((b) => !(Ge.seamLinks[b.id]?.length));
+      yes(`${style} ${role}: edited, every built-in seam is still sewn`, !empty.length, empty.map((b) => b.id).join(','));
+    }
+    const rows = seamReport(style, edited, r.edits).filter((q) => q.label.includes('edited on its own'));
+    yes(`${style} ${role}: seam report walks the split side's seams`, rows.length > 0 && rows.every((q) => q.seams?.length && q.a > 0 && q.b > 0), rows.map((q) => q.label).join('; '));
+    // the chart: the split side is drawn as its own piece in the right copy's place, mirrored
+    const en = layoutEntries(style, edited, false);
+    const eS = en.find((e) => e.src.id === S.id), eO = en.filter((e) => e.src.id === base.id);
+    yes(`${style} ${role}: chart draws the split side mirrored where the right copy goes`, !!eS && eS.mirror && !eS.both && eO.length === 1 && eO[0].inst === 0 && eO[0].both);
+    // match other side: back to the pair, sewn exactly as before the split
+    const j = rejoinSide(edited, r.edits, S.id);
+    const J = j.pieces.find((p) => p.id === base.id)!;
+    yes(`${style} ${role}: match other side joins it back`, j.pieces.length === pieces.length && J.cut === base.cut && !J.splitSides && j.edits.attachments.find((a) => a.id === 'tagR')?.pieceId === base.id && j.edits.attachments.find((a) => a.id === 'tagR')?.instance === 1);
+    const j0 = rejoinSide(r0.pieces, r0.edits, r0.id!);
+    const sig2 = sewSignature(style, j0.edits, j0.pieces);
+    yes(`${style} ${role}: rejoined pair sews and starts as before`, sig2.sew === sig0.sew && sig2.pos === sig0.pos);
+  }
+}
+
+// ---- pocket and patch outlines reshaped by their points (src/data/attachOutline.ts) ----
+{
+  console.log('\n== reshaped outlines ==');
+  const yes = (name: string, cond: boolean, info = '') => { if (!cond) fails++; console.log(`${cond ? 'ok  ' : 'FAIL'} ${name}${info ? '  ' + info : ''}`); };
+  const { moveOutlinePoint, insertOutlinePoint, removeOutlinePoint, editPoints, outlineEditable } = await import('../src/data/attachOutline');
+  const { attachmentOutline, fabricBom } = await import('../src/lib/specs');
+  const { layoutEntries, outlinePointsOn } = await import('../src/components/sides');
+  const polyArea = (p: { x: number; y: number }[]) => Math.abs(p.reduce((t, a, i) => { const b = p[(i + 1) % p.length]; return t + a.x * b.y - b.x * a.y; }, 0) / 2);
+  const pieces = makePreset('jeans', DEFAULT_BODY);
+  const back = pieces.find((p) => p.role === 'back')!;
+  // a back pocket in its own fabric, on both back legs, the classic pointed shape
+  const pocket: Attachment = { id: 'bp', kind: 'pocket', name: 'Back pocket', pieceId: back.id, x: 8, y: 12, rotation: 0, w: 14, h: 15, outline: 'pointed', layers: [], fabric: { id: 'canvas', color: 0 } };
+  const ed = (a: Attachment): Edits => ({ ...EMPTY_EDITS, collar: 'down', attachments: [a] });
+  yes('pockets, patches and appliques are reshapeable, text and trims are not', outlineEditable(pocket) && outlineEditable({ ...pocket, kind: 'applique', outline: 'shape', shape: 'star' }) && !outlineEditable({ ...pocket, kind: 'applique', outline: 'shape', shape: 'text' }) && !outlineEditable({ ...pocket, kind: 'hardware' }));
+  const pts = editPoints(pocket);
+  const tip = pts.reduce((b, q, i) => (q.y > pts[b].y ? i : b), 0); // the point at the bottom
+  // pull the point down 3 cm with symmetry on: it stays on the centre line
+  const deeper: Attachment = { ...pocket, ...moveOutlinePoint(pocket, tip, { x: 0.7, y: pts[tip].y + 3 }, true) };
+  yes('first edit turns the preset into custom points, kept centred', deeper.outline === 'custom' && !!deeper.outlineEdited && deeper.points!.length === pts.length && Math.abs(Math.max(...deeper.points!.map((q) => q.y)) + Math.min(...deeper.points!.map((q) => q.y))) < 0.02);
+  yes('with symmetry a point on the centre line stays on it', Math.abs(deeper.points!.reduce((b, q) => (q.y > b.y ? q : b)).x) < 1e-6);
+  const a0 = polyArea(attachmentOutline(pocket)), a1 = polyArea(attachmentOutline(deeper));
+  yes('the tech pack outline is the edited one: area grows by the added triangle', Math.abs(a1 - a0 - (14 * 3) / 2) < 0.2, `${a0.toFixed(1)} -> ${a1.toFixed(1)} cm2`);
+  const bomArea = (a: Attachment) => fabricBom(pieces, ed(a), 'jeans').filter((r) => r.where.some((w) => w.includes('Back pocket'))).reduce((t, r) => t + r.areaCm2, 0);
+  yes('fabric usage follows the edited outline', bomArea(deeper) > bomArea(pocket) + 2 * 20, `${bomArea(pocket).toFixed(0)} -> ${bomArea(deeper).toFixed(0)} cm2`);
+  // the 3D pocket panel is cut from the edited outline
+  const panelArea = (a: Attachment) => {
+    const G = assemble('jeans', pieces, DEFAULT_BODY, 1.8, NO_COLLIDER, ed(a))!;
+    const P = G.panels.filter((q) => q.attach?.id === 'bp');
+    return P.map((q) => { let t = 0; for (let i = 0; i < q.mesh.tris.length; i += 3) { const A = q.mesh.uv[q.mesh.tris[i]], B = q.mesh.uv[q.mesh.tris[i + 1]], C = q.mesh.uv[q.mesh.tris[i + 2]]; t += Math.abs((B.x - A.x) * (C.y - A.y) - (C.x - A.x) * (B.y - A.y)) / 2; } return t; });
+  };
+  const p0 = panelArea(pocket), p1 = panelArea(deeper);
+  yes('the 3D pocket panels (both legs) are meshed from the edited outline', p0.length === 2 && p1.length === 2 && p1.every((v, i) => Math.abs(v - p0[i] - 21) < 1.5), `${p0.map((v) => v.toFixed(1)).join(', ')} -> ${p1.map((v) => v.toFixed(1)).join(', ')} cm2`);
+  // add and remove points
+  const added = { ...deeper, ...insertOutlinePoint(deeper, 0, 0.5, false).patch };
+  yes('a point can be added on an edge and removed again', added.points!.length === deeper.points!.length + 1 && ({ ...added, ...removeOutlinePoint(added, 1, false) }).points!.length === deeper.points!.length);
+  // an edit off the centre line without symmetry: the pocket on the right leg is its mirror image, in 3D and on the chart
+  const lop: Attachment = { ...pocket, ...moveOutlinePoint(pocket, 1, { x: pts[1].x + 2, y: pts[1].y - 1 }, false) };
+  const G = assemble('jeans', pieces, DEFAULT_BODY, 1.8, NO_COLLIDER, ed(lop))!;
+  const box = (P: (typeof G.panels)[number], flip: number) => { const xs: number[] = [], ys: number[] = [], zs: number[] = []; for (let i = 0; i < P.mesh.uv.length; i++) { xs.push(flip * G.sim.pos[(P.offset + i) * 3]); ys.push(G.sim.pos[(P.offset + i) * 3 + 1]); zs.push(G.sim.pos[(P.offset + i) * 3 + 2]); } return [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys), Math.min(...zs), Math.max(...zs)]; };
+  const [L, R] = G.panels.filter((q) => q.attach?.id === 'bp');
+  const bl = box(L, 1), br = box(R, -1);
+  yes('an edited outline is cut mirrored on the other leg (3D start shapes are mirror images)', bl.every((v, i) => Math.abs(v - br[i]) < 0.3), bl.map((v, i) => (v - br[i]).toFixed(2)).join(' '));
+  const en = layoutEntries('jeans', pieces, true).filter((e) => e.src.id === back.id);
+  const wpts = en.map((e) => outlinePointsOn(lop, e, [lop]).map((q) => ({ x: q.x - e.offset.x, y: q.y - e.offset.y })));
+  yes('on the chart the right leg shows the mirror image', wpts.length === 2 && wpts[0].every((q, i) => Math.abs(q.x + wpts[1][i].x) < 1e-6 && Math.abs(q.y - wpts[1][i].y) < 1e-6));
+}
+
 console.log(fails ? `\n${fails} FAILED` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

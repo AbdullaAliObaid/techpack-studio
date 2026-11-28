@@ -51,6 +51,15 @@ export interface Piece {
   elastic?: number;
   /** user-drawn pieces: how the piece goes onto the garment (src/data/edits.ts) */
   placement?: Placement;
+  /**
+   * one side of a piece cut twice, edited on its own (src/data/split.ts): the id of the piece it was split from and
+   * the copy of that piece it stands in for (0 = the wearer's left, 1 = the wearer's right). Same role and point ids
+   * and keys as that piece, so its seams, regrading and sewing stay the built-in ones.
+   */
+  splitOf?: string;
+  side?: number;
+  /** a piece with copies split off into pieces of their own: those copies (see splitOf) */
+  splitSides?: number[];
 }
 
 const TOP_SPECS: SpecDef[] = [

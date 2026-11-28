@@ -12,6 +12,8 @@ import { attachmentPolygons } from '../lib/shapes';
 import { EMPTY_EDITS, type EdgeRef, type Edits, type Face, type Hardware, type Pleat } from '../data/edits';
 import { labelMaterial, labelSewing, labelSize, type LabelMaterial } from '../data/labels';
 import { builtinSeams, collarRoll, collarState, faceOf } from './seams';
+import { foldSplits } from '../data/split';
+import { outlineMirrored } from '../data/attachOutline';
 import { pleatIntake } from '../lib/specs';
 import { bodyFrame, ellipseCirc, ellipseFromCirc, hullAt, type Body, type BodyFrame } from '../three/body';
 import { BodyCollider } from './collider';
@@ -31,6 +33,8 @@ export interface PanelInst {
    * mesh.uv of an attachment is in the attachment's own coords (cm, centred, before rotation).
    */
   attach?: { id: string; kind: ClothKind; host: number; face: Face };
+  /** this copy is a side edited on its own (src/data/split.ts): the id of that split piece */
+  ownId?: string;
 }
 
 /** attachments that are cloth of their own (embroidery, prints and hardware add no cloth) */
@@ -344,7 +348,16 @@ export function warmStart(next: Garment3D, prev: Garment3D) {
     const a = next.panels[k], b = prev.panels[k];
     if (a.piece.role !== b.piece.role || a.mirror !== b.mirror) return false;
   }
+  // the collar turned up or down: the collar (and whatever is sewn on it) starts from its new arrangement, not from
+  // the old drape. Copying the popped collar into a build whose fold rest shape is folded (or the other way round)
+  // left the collar where it was and the fold constraints fighting it.
+  const collarMoved = next.collar !== prev.collar;
+  const fresh = (k: number): boolean => {
+    const p = next.panels[k];
+    return p.piece.role === 'collar' || (!!p.attach && fresh(p.attach.host));
+  };
   next.panels.forEach((a, k) => {
+    if (collarMoved && fresh(k)) return;
     const b = prev.panels[k];
     const buv = b.mesh.uv;
     a.mesh.uv.forEach((p, i) => {
@@ -364,10 +377,15 @@ export function warmStart(next: Garment3D, prev: Garment3D) {
     next.sim.frames = Math.min(prev.sim.frames, next.sim.sewFrames);
     return true;
   }
-  next.sim.sewFrames = 4; // already sewn, just settle
+  // already sewn, just settle; a collar placed afresh is sewn back on to the draped neckline first
+  next.sim.sewFrames = collarMoved ? COLLAR_RESEW : 4;
   next.sim.frames = 0;
   return true;
 }
+/** cm/s a hat is pulled down on to the head with once it is sewn */
+const SEAT_SPEED = 20;
+/** frames a collar placed afresh (turned up or down) takes to sew back on to the draped neckline */
+const COLLAR_RESEW = 24;
 
 /** How a piece behaves in the solver: fabric properties, adjusted for its role (rib trims, elastic, stiff brims). */
 interface Mech {
@@ -438,7 +456,9 @@ function mechanics(p: Piece, style: Style, opts: { collarUp?: boolean; legacyCol
   return { stretch, sc: stretch * 0.3 * scK * H2, bc: (0.05 / (bend * bend)) * H2, shaped, plate, gather, foldBend };
 }
 
-export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing = 2.2, collider?: ClothSim['collider'], edits: Edits = EMPTY_EDITS): Garment3D | null {
+export function assemble(type: GarmentType, pieces0: Piece[], body: Body, spacing = 2.2, collider?: ClothSim['collider'], edits0: Edits = EMPTY_EDITS): Garment3D | null {
+  // sides edited on their own (src/data/split.ts): sewn and placed as the copy they stand in for, meshed from their own outline
+  const { pieces, edits, own } = foldSplits(pieces0, edits0);
   const style = styleById(migrateGarment(type));
   const fam = style.family;
   const f = bodyFrame(body);
@@ -462,9 +482,10 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   let count = 0;
   /** place: where each pattern point starts; shape: the rest shape of a pre-shaped part (defaults to place) */
   const add = (piece: Piece, mirror: boolean, place: Placer, mesh?: PanelMesh, shape?: Placer) => {
-    const m = mesh ?? meshPanel(piece.points, spacing);
     const instance = insts.filter((q) => q.piece === piece).length;
-    insts.push({ piece, mesh: m, offset: count, mirror, place, shape, instance });
+    const side = own.get(piece.id)?.get(instance);
+    const m = side ? meshPanel(side.points, spacing) : mesh ?? meshPanel(piece.points, spacing);
+    insts.push({ piece, mesh: m, offset: count, mirror, place, shape, instance, ...(side ? { ownId: side.id } : {}) });
     count += m.uv.length;
     return insts[insts.length - 1];
   };
@@ -1017,9 +1038,10 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     return (q: Pt): Pt => ({ x: x + q.x * c - q.y * s, y: y + q.x * s + q.y * c });
   };
   /** host copies an edit goes on: the chosen copy, or every copy when none is chosen */
-  const hostsOf = (pieceId: string, instance?: number) => instance !== undefined ? [instOf(pieceId, instance)].filter((q): q is (typeof insts)[number] => !!q) : copiesOf(pieceId);
+  // every copy: the copies still cut as the piece (a side edited on its own carries only what is put on it)
+  const hostsOf = (pieceId: string, instance?: number) => instance !== undefined ? [instOf(pieceId, instance)].filter((q): q is (typeof insts)[number] => !!q) : copiesOf(pieceId).filter((q) => !q.ownId);
   const mirrorLocal = (H: PanelInst, q: Pt): Pt => (H.mirror ? { x: -q.x, y: q.y } : q);
-  const attachSpecs: { id: string; kind: ClothKind; piece: Piece; local: Pt; host: string; instance?: number; xf: (q: Pt) => Pt; w: number; h: number; face: Face; tag?: { mat: LabelMaterial; sew: ReturnType<typeof labelSewing> }; stack: Stack }[] = [];
+  const attachSpecs: { id: string; kind: ClothKind; piece: Piece; local: Pt; host: string; instance?: number; xf: (q: Pt) => Pt; w: number; h: number; face: Face; tag?: { mat: LabelMaterial; sew: ReturnType<typeof labelSewing> }; stack: Stack; edited?: boolean }[] = [];
   for (const a0 of edits.attachments) {
     // a tag without a size gets the standard 5 x 2.5 cm
     const a = a0.kind === 'label' ? { ...a0, ...labelSize(a0) } : a0;
@@ -1035,7 +1057,7 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
       const bb = bbox(poly);
       const piece: Piece = { id: a.id, name: a.name, role: 'custom', cut: 1, offset: { x: 0, y: 0 }, symmetric: false, points: pts, fabric: a.fabric ?? host.fabric, specs: [] };
       // a letter's size for meshing is its own box; its position stays in the attachment's coords
-      attachSpecs.push({ id: a.id, kind: a.kind as ClothKind, piece, local: { x: 0, y: 0 }, host: host.id, instance: a.instance, xf: toHost(a.x, a.y, a.rotation), w: rings.length > 1 ? bb.w : a.w, h: rings.length > 1 ? bb.h : a.h, face, ...(tag ? { tag } : {}), stack: attachmentStack(a, host.fabric.id) });
+      attachSpecs.push({ id: a.id, kind: a.kind as ClothKind, piece, local: { x: 0, y: 0 }, host: host.id, instance: a.instance, xf: toHost(a.x, a.y, a.rotation), w: rings.length > 1 ? bb.w : a.w, h: rings.length > 1 ? bb.h : a.h, face, ...(tag ? { tag } : {}), stack: attachmentStack(a, host.fabric.id), ...(outlineMirrored(a, true) ? { edited: true } : {}) });
     });
   }
   for (const up of pieces.filter((q) => q.role === 'custom' && q.placement?.mode === 'patch' && q.placement.hostPieceId)) {
@@ -1106,8 +1128,10 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
     };
     for (const H of hosts) {
       const hostIdx = insts.indexOf(H);
-      const hpOf = (q: Pt) => at.xf(mirrorLocal(H, lp(q)));
-      const A = add(at.piece, false, (u, v) => {
+      // an outline reshaped on the chart is cut as its mirror image on the mirrored copy (src/data/attachOutline.ts)
+      const flip = !!at.edited && H.mirror;
+      const hpOf = (q: Pt) => at.xf(flip ? lp(q) : mirrorLocal(H, lp(q)));
+      const A = add(at.piece, flip, (u, v) => {
         let bump = 0;
         if (at.kind === 'strap') {
           const t = (long === 'x' ? u - at.local.x : v - at.local.y) / (Lh || 1); // -1..1 along the strap
@@ -1613,7 +1637,31 @@ export function assemble(type: GarmentType, pieces: Piece[], body: Body, spacing
   maxStrain.forEach((v, i) => (sim.maxStrain[i] = v));
   sim.substeps = SUB;
   // hat pieces start in place, practically sewn: gravity and friction from the start keep them seated on the head
-  if (hat) sim.sewFrames = 6;
+  if (hat) {
+    sim.sewFrames = 6;
+    // sewn where it was placed: the crown closing round the head pushed the hat up while sewn (2 to 5 cm in 6 frames),
+    // and the speed it left with threw it up off the head once gravity came on. It came down hard and off centre, and
+    // with a label or patch on it (a cap, a five panel) slid off the head. While sewn the hat's mean height is held at
+    // its start and it may not gather speed upward.
+    let y0 = NaN;
+    sim.frameHook = () => {
+      if (sim.frames > sim.sewFrames) return;
+      const P = sim.pos, V = sim.vel;
+      let y = 0;
+      for (let i = 1; i < P.length; i += 3) y += P[i];
+      y /= sim.n;
+      if (Number.isNaN(y0)) y0 = y;
+      const up = y - y0;
+      let vy = 0;
+      for (let i = 1; i < V.length; i += 3) vy += V[i];
+      vy /= sim.n;
+      if (up > 0) for (let i = 1; i < P.length; i += 3) P[i] -= up;
+      // the last sewing frame: pulled down on to the head the way it is put on (friction on the sides holds a hat
+      // that is only set on the head a little proud of it)
+      const seat = sim.frames === sim.sewFrames ? -SEAT_SPEED : 0;
+      if (vy > seat) for (let i = 1; i < V.length; i += 3) V[i] -= vy - seat;
+    };
+  }
   // the garment can not climb the body while its seams close (see ClothSim.sewRise)
   else sim.sewRise = SEW_RISE;
   sim.pos.set(init);

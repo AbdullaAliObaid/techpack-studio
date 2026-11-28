@@ -6,6 +6,7 @@ import type { StyleId } from '../data/catalog';
 import type { Piece } from '../data/presets';
 import type { Pt } from '../lib/geometry';
 import type { Attachment } from '../data/edits';
+import { editPoints, outlineMirrored } from '../data/attachOutline';
 
 export interface Entry {
   key: string;
@@ -28,7 +29,7 @@ export interface Entry {
 
 /** How many times a piece is placed on the body. */
 export function copiesOf(style: StyleId, p: Piece): number {
-  if (p.role === 'custom') return p.cut >= 2 ? 2 : 1;
+  if (p.role === 'custom') return p.splitOf ? 1 : p.cut + (p.splitSides?.length ?? 0) >= 2 ? 2 : 1;
   return seamsMod.instanceCount(style, p);
 }
 
@@ -55,8 +56,10 @@ const bounds = (p: Piece) => {
 
 /** Everything drawn on the chart, in draw order. Pieces to the right of a doubled piece slide over to make room. */
 export function layoutEntries(style: StyleId, pieces: Piece[], showBoth: boolean): Entry[] {
-  const info = pieces.map((p) => ({ p, b: bounds(p), copies: copiesOf(style, p) }));
-  const doubled = (i: { copies: number }) => showBoth && i.copies === 2;
+  // a side edited on its own (src/data/split.ts) is drawn where that copy of its piece goes; a split pair always shows both
+  const splits = pieces.filter((p) => p.splitOf && pieces.some((q) => q.id === p.splitOf));
+  const info = pieces.filter((p) => !splits.includes(p)).map((p) => ({ p, b: bounds(p), copies: copiesOf(style, p) }));
+  const doubled = (i: { p: Piece; copies: number }) => (showBoth || !!i.p.splitSides?.length) && i.copies === 2;
   const order = info.map((_, i) => i).sort((a, b) => info[a].p.offset.x + info[a].b.minX - (info[b].p.offset.x + info[b].b.minX));
   const shift = new Map<string, number>();
   order.forEach((i, n) => {
@@ -76,9 +79,17 @@ export function layoutEntries(style: StyleId, pieces: Piece[], showBoth: boolean
     const dx = shift.get(p.id) ?? 0;
     const both = doubled(it);
     const o0: Pt = { x: p.offset.x + dx, y: p.offset.y };
-    out.push({ key: `${p.id}:0`, src: p, piece: { ...p, offset: o0 }, inst: 0, copies, both, mirror: false, offset: o0, label: both ? instanceName(style, p, 0) : p.name });
-    if (both) {
-      const o1: Pt = { x: o0.x + 2 * b.maxX + GAP, y: p.offset.y };
+    const o1: Pt = { x: o0.x + 2 * b.maxX + GAP, y: p.offset.y };
+    /** the split piece standing in for copy k, drawn in that copy's place (mirrored for the wearer's right) */
+    const own = (k: number) => {
+      const s = both ? splits.find((q) => q.splitOf === p.id && q.side === k) : undefined;
+      if (!s) return false;
+      const o = k ? o1 : o0;
+      out.push({ key: `${s.id}:0`, src: s, inst: 0, copies: 1, both: false, mirror: k === 1, offset: o, label: s.name, piece: { ...s, offset: o, points: k ? s.points.map((q) => ({ ...q, x: -q.x })) : s.points } });
+      return true;
+    };
+    if (!own(0)) out.push({ key: `${p.id}:0`, src: p, piece: { ...p, offset: o0 }, inst: 0, copies, both, mirror: false, offset: o0, label: both ? instanceName(style, p, 0) : p.name });
+    if (both && !own(1)) {
       out.push({
         key: `${p.id}:1`, src: p, inst: 1, copies, both, mirror: true, offset: o1, label: instanceName(style, p, 1),
         piece: { ...p, offset: o1, points: p.points.map((q) => ({ ...q, x: -q.x })) },
@@ -146,4 +157,24 @@ export function flipEntries(entries: Entry[]): Entry[] {
     const offset: Pt = { x: -e.offset.x, y: e.offset.y };
     return { ...e, flipped: true, mirror: !e.mirror, offset, piece: { ...e.piece, offset, points: e.piece.points.map((q) => ({ ...q, x: -q.x })) } };
   });
+}
+
+/* ---------- outlines reshaped by their points (src/data/attachOutline.ts) ---------- */
+const radOf = (d: number) => (d * Math.PI) / 180;
+
+/** world positions of an attachment's outline points on a copy (mirrored where its edited outline is cut mirrored) */
+export function outlinePointsOn(a: Attachment, en: Entry, atts: Attachment[]): Pt[] {
+  const pose = attWorld(atts, a, en);
+  const c = Math.cos(radOf(pose.rot)), s = Math.sin(radOf(pose.rot));
+  const m = outlineMirrored(a, en.mirror) ? -1 : 1;
+  return editPoints(a).map((q) => ({ x: pose.x + c * m * q.x - s * q.y, y: pose.y + s * m * q.x + c * q.y }));
+}
+
+/** a world point to an attachment's own outline coords on a copy */
+export function toOutlineLocal(a: Attachment, en: Entry, atts: Attachment[], w: Pt): Pt {
+  const pose = attWorld(atts, a, en);
+  const c = Math.cos(radOf(-pose.rot)), s = Math.sin(radOf(-pose.rot));
+  const dx = w.x - pose.x, dy = w.y - pose.y;
+  const m = outlineMirrored(a, en.mirror) ? -1 : 1;
+  return { x: m * (c * dx - s * dy), y: s * dx + c * dy };
 }

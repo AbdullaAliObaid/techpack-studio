@@ -88,6 +88,36 @@ for (const [name, acts, before] of cases) {
   verdict(ok, `${name}: y ${r.lo.toFixed(1)}..${r.hi.toFixed(1)}, NaN ${r.bad}`);
 }
 
+// ---- collar up and down (the "Collar up" button warm starts from the drape): the collar must move and the garment
+// must stay put; a cold build after a popped collar must drape exactly like a fresh one ----
+{
+  console.log('\n== collar up and down ==');
+  const pieces = makePreset(style, body);
+  /** one build after the last, each run until it sleeps; returns the top and the lowest point of each */
+  const seq = async (steps: ['up' | 'down', boolean][]) => {
+    const out: { lo: number; hi: number; bad: number }[] = [];
+    for (const [collar, warm] of steps) {
+      msgs.length = 0;
+      send({ type: 'build', garment: style, pieces, body, warm, spacing: 1.8, edits: { ...styleEdits(style, pieces, body), collar } });
+      let last: { pos: Float32Array; sleeping: boolean } | null = null;
+      const t0 = Date.now();
+      while (Date.now() - t0 < 60000) { await sleep(10); for (const m of msgs.splice(0)) if (m.type === 'frame') last = m as never; if (last?.sleeping) break; }
+      const q = last!.pos;
+      let lo = Infinity, hi = -Infinity, bad = 0;
+      for (let i = 1; i < q.length; i += 3) { if (!Number.isFinite(q[i])) bad++; lo = Math.min(lo, q[i]); hi = Math.max(hi, q[i]); }
+      out.push({ lo, hi, bad });
+    }
+    return out;
+  };
+  const [up] = await seq([['up', false]]);
+  const [down, wUp, wDown, cDown] = await seq([['down', false], ['up', true], ['down', true], ['down', false]]);
+  const y = (r: { lo: number; hi: number }) => `${r.lo.toFixed(1)}..${r.hi.toFixed(1)}`;
+  verdict(up.hi > down.hi + 2, `fresh builds: collar up tops out at ${up.hi.toFixed(1)}, down at ${down.hi.toFixed(1)}`);
+  verdict(wUp.bad === 0 && Math.abs(wUp.hi - up.hi) < 1.5 && Math.abs(wUp.lo - down.lo) < 2, `collar turned up (warm): y ${y(wUp)}, fresh up ${y(up)}`);
+  verdict(wDown.bad === 0 && Math.abs(wDown.hi - down.hi) < 1 && Math.abs(wDown.lo - down.lo) < 2, `then turned back down (warm): y ${y(wDown)}, fresh down ${y(down)}`);
+  verdict(Math.abs(cDown.hi - down.hi) < 0.5 && Math.abs(cDown.lo - down.lo) < 0.5, `cold build after a popped collar: y ${y(cDown)}, fresh ${y(down)} (within 0.5 cm)`);
+}
+
 // ---- soft skin (src/sim/softSkin.ts): tight cloth presses the skin in, loose cloth and no cloth leave it as measured ----
 {
   console.log('\n== soft skin ==');

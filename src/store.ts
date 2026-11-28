@@ -11,6 +11,8 @@ import { fromUnit, uid, type Units } from './lib/units';
 import { pleatIntakeOf, EMPTY_EDITS, ZERO_POSE, type Face, type Attachment, type CustomPose, type CustomSeam, type Edits, type EdgeRef, type Placement, type Pleat } from './data/edits';
 import { FEMALE_BODY, MALE_BODY } from './three/body';
 import { applyMoves, linkedMoves } from './data/symmetry';
+import { rejoinSide, splitSide } from './data/split';
+import { insertOutlinePoint, moveOutlinePoint, outlineEditable, removeOutlinePoint } from './data/attachOutline';
 import { setMeasurement, targetKey, type MeasureTarget } from './data/measureEdit';
 import { fitTable, garmentSpecs, pieceSpecs } from './lib/specs';
 import { newDesign, type DesignDoc, type Workspace, readWorkspaceMap, writeWorkspaceMap, defaultBand } from './components/designDoc';
@@ -346,6 +348,11 @@ export interface State {
   /** the same inside fabric on every piece; null = every piece uses its outside fabric */
   setInsideAll: (fabric: { id: string; color: number } | null) => void;
   updateAttachment: (id: string, patch: Partial<Attachment>) => void;
+  /** reshape a pocket, patch or applique outline by its points (src/data/attachOutline.ts); symmetry mirrors the edit */
+  moveAttachmentPoint: (id: string, index: number, p: Pt) => void;
+  /** add an outline point on segment seg at t; returns the new point's index */
+  insertAttachmentPoint: (id: string, seg: number, t: number) => number | null;
+  removeAttachmentPoint: (id: string, index: number) => void;
   removeAttachment: (id: string) => void;
   addCustomSeam: (s: Omit<CustomSeam, 'id'>) => string;
   removeCustomSeam: (id: string) => void;
@@ -357,6 +364,10 @@ export interface State {
   addCustomPiece: (name: string, points: Pt[], placement: Placement) => string;
   updatePiece: (id: string, patch: Partial<Piece>) => void;
   removePiece: (id: string) => void;
+  /** "Edit this side only": copy `instance` of a piece cut twice becomes a piece of its own (src/data/split.ts); selects it */
+  splitSide: (pieceId: string, instance: number) => string | null;
+  /** "Match other side": a split side joins its piece again and takes the other side's shape; selects that copy */
+  matchOtherSide: (splitPieceId: string) => void;
   // --- body presets and posing ---
   setBodyPreset: (sex: 'male' | 'female') => void;
   customPose: CustomPose;
@@ -1023,6 +1034,26 @@ export const useStore = create<State>((set, get) => {
       setEdits((e) => ({ ...e, insideFabric: fabric ? Object.fromEntries(get().project.pieces.map((p) => [p.id, fabric])) : {} }));
     },
     updateAttachment: (id, patch) => setEdits((e) => ({ ...e, attachments: e.attachments.map((a) => (a.id === id ? { ...a, ...patch } : a)) })),
+    moveAttachmentPoint: (id, index, p) => {
+      const a = get().project.edits?.attachments.find((q) => q.id === id);
+      if (a && outlineEditable(a)) get().updateAttachment(id, moveOutlinePoint(a, index, p, get().symmetry));
+    },
+    insertAttachmentPoint: (id, seg, t) => {
+      const a = get().project.edits?.attachments.find((q) => q.id === id);
+      if (!a || !outlineEditable(a)) return null;
+      get().commit();
+      const r = insertOutlinePoint(a, seg, t, get().symmetry);
+      get().updateAttachment(id, r.patch);
+      return r.index;
+    },
+    removeAttachmentPoint: (id, index) => {
+      const a = get().project.edits?.attachments.find((q) => q.id === id);
+      if (!a || !outlineEditable(a)) return;
+      const patch = removeOutlinePoint(a, index, get().symmetry);
+      if (!patch.points) return;
+      get().commit();
+      get().updateAttachment(id, patch);
+    },
     removeAttachment: (id) => {
       get().commit();
       // designs sewn onto this attachment go with it
@@ -1081,7 +1112,26 @@ export const useStore = create<State>((set, get) => {
       return id;
     },
     updatePiece: (id, patch) => setPieces(get().project.pieces.map((p) => (p.id === id ? { ...p, ...patch } : p))),
+    splitSide: (pieceId, instance) => {
+      const { project } = get();
+      const r = splitSide(project.garment, project.pieces, project.edits ?? EMPTY_EDITS, pieceId, instance);
+      if (!r.id) return null;
+      get().commit();
+      set((s) => ({ project: { ...s.project, pieces: r.pieces, edits: r.edits, updatedAt: Date.now() }, selPiece: r.id, selInstance: null, selPoint: null, selMulti: [] }));
+      return r.id;
+    },
+    matchOtherSide: (splitPieceId) => {
+      const { project } = get();
+      const side = project.pieces.find((p) => p.id === splitPieceId)?.side ?? null;
+      const r = rejoinSide(project.pieces, project.edits ?? EMPTY_EDITS, splitPieceId);
+      if (!r.id) return;
+      get().commit();
+      set((s) => ({ project: { ...s.project, pieces: r.pieces, edits: r.edits, updatedAt: Date.now() }, selPiece: r.id, selInstance: side, selPoint: null, selMulti: [] }));
+    },
     removePiece: (id) => {
+      // a side edited on its own goes back to matching the other side; a piece goes with its split sides
+      if (get().project.pieces.find((p) => p.id === id)?.splitOf) { get().matchOtherSide(id); return; }
+      for (const s of get().project.pieces.filter((p) => p.splitOf === id)) get().matchOtherSide(s.id);
       get().commit();
       setPieces(get().project.pieces.filter((p) => p.id !== id));
       setEdits((e) => ({

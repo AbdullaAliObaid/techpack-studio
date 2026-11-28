@@ -138,6 +138,8 @@ export function linkedMoves(style: StyleId, pieces: Piece[], pieceId: string, po
   const pt = piece?.points.find((q) => q.id === pointId);
   if (!piece || !pt) return [];
   shift(pts, pieceId, pointId, dx, dy, acc);
+  // one side of a split pair (src/data/split.ts) is edited on its own: nothing on the other side or its mates follows
+  if (piece.splitOf || piece.splitSides?.length) return [...acc.values()];
   const spec = specFor(style);
   if (!spec || !pt.key) return [...acc.values()];
 

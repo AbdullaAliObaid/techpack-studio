@@ -26,10 +26,11 @@ import { canHostDesigns, fabricHex, imageFileOf, linkedPoints, openPhoto, pleatM
 import { pickSeamPoint } from './ConstructionPanel';
 import { ATTACHMENT_MIME, isAttachment } from './designLibrary';
 import { MeasureLayer, MeasureTray, ChartRulers, type MeasureHandle } from './MeasureTools';
-import { attWorld, flipEntries, frameOn, instanceFor, layoutEntries, onCopy, toSource, toWorldPt, worldToAtt, type Entry } from './sides';
+import { attWorld, flipEntries, frameOn, instanceFor, layoutEntries, onCopy, toOutlineLocal, toSource, toWorldPt, worldToAtt, type Entry } from './sides';
 import { openPieceFlow } from './flow';
 import { attsOnEntry, computeGeo, layoutChart, type Geo } from './chartLayout';
 import { hitList, type Cand } from './chartHit';
+import { editPoints, nearestOnPolygon, outlineEditable, outlineMirrored } from '../data/attachOutline';
 import { createPortal } from 'react-dom';
 import { allPointsOf, movesFromWorld, placeItems, pointsInRect, snapTargets, withLinked, itemId, type Placed } from './multi';
 import { GuideLayer, MarqueeLayer, SelectionChip, overlay } from './MultiOverlay';
@@ -41,6 +42,7 @@ import Icon from './Icon';
 type View = { x: number; y: number; k: number };
 
 type Drag =
+  | { mode: 'attpt'; id: string; index: number; key: string; start: Pt; committed: boolean }
   | { mode: 'point'; pieceId: string; pointId: string; key: string; start: Pt; committed: boolean; inMulti?: boolean; g?: GroupDrag; last?: { cx: number; cy: number; alt: boolean; shift: boolean } }
   | { mode: 'marquee'; start: Pt; how: 'replace' | 'add' | 'toggle'; base: MultiItem[]; moved: boolean; sig: string }
   | { mode: 'piece'; pieceId: string; start: Pt; startOffset: Pt; committed: boolean }
@@ -542,6 +544,28 @@ export default function PatternEditor() {
       return;
     }
 
+    // outline points of the selected pocket, patch or applique: drag to reshape, double click to remove;
+    // its outline edge: Add point (or a double click) puts a point there, otherwise it moves the design
+    if ((kind === 'attpt' || kind === 'attedge') && ent) {
+      const all = st.project.edits?.attachments ?? [];
+      const att = all.find((a) => a.id === target!.dataset.att);
+      if (att && outlineEditable(att)) {
+        const i = Number(target!.dataset.point ?? 0);
+        if (kind === 'attpt') {
+          if (isDoubleTap(`ap${att.id}:${i}`)) { st.removeAttachmentPoint(att.id, i); drag.current = null; return; }
+          drag.current = { mode: 'attpt', id: att.id, index: i, key: ent.key, start: w, committed: false };
+          return;
+        }
+        if (st.tool === 'add' || isDoubleTap(`ae${att.id}`)) {
+          const near = nearestOnPolygon(editPoints(att), toOutlineLocal(att, ent, all, w));
+          const idx = st.insertAttachmentPoint(att.id, near.seg, near.t);
+          if (idx !== null) drag.current = { mode: 'attpt', id: att.id, index: idx, key: ent.key, start: w, committed: true };
+          return;
+        }
+        return run({ dataset: { ...target!.dataset, kind: 'attach' } } as unknown as HTMLElement);
+      }
+    }
+
     if (kind === 'attach' && ent) {
       const id = target!.dataset.att!;
       const all = st.project.edits?.attachments ?? [];
@@ -748,6 +772,20 @@ export default function PatternEditor() {
       return;
     }
     const w = toWorld(e.clientX, e.clientY);
+    if (d.mode === 'attpt') {
+      if (!d.committed) {
+        if (Math.hypot(w.x - d.start.x, w.y - d.start.y) * viewRef.current.k < 3) return;
+        st.commit();
+        d.committed = true;
+      }
+      const all = st.project.edits?.attachments ?? [];
+      const att = all.find((a) => a.id === d.id);
+      const cur = entriesRef.current.find((en) => en.key === d.key);
+      if (!att || !cur) return;
+      const l = toOutlineLocal(att, cur, all, w);
+      st.moveAttachmentPoint(d.id, d.index, { x: round2(l.x), y: round2(l.y) });
+      return;
+    }
     if (d.mode === 'resize' || d.mode === 'rotate') {
       if (!d.committed) {
         if (Math.hypot(w.x - d.c.x, w.y - d.c.y) * viewRef.current.k < 3) return;
@@ -1140,7 +1178,10 @@ function PieceView(props: {
   const insideOwn = useStore((st) => !!st.project.edits?.insideFabric?.[p.id]);
 
   /** one attachment (and the designs sewn onto it) in its own frame */
-  const renderAtt = (a: Attachment, top: boolean): React.ReactNode => {
+  const renderAtt = (a0: Attachment, top: boolean): React.ReactNode => {
+    // an outline reshaped by its points is cut mirrored on the mirrored copy (artwork is not flipped)
+    const flipO = top && outlineMirrored(a0, entry.mirror);
+    const a = flipO ? { ...a0, points: a0.points!.map((q) => ({ x: -q.x, y: q.y })) } : a0;
     const o = outlineD(a);
     const label = a.kind === 'label';
     const fabric = a.fabric ?? p.fabric;
@@ -1189,6 +1230,13 @@ function PieceView(props: {
             <circle cx={0} cy={handleY} r={hitR(0, handleY)} fill="transparent" data-kind="handle" data-handle="rotate" data-att={a.id} data-piece={p.id} data-inst={inst} style={{ cursor: 'grab' }}><title>Turn</title></circle>
             <rect x={rx - px(6)} y={ry - px(6)} width={px(12)} height={px(12)} rx={px(2)} fill="var(--accent)" stroke="var(--bg-elevated)" strokeWidth={px(1.5)} pointerEvents="none" />
             <circle cx={rx} cy={ry} r={hitR(rx, ry)} fill="transparent" data-kind="handle" data-handle="resize" data-att={a.id} data-piece={p.id} data-inst={inst} style={{ cursor: 'nwse-resize' }}><title>Resize</title></circle>
+          </g>
+        )}
+        {on && top && outlineEditable(a0) && (
+          <g>
+            {editPoints(a0).map((q, i) => (
+              <circle key={i} cx={flipO ? -q.x : q.x} cy={q.y} r={px(4)} fill="var(--bg-elevated)" stroke="var(--accent)" strokeWidth={px(1.5)} data-kind="attpt" data-att={a.id} data-point={i} data-piece={p.id} data-inst={inst} style={{ cursor: 'grab' }}><title>Drag to reshape. Double click to remove.</title></circle>
+            ))}
           </g>
         )}
       </g>
